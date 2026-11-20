@@ -1,0 +1,5 @@
+<resources>
+    <color name="monitor_background">#FF02060B</color>
+    <color name="monitor_pelvic">#FF55E4CE</color>
+    <color name="monitor_hr">#FF34E37E</color>
+</resources>

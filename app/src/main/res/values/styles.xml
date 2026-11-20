@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.SarahMonitor" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/monitor_background</item>
+        <item name="android:statusBarColor">@color/monitor_background</item>
+        <item name="android:navigationBarColor">@color/monitor_background</item>
+    </style>
+</resources>

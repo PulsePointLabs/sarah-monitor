@@ -1,0 +1,92 @@
+name: Build and release APK
+
+# Every push builds, tests, signs and publishes a release with a direct APK link.
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Same signing approach as SarahVS: the developer machine's debug key (repo secret), passed to
+      # Gradle explicitly and verified afterwards, so every release installs over the previous one.
+      - name: Restore signing key
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$DEBUG_KEYSTORE_BASE64" ]; then
+            echo "::error::DEBUG_KEYSTORE_BASE64 is not set (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          KEYSTORE="$RUNNER_TEMP/debug.keystore"
+          echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+          keytool -list -keystore "$KEYSTORE" -storepass android -alias androiddebugkey >/dev/null
+          KEY_SHA256=$(keytool -exportcert -keystore "$KEYSTORE" -storepass android -alias androiddebugkey \
+            | sha256sum | cut -d' ' -f1)
+          echo "KEYSTORE=$KEYSTORE" >> "$GITHUB_ENV"
+          echo "KEY_SHA256=$KEY_SHA256" >> "$GITHUB_ENV"
+
+      - name: Unit tests and APK
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest :app:assembleDebug --stacktrace \
+            -Pandroid.injected.signing.store.file="$KEYSTORE" \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android
+
+      - name: Verify APK signature
+        run: |
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | tee signers.txt
+          APK_SHA256=$(grep -m1 -oP 'certificate SHA-256 digest: \K[0-9a-f]+' signers.txt)
+          if [ "$APK_SHA256" != "$KEY_SHA256" ]; then
+            echo "::error::APK is signed with $APK_SHA256, expected $KEY_SHA256."
+            exit 1
+          fi
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: app/build/reports/tests/
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          BRANCH="${GITHUB_REF_NAME//\//-}"
+          TAG="v${VERSION}-${BRANCH}-${GITHUB_RUN_NUMBER}"
+          APK="sarah-monitor-${VERSION}-${SHORT_SHA}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$APK"
+          SUBJECT=$(git log -1 --format=%s)
+          PRERELEASE=""
+          if [ "$GITHUB_REF_NAME" != "main" ]; then PRERELEASE="--prerelease"; fi
+          gh release create "$TAG" "$APK" \
+            --target "$GITHUB_SHA" $PRERELEASE \
+            --title "Sarah Monitor ${VERSION} (${SHORT_SHA})" \
+            --notes "${SUBJECT}
+
+          Branch ${GITHUB_REF_NAME} at ${GITHUB_SHA}. Unit tests passed; APK signed with the repository key.
+          Direct download: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK}"
