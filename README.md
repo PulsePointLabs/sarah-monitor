@@ -16,8 +16,9 @@ Every sensor is remembered and reconnects by itself, including while the app is 
 
 ## Dashboard
 
-- 24-column snap grid that fills the screen. Drag a card to move it, drag its corner to resize it. Other cards make
-  room and gaps close up. Lock the layout from the top bar.
+- 24-column snap grid that fills the screen. Turn on **Arrange** (top bar, or press-and-hold any card), then move a
+  card with a mouse hold-drag, a finger, or a two-finger touchpad swipe; drag its corner grip to resize. The card
+  lifts and follows the pointer, a translucent placeholder shows where it will land, and the other cards slide aside.
 - Text scales with each card: bigger cards get bigger readings; small cards shrink text but never below 11 sp.
 - On a phone the cards stack in one column.
 

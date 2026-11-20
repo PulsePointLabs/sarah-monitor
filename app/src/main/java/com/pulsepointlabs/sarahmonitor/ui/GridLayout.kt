@@ -119,11 +119,8 @@ class LayoutStore(context: Context) {
 
     fun load(): List<CardSlot> = GridLayoutEngine.fromJson(prefs.getString(KEY, null))
     fun save(slots: List<CardSlot>) = prefs.edit().putString(KEY, GridLayoutEngine.toJson(slots)).apply()
-    fun locked(): Boolean = prefs.getBoolean(KEY_LOCKED, false)
-    fun setLocked(locked: Boolean) = prefs.edit().putBoolean(KEY_LOCKED, locked).apply()
 
     companion object {
         private const val KEY = "grid_v1"
-        private const val KEY_LOCKED = "locked"
     }
 }

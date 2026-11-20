@@ -152,20 +152,29 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
     }
 }
 
-/** Event types, same set as SarahVS plus ones that fit pelvic monitoring. */
+/** Event types: SarahVS's general set plus sexual-response types, shown in two groups. */
 object MarkerTypes {
-    data class Type(val id: String, val label: String)
+    enum class Group(val title: String) { General("General"), Sexual("Sexual") }
+
+    data class Type(val id: String, val label: String, val group: Group)
 
     val all = listOf(
-        Type("event", "Event"),
-        Type("symptom", "Symptom"),
-        Type("activity", "Activity"),
-        Type("intake", "Intake"),
-        Type("recovery", "Recovery"),
-        Type("arousal", "Arousal"),
-        Type("edge", "Edge"),
-        Type("orgasm", "Orgasm")
+        Type("event", "Event", Group.General),
+        Type("symptom", "Symptom", Group.General),
+        Type("activity", "Activity", Group.General),
+        Type("position", "Position change", Group.General),
+        Type("intake", "Intake", Group.General),
+        Type("recovery", "Recovery", Group.General),
+        Type("stimulation", "Stimulation", Group.Sexual),
+        Type("arousal", "Arousal", Group.Sexual),
+        Type("plateau", "Plateau", Group.Sexual),
+        Type("edge", "Edge", Group.Sexual),
+        Type("orgasm", "Orgasm", Group.Sexual),
+        Type("ejaculation", "Ejaculation", Group.Sexual),
+        Type("resolution", "Resolution", Group.Sexual)
     )
+
+    fun inGroup(group: Group): List<Type> = all.filter { it.group == group }
 
     fun join(types: Set<String>): String = all.map { it.id }.filter { it in types }.ifEmpty { listOf("event") }.joinToString(",")
     fun split(types: String): Set<String> = types.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()

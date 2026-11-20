@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -51,14 +52,18 @@ import com.pulsepointlabs.sarahmonitor.ui.fmt
 fun markerColor(types: String): Color = when (MarkerTypes.split(types).firstOrNull()) {
     "symptom" -> MonitorColors.warn
     "activity" -> MonitorColors.sdnn
+    "position" -> Color(0xFF7DD3FC)
     "intake" -> MonitorColors.glucose
     "recovery" -> MonitorColors.good
+    "stimulation" -> Color(0xFFF9A8D4)
     "arousal" -> MonitorColors.bp
+    "plateau" -> Color(0xFFFB923C)
     "edge" -> MonitorColors.pelvic
     "orgasm" -> Color(0xFFFF7AB6)
+    "ejaculation" -> Color(0xFFE879F9)
+    "resolution" -> Color(0xFFA5B4FC)
     else -> Color(0xFFE6EEF5)
 }
-
 
 /**
  * Mark (or edit) an event. The time is the moment the dialog was opened, so typing a note doesn't move the
@@ -115,21 +120,25 @@ fun MarkEventDialog(
                             .padding(horizontal = 12.dp, vertical = 10.dp)
                     )
                 }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    MarkerTypes.all.forEach { type ->
-                        val on = type.id in types
-                        val color = markerColor(type.id)
-                        Text(
-                            type.label,
-                            color = if (on) MonitorColors.background else color,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .background(if (on) color else Color.Transparent, RoundedCornerShape(16.dp))
-                                .border(1.dp, color.copy(alpha = 0.7f), RoundedCornerShape(16.dp))
-                                .clickable { types = if (on && types.size > 1) types - type.id else types + type.id }
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
+                MarkerTypes.Group.entries.forEach { group ->
+                    Text(group.title, color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MarkerTypes.inGroup(group).forEach { type ->
+                            val on = type.id in types
+                            val color = markerColor(type.id)
+                            Text(
+                                (if (on) "✓ " else "") + type.label,
+                                color = if (on) MonitorColors.background else color,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .heightIn(min = 40.dp)
+                                    .background(if (on) color else color.copy(alpha = 0.08f), RoundedCornerShape(20.dp))
+                                    .border(1.dp, color.copy(alpha = 0.7f), RoundedCornerShape(20.dp))
+                                    .clickable { types = if (on && types.size > 1) types - type.id else types + type.id }
+                                    .padding(horizontal = 14.dp, vertical = 9.dp)
+                            )
+                        }
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {

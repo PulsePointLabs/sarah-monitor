@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -277,7 +278,7 @@ private fun MonitorScreen(
     onMessage: (String) -> Unit
 ) {
     var slots by remember { mutableStateOf(layoutStore.load()) }
-    var locked by remember { mutableStateOf(layoutStore.locked()) }
+    var arranging by remember { mutableStateOf(false) }
     var screen by rememberSaveable { mutableStateOf(Screen.Monitor) }
     var reviewId by rememberSaveable { mutableStateOf<String?>(null) }
     var showDevices by remember { mutableStateOf(false) }
@@ -326,14 +327,14 @@ private fun MonitorScreen(
             TopBar(
                 screen = if (reviewId != null) Screen.Sessions else screen,
                 recording = session,
-                locked = locked,
+                arranging = arranging,
                 onScreen = { screen = it; reviewId = null },
                 onRecord = { if (session == null) MonitorHub.startSession() else confirmStop = true },
                 onMark = ::mark,
                 onDevices = { showDevices = true },
                 onCards = { showCards = true },
                 onOverlays = { showOverlays = true },
-                onLock = { locked = !locked; layoutStore.setLocked(locked) },
+                onArrange = { arranging = !arranging },
                 onReset = { confirmReset = true }
             )
             Spacer(Modifier.size(4.dp))
@@ -349,7 +350,8 @@ private fun MonitorScreen(
                 screen == Screen.Sessions -> SessionsScreen(onOpen = { reviewId = it }, modifier = Modifier.fillMaxSize())
                 else -> Dashboard(
                     slots = slots,
-                    locked = locked,
+                    arranging = arranging,
+                    onArrangingChange = { arranging = it },
                     onChange = { slots = it; layoutStore.save(it) },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -409,14 +411,14 @@ private val clockFormat = DateTimeFormatter.ofPattern("HH:mm:ss")
 private fun TopBar(
     screen: Screen,
     recording: com.pulsepointlabs.sarahmonitor.session.SessionEntity?,
-    locked: Boolean,
+    arranging: Boolean,
     onScreen: (Screen) -> Unit,
     onRecord: () -> Unit,
     onMark: () -> Unit,
     onDevices: () -> Unit,
     onCards: () -> Unit,
     onOverlays: () -> Unit,
-    onLock: () -> Unit,
+    onArrange: () -> Unit,
     onReset: () -> Unit
 ) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -431,6 +433,7 @@ private fun TopBar(
             if (!narrow) {
                 Text("Sarah Monitor", color = MonitorColors.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Text(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(clockFormat), color = MonitorColors.label, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
+                recording?.let { SessionClock(it.startTimeMs, now) }
             }
             Tabs(screen, onScreen)
             Spacer(Modifier.weight(1f))
@@ -444,7 +447,7 @@ private fun TopBar(
                 if (screen == Screen.Monitor) {
                     BarIcon(Icons.Default.Dashboard, "Cards", onCards)
                     BarIcon(Icons.Default.Layers, "Overlays", onOverlays)
-                    BarIcon(if (locked) Icons.Default.Lock else Icons.Default.LockOpen, if (locked) "Unlock layout" else "Lock layout", onLock)
+                    BarIcon(Icons.Default.OpenWith, if (arranging) "Done arranging" else "Arrange cards", onArrange, highlighted = arranging)
                     BarIcon(Icons.Default.RestartAlt, "Start fresh", onReset)
                 }
             } else {
@@ -453,12 +456,30 @@ private fun TopBar(
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MonitorColors.panel) {
                         DropdownMenuItem(text = { Text("Sensors") }, onClick = { menu = false; onDevices() })
                         DropdownMenuItem(text = { Text("Cards") }, onClick = { menu = false; onCards() })
+                        DropdownMenuItem(text = { Text(if (arranging) "Done arranging" else "Arrange cards") }, onClick = { menu = false; onArrange() })
                         DropdownMenuItem(text = { Text("Overlays") }, onClick = { menu = false; onOverlays() })
                         DropdownMenuItem(text = { Text("Start fresh") }, onClick = { menu = false; onReset() })
                     }
                 }
             }
         }
+    }
+}
+
+/** Elapsed session time shown beside the clock. */
+@Composable
+private fun SessionClock(startMs: Long, now: Long) {
+    Row(
+        Modifier
+            .background(MonitorColors.alarm.copy(alpha = 0.14f), RoundedCornerShape(6.dp))
+            .border(1.dp, MonitorColors.alarm.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(Modifier.size(8.dp).background(MonitorColors.alarm, CircleShape))
+        Text("Session", color = MonitorColors.label, fontSize = 12.sp)
+        Text(com.pulsepointlabs.sarahmonitor.session.SessionAnalysis.elapsed(now - startMs), color = MonitorColors.text, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
     }
 }
 
@@ -518,9 +539,12 @@ private fun MarkButton(enabled: Boolean, compact: Boolean, onClick: () -> Unit) 
 }
 
 @Composable
-private fun BarIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.size(36.dp)) {
-        Icon(icon, contentDescription = label, tint = MonitorColors.label)
+private fun BarIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit, highlighted: Boolean = false) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.size(36.dp).then(if (highlighted) Modifier.background(MonitorColors.pelvic.copy(alpha = 0.2f), CircleShape) else Modifier)
+    ) {
+        Icon(icon, contentDescription = label, tint = if (highlighted) MonitorColors.pelvic else MonitorColors.label)
     }
 }
 
