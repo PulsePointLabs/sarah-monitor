@@ -15,6 +15,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.pulsepointlabs.sarahmonitor.MainActivity
 import com.pulsepointlabs.sarahmonitor.R
+import com.pulsepointlabs.sarahmonitor.glucose.HealthConnectImporter
 import com.pulsepointlabs.sarahmonitor.overlay.OverlayManager
 import com.pulsepointlabs.sarahmonitor.overlay.OverlaySettings
 import kotlinx.coroutines.CoroutineScope
@@ -62,6 +63,20 @@ class MonitorService : Service() {
             while (isActive) {
                 delay(1_500L)
                 overlays.sync(OverlaySettings.enabled.value)
+            }
+        }
+        // Glucose meters such as the OneTouch Verio Reflect sync to their own app; when that app shares to
+        // Health Connect, new readings are picked up here every 2 minutes (BP from Omron Connect likewise).
+        scope.launch {
+            val health = HealthConnectImporter(this@MonitorService)
+            while (isActive) {
+                runCatching {
+                    if (health.hasPermissions()) {
+                        MonitorHub.glucose.addAll(health.readGlucose(days = 2))
+                        MonitorHub.bp.addAll(health.readBloodPressure(days = 2))
+                    }
+                }
+                delay(120_000L)
             }
         }
         scope.launch {

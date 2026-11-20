@@ -117,6 +117,42 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+        handleSharedExport(intent)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleSharedExport(intent)
+    }
+
+    /**
+     * Glucose results shared to Sarah Monitor from another app (OneTouch Reveal's share/export, a file manager,
+     * email…). Same behaviour as Sarah's share target: a CSV file or shared text, parsed by the glucose importer.
+     */
+    private fun handleSharedExport(intent: android.content.Intent?) {
+        if (intent == null || (intent.action != android.content.Intent.ACTION_SEND && intent.action != android.content.Intent.ACTION_VIEW)) return
+        @Suppress("DEPRECATION")
+        val uri: Uri? = when (intent.action) {
+            android.content.Intent.ACTION_SEND -> intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM) ?: intent.clipData?.getItemAt(0)?.uri
+            else -> intent.data
+        }
+        val text = intent.getStringExtra(android.content.Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }
+        // Consume it so a rotation or resume doesn't import twice.
+        setIntent(android.content.Intent(this, MainActivity::class.java))
+        when {
+            uri != null -> importCsv(uri)
+            text != null -> importText(text, "shared text")
+            else -> toast("The shared export didn't include a readable file.")
+        }
+    }
+
+    private fun importText(text: String, source: String) {
+        val result = GlucoseCsv.parse(text, source)
+        if (result.error != null) toast(result.error) else {
+            val added = MonitorHub.glucose.addAll(result.rows)
+            toast("Imported $added new glucose readings${if (result.skipped > 0) " (${result.skipped} rows skipped)" else ""}.")
+        }
     }
 
     override fun onResume() {
@@ -143,6 +179,12 @@ class MainActivity : ComponentActivity() {
         permissionLauncher.launch(wanted.toTypedArray())
     }
 
+    private fun displayName(uri: Uri): String = runCatching {
+        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "shared file"
+
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
     private fun requestHealthConnect() {
@@ -152,7 +194,7 @@ class MainActivity : ComponentActivity() {
         }
         kotlinx.coroutines.MainScope().launch {
             if (healthImporter.hasPermissions()) importHealthConnect()
-            else healthPermissionLauncher.launch(healthImporter.permissions)
+            else healthPermissionLauncher.launch(healthImporter.requestPermissions)
         }
     }
 
@@ -170,8 +212,18 @@ class MainActivity : ComponentActivity() {
         kotlinx.coroutines.MainScope().launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
-                    GlucoseCsv.parse(GlucoseCsv.decode(bytes), uri.lastPathSegment?.substringAfterLast('/') ?: "file")
+                    val bytes = contentResolver.openInputStream(uri)?.use { input ->
+                        val out = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(32 * 1024)
+                        while (true) {
+                            val n = input.read(buffer)
+                            if (n < 0) break
+                            out.write(buffer, 0, n)
+                            require(out.size() <= 16 * 1024 * 1024) { "File is larger than 16 MB" }
+                        }
+                        out.toByteArray()
+                    } ?: ByteArray(0)
+                    GlucoseCsv.parse(GlucoseCsv.decode(bytes), displayName(uri))
                 }.getOrNull()
             }
             when {

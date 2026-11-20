@@ -16,9 +16,24 @@ android {
         versionName = "0.1.0"
     }
 
+    // One signing key for every build (this machine, CI, anyone's PC), kept in the repo, so each
+    // release installs over the last one. It's a sideload key for a private repo, not a Play Store key.
+    signingConfigs {
+        create("monitor") {
+            storeFile = rootProject.file("signing/sarah-monitor.jks")
+            storePassword = "sarahmonitor"
+            keyAlias = "sarahmonitor"
+            keyPassword = "sarahmonitor"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("monitor")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("monitor")
         }
     }
 

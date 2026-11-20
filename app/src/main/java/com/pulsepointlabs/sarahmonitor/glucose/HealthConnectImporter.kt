@@ -18,6 +18,9 @@ class HealthConnectImporter(private val context: Context) {
         HealthPermission.getReadPermission(BloodPressureRecord::class)
     )
 
+    /** Lets the background service keep pulling new readings while the app isn't on screen. */
+    val requestPermissions: Set<String> = permissions + BACKGROUND_READ
+
     fun available(): Boolean = HealthConnectClient.getSdkStatus(context) == HealthConnectClient.SDK_AVAILABLE
 
     suspend fun hasPermissions(): Boolean {
@@ -64,5 +67,9 @@ class HealthConnectImporter(private val context: Context) {
                 source = "Health Connect · ${it.metadata.dataOrigin.packageName}"
             )
         }
+    }
+
+    companion object {
+        const val BACKGROUND_READ = "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND"
     }
 }

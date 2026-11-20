@@ -56,7 +56,7 @@ fun DevicesPanel(
                 H10Section()
                 CivetSection(onMessage)
                 OmronSection()
-                Section("Glucose", MonitorColors.glucose, "Import from your meter's CSV export or from Health Connect. You can also add readings by hand on the Glucose card.") {
+                Section("Glucose", MonitorColors.glucose, "OneTouch Verio Reflect: in the OneTouch Reveal app, share or export your results and pick Sarah Monitor (same as with Sarah). Health Connect and CSV files work too, and you can add a reading by hand on the Glucose card.") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         PanelButton("Import CSV", onCsvImport)
                         PanelButton("Health Connect", onHealthConnectImport)

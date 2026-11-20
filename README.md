@@ -42,5 +42,6 @@ Readings are mechanical pressure above rest, not calibrated muscle force.
 
 ## Releases
 
-Every push builds, runs the unit tests, signs with the `DEBUG_KEYSTORE_BASE64` repo secret, checks the signature
-and publishes a GitHub release with a direct APK link (`main` = release, other branches = pre-release).
+Every push builds, runs the unit tests, signs with `signing/sarah-monitor.jks`, checks the signature and publishes a
+GitHub release with a direct APK link (`main` = release, other branches = pre-release). The key lives in the repo so
+any machine builds APKs that install over each other; it's a sideload key for this private repo, not a Play Store key.

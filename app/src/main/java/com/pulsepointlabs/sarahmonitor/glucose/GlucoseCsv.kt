@@ -47,7 +47,7 @@ object GlucoseCsv {
         val data = lines.drop(header.first + 1)
         var skipped = 0
         val rows = data.mapIndexedNotNull { index, line ->
-            val columns = parseLine(line, delimiter)
+            val columns = repairUnquotedMonthDate(parseLine(line, delimiter), headers)
             if (typeIndex >= 0 && !isGlucoseEvent(columns.getOrNull(typeIndex))) return@mapIndexedNotNull null
             val time = timestampText(columns, headers)?.let { parseLocalTimestamp(it, zone) }
             var value = number(columns.getOrNull(valueIndex))
@@ -102,6 +102,17 @@ object GlucoseCsv {
         return -1
     }
 
+    /** "Jul 29, 2026" written without quotes splits into two columns; join them back. */
+    private fun repairUnquotedMonthDate(columns: List<String>, headers: List<String>): List<String> {
+        if (columns.size != headers.size + 1) return columns
+        val dateIndex = indexOf(headers, listOf("date", "measurement date", "record date", "device date"))
+        if (dateIndex < 0) return columns
+        val first = columns.getOrNull(dateIndex)?.trim().orEmpty()
+        val second = columns.getOrNull(dateIndex + 1)?.trim().orEmpty()
+        if (!Regex("^[A-Za-z]{3,9}\\s+\\d{1,2}$").matches(first) || !Regex("^\\d{4}$").matches(second)) return columns
+        return columns.take(dateIndex) + "$first, $second" + columns.drop(dateIndex + 2)
+    }
+
     private fun number(value: String?): Double? = value?.replace(Regex("[^\\d.+-]"), "")?.takeIf { it.isNotEmpty() }?.toDoubleOrNull()
 
     private fun isGlucoseEvent(value: String?): Boolean {
@@ -127,6 +138,15 @@ object GlucoseCsv {
         if (Regex("^\\d{10,13}$").matches(raw)) {
             val n = raw.toLong()
             return if (raw.length == 10) n * 1000 else n
+        }
+        // Excel serial day numbers (2000–2099), read as device-local time.
+        if (Regex("^\\d{5}(?:\\.\\d+)?$").matches(raw)) {
+            val serial = raw.toDouble()
+            if (serial in 36_526.0..73_050.0) {
+                val seconds = Math.round(serial * 86_400.0)
+                val local = LocalDateTime.of(1899, 12, 30, 0, 0).plusSeconds(seconds)
+                return local.atZone(zone).toInstant().toEpochMilli()
+            }
         }
         fun local(y: Int, mo: Int, d: Int, h: Int, mi: Int, s: Int): Long? =
             runCatching { LocalDateTime.of(y, mo, d, h, mi, s).atZone(zone).toInstant().toEpochMilli() }.getOrNull()

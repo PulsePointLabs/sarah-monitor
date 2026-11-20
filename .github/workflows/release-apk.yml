@@ -26,32 +26,17 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # Same signing approach as SarahVS: the developer machine's debug key (repo secret), passed to
-      # Gradle explicitly and verified afterwards, so every release installs over the previous one.
-      - name: Restore signing key
-        env:
-          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+      # The APK is signed with signing/sarah-monitor.jks (committed), so every release installs over the last.
+      - name: Expected signing certificate
         run: |
-          if [ -z "$DEBUG_KEYSTORE_BASE64" ]; then
-            echo "::error::DEBUG_KEYSTORE_BASE64 is not set (Settings > Secrets and variables > Actions)."
-            exit 1
-          fi
-          KEYSTORE="$RUNNER_TEMP/debug.keystore"
-          echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
-          keytool -list -keystore "$KEYSTORE" -storepass android -alias androiddebugkey >/dev/null
-          KEY_SHA256=$(keytool -exportcert -keystore "$KEYSTORE" -storepass android -alias androiddebugkey \
+          KEY_SHA256=$(keytool -exportcert -keystore signing/sarah-monitor.jks -storepass sarahmonitor -alias sarahmonitor \
             | sha256sum | cut -d' ' -f1)
-          echo "KEYSTORE=$KEYSTORE" >> "$GITHUB_ENV"
           echo "KEY_SHA256=$KEY_SHA256" >> "$GITHUB_ENV"
 
       - name: Unit tests and APK
         run: |
           chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest :app:assembleDebug --stacktrace \
-            -Pandroid.injected.signing.store.file="$KEYSTORE" \
-            -Pandroid.injected.signing.store.password=android \
-            -Pandroid.injected.signing.key.alias=androiddebugkey \
-            -Pandroid.injected.signing.key.password=android
+          ./gradlew :app:testDebugUnitTest :app:assembleDebug --stacktrace
 
       - name: Verify APK signature
         run: |
@@ -88,5 +73,5 @@ jobs:
             --title "Sarah Monitor ${VERSION} (${SHORT_SHA})" \
             --notes "${SUBJECT}
 
-          Branch ${GITHUB_REF_NAME} at ${GITHUB_SHA}. Unit tests passed; APK signed with the repository key.
+          Branch ${GITHUB_REF_NAME} at ${GITHUB_SHA}. Unit tests passed; APK signed with the Sarah Monitor key.
           Direct download: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK}"
