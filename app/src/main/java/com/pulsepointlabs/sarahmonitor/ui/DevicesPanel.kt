@@ -144,7 +144,7 @@ private fun CivetSection(onMessage: (String) -> Unit) {
     val battery by client.batteryPercent.collectAsState()
     val error by client.error.collectAsState()
     var confirmZero by remember { mutableStateOf(false) }
-    Section("CIVET pelvic pressure", MonitorColors.pelvic, "Put the sensor in pairing/discoverable mode, then Scan. It's remembered and reconnects by itself.") {
+    Section("Civet edging sensor (pelvic pressure)", MonitorColors.pelvic, "Not showing up? Press its power button 5 times — the Bluetooth icon turns yellow when it's discoverable — then Scan. It's remembered and reconnects by itself.") {
         StateText(state, client.rememberedName(), battery)
         error?.let { Text(it, color = MonitorColors.warn, fontSize = 13.sp) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -152,6 +152,7 @@ private fun CivetSection(onMessage: (String) -> Unit) {
             if (client.rememberedAddress() != null) PanelButton("Reconnect") { client.connectRemembered() }
             PanelButton("Disconnect") { client.disconnect() }
             PanelButton("Forget") { client.forget() }
+            PanelButton("Flip display") { if (!client.flipDisplay()) onMessage("Connect the sensor first.") }
         }
         DeviceList(devices) { client.connect(it) }
         Row(verticalAlignment = Alignment.CenterVertically) {

@@ -42,4 +42,20 @@ class CivetPacketTest {
         assertTrue(CivetClient.isCivetName("My CIVET"))
         assertFalse(CivetClient.isCivetName("Polar H10 1234"))
     }
+
+    @Test
+    fun matchesDgLabExamples() {
+        // DG-LAB protocol doc: bytes 1603 -> 7.9 kPa, A806 -> 17.04 kPa (17-byte D0 message).
+        val base = "d001" + "00".repeat(6)
+        assertEquals(7.9, CivetPacket.pressureKpa(CivetPacket.fromHex(base + "1603" + "00".repeat(7)))!!, 1e-9)
+        assertEquals(17.04, CivetPacket.pressureKpa(CivetPacket.fromHex(base + "a806" + "00".repeat(7)))!!, 1e-9)
+    }
+
+    @Test
+    fun stopAndRotateCommandsMatchDgLab() {
+        assertEquals("500100" + "00".repeat(14), CivetPacket.hex(CivetClient.STOP_COMMAND))
+        assertEquals("66" + "00".repeat(9) + "01" + "0000", CivetPacket.hex(CivetClient.rotateCommand(1)))
+        assertEquals("66" + "00".repeat(9) + "03" + "0000", CivetPacket.hex(CivetClient.rotateCommand(3)))
+        assertTrue(CivetClient.isCivetName("47L124000"))
+    }
 }

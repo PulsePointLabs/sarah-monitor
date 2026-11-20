@@ -34,10 +34,14 @@ data class CivetSample(
 )
 
 /**
- * CIVET pelvic pressure sensor over BLE, using the same wire protocol as Sarah:
- * - pressure notifications on characteristic 0x150B: byte 0 = 0xD0, pressure = int16 LE at bytes 8..9, in 0.01 kPa
- * - start streaming by writing `50 01 D0` + 14 zero bytes to command characteristic 0x150A
- * - hardware zero (sensor deflated, outside the body only) writes `66 00 .. 00 02` to 0x150A
+ * DG-LAB Civet Edging Sensor over BLE, per DG-LAB's open protocol
+ * (github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE, civet-edging-sensor) and as used by Sarah:
+ * - service 0x180C: commands to 0x150A (write), all messages from 0x150B (notify)
+ * - `50 01 D0` + 14 zero bytes starts pressure reporting, `50 01 00` + 14 zero bytes stops it
+ * - D0 messages arrive every 100 ms; pressure = int16 LE at bytes 8..9, in 0.01 kPa
+ * - `66` + 9 zero bytes + `00` + `0002` resets the pressure reading (we only send it with the sensor deflated,
+ *   outside the body); `66` + 9 zero bytes + `01`/`03` + `0000` flips the sensor's display
+ * - battery: service 0x180A, characteristic 0x1500 (1 byte, %)
  * The link is watched: no pressure for 7 s triggers a reconnect. The last sensor is remembered.
  */
 class CivetClient(private val context: Context) {
@@ -70,6 +74,8 @@ class CivetClient(private val context: Context) {
     private var scanning = false
     private val found = linkedMapOf<String, BleDevice>()
     private var pendingZero: ((Boolean, String?) -> Unit)? = null
+    private var lastBatteryReadMono = 0L
+    private var displayRotation = 1
 
     private val watchdog = object : Runnable {
         override fun run() {
@@ -81,6 +87,8 @@ class CivetClient(private val context: Context) {
                 reopen()
             } else if (_state.value == ConnectionState.Connected && lastPacketMono > 0 && now - lastPacketMono > STALE_MS) {
                 _state.value = ConnectionState.Stale
+            } else if (lastPacketMono > 0 && now - lastBatteryReadMono > BATTERY_REFRESH_MS) {
+                readBattery()
             }
             handler.postDelayed(this, 3_000L)
         }
@@ -148,9 +156,15 @@ class CivetClient(private val context: Context) {
         enabled = false
         generation++
         handler.removeCallbacks(watchdog)
-        runCatching { gatt?.disconnect() }
-        runCatching { gatt?.close() }
+        val current = gatt
         gatt = null
+        // Ask the sensor to stop reporting before dropping the link (best effort), then close.
+        val command = current?.services?.firstNotNullOfOrNull { it.getCharacteristic(COMMAND_UUID) }
+        if (current != null && command != null && lastPacketMono > 0) runCatching { write(current, command, STOP_COMMAND) }
+        handler.postDelayed({
+            runCatching { current?.disconnect() }
+            runCatching { current?.close() }
+        }, if (command != null) 250L else 0L)
         lastPacketMono = 0
         _state.value = ConnectionState.Disconnected
     }
@@ -177,6 +191,22 @@ class CivetClient(private val context: Context) {
             pendingZero = null
             onDone(false, "Zero command could not be sent.")
         }
+    }
+
+    /** Flips the sensor's own display between its two orientations. */
+    @SuppressLint("MissingPermission")
+    fun flipDisplay(): Boolean {
+        val current = gatt ?: return false
+        val command = current.services?.firstNotNullOfOrNull { it.getCharacteristic(COMMAND_UUID) } ?: return false
+        displayRotation = if (displayRotation == 1) 3 else 1
+        return write(current, command, rotateCommand(displayRotation))
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun readBattery() {
+        lastBatteryReadMono = SystemClock.elapsedRealtime()
+        val current = gatt ?: return
+        current.services?.firstNotNullOfOrNull { it.getCharacteristic(BATTERY_UUID) }?.let { runCatching { current.readCharacteristic(it) } }
     }
 
     @SuppressLint("MissingPermission")
@@ -274,8 +304,8 @@ class CivetClient(private val context: Context) {
                     pendingZero = null
                     zero(status == BluetoothGatt.GATT_SUCCESS, if (status == BluetoothGatt.GATT_SUCCESS) null else "Zero failed (status $status)")
                 }
-                // Battery is optional; read it once after streaming starts.
-                g.services.firstNotNullOfOrNull { it.getCharacteristic(BATTERY_UUID) }?.let { runCatching { g.readCharacteristic(it) } }
+                // Battery (0x180A/0x1500) is read after streaming starts, then every few minutes by the watchdog.
+                readBattery()
             }
         }
 
@@ -353,15 +383,21 @@ class CivetClient(private val context: Context) {
         private const val KEY_NAME = "name"
         private const val STALL_MS = 7_000L
         private const val STALE_MS = 1_500L
+        private const val BATTERY_REFRESH_MS = 5 * 60_000L
         private fun uuid(short: String): UUID = UUID.fromString("0000$short-0000-1000-8000-00805f9b34fb")
         val COMMAND_UUID: UUID = uuid("150a")
         val PRESSURE_UUID: UUID = uuid("150b")
         val BATTERY_UUID: UUID = uuid("1500")
         val CCCD_UUID: UUID = uuid("2902")
+        /** 0x50 header, 01 indicator colour (yellow), D0 = start pressure reporting, 14 bytes padding. */
         val START_COMMAND: ByteArray = byteArrayOf(0x50, 0x01, 0xD0.toByte()) + ByteArray(14)
+        val STOP_COMMAND: ByteArray = byteArrayOf(0x50, 0x01, 0x00) + ByteArray(14)
         val ZERO_COMMAND: ByteArray = CivetPacket.fromHex("66000000000000000000000002")
 
-        /** Sarah's scan rule: the sensor advertises as "47L124…" or with "civet" in its name. */
+        /** 0x66 header, 9 bytes padding, orientation 01/03, 0000 (no pressure reset). */
+        fun rotateCommand(rotation: Int): ByteArray = byteArrayOf(0x66) + ByteArray(9) + byteArrayOf(rotation.toByte(), 0x00, 0x00)
+
+        /** The sensor advertises as "47L124000" (DG-LAB); Sarah also accepts names containing "civet". */
         fun isCivetName(name: String): Boolean = name.startsWith("47L124") || name.contains("civet", ignoreCase = true)
     }
 }

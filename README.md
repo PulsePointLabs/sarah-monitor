@@ -8,7 +8,7 @@ dashboard, in the same visual language as the SarahVS telemetry monitor.
 | Sensor | What you get |
 | --- | --- |
 | **Polar H10** | HR, ECG sweep (25 mm/s), RMSSD / SDNN / pNN50 (2-min rolling), Load, HR & HRV trends |
-| **CIVET pelvic pressure** | Live pressure above rest, % of reference hold, hold timer, pulses/min, 30 s average/max, live waveform, pressure trend |
+| **Civet edging sensor** (DG-LAB) | Live pressure above rest, % of reference hold, hold timer, pulses/min, 30 s average/max, live waveform, pressure trend |
 | **Omron BP cuff** | Readings land on the dashboard as soon as the cuff finishes, with category colour and trend |
 | **Glucose** | CSV import (OneTouch Reveal and generic meter exports), Health Connect, or manual entry |
 
@@ -28,9 +28,11 @@ own, remembers its position and size, and follows the app onto the DeX display.
 
 ## Pelvic pressure processing
 
-CIVET protocol follows Sarah (`PulsePointLabs/Sarah`): pressure notifications on `0x150B` (int16 LE at bytes 8–9,
-0.01 kPa), streaming started with `50 01 D0 …` on `0x150A`, optional hardware zero only with the sensor deflated
-and outside the body. Monitor processing is in `core/PelvicProcessor.kt`:
+The Civet Edging Sensor protocol follows DG-LAB's open specification
+([DG-LAB-OPENSOURCE › civet-edging-sensor](https://github.com/DG-LAB-OPENSOURCE/DG-LAB-OPENSOURCE/tree/main/civet-edging-sensor))
+and matches Sarah (`PulsePointLabs/Sarah`): service `0x180C`, commands on `0x150A`, D0 pressure messages every 100 ms
+on `0x150B` (int16 LE at bytes 8–9, 0.01 kPa), `50 01 D0 …` / `50 01 00 …` to start/stop reporting, `66 …` to reset
+pressure (only offered with the sensor deflated and outside the body) or flip the display, battery on `0x180A/0x1500`. Monitor processing is in `core/PelvicProcessor.kt`:
 
 - **Rest**: a 5 s relaxed capture (rejected if noisy), otherwise an auto rest from the 20th percentile of the last 30 s.
 - **Reference**: optional 5 s comfortable hold → readings shown as % of reference.
