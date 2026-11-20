@@ -97,8 +97,11 @@ class PelvicProcessor {
 
     @Synchronized
     fun ingest(timestampMs: Long, pressureKpa: Double): PelvicSnapshot {
-        val gap = lastTimestamp?.let { timestampMs - it > GAP_MS || timestampMs < it } ?: false
+        val backwards = lastTimestamp?.let { timestampMs < it } ?: false
+        val gap = backwards || lastTimestamp?.let { timestampMs - it > GAP_MS } ?: false
         lastTimestamp = timestampMs
+        // The phone clock was corrected backwards: start the trace afresh rather than draw time out of order.
+        if (backwards) trace.clear()
         if (gap) {
             holdOnsetMs = null
             belowSinceMs = null

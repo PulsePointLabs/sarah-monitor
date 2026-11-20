@@ -86,4 +86,13 @@ class PelvicProcessorTest {
     fun referenceNeedsRestFirst() {
         assertNotNull(PelvicProcessor().startCapture(CaptureKind.Reference, 0))
     }
+
+    @Test
+    fun clockGoingBackwardsRestartsTheTrace() {
+        val p = PelvicProcessor()
+        feed(p, 10_000, 2.0) { 5.0 }
+        val s = p.ingest(5_000, 5.0)
+        assertEquals(1, s.trace.size)
+        assertTrue(s.trace.single().gapBefore)
+    }
 }
