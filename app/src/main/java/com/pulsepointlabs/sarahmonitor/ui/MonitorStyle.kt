@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -154,64 +157,130 @@ fun StatChip(label: String, value: String, accent: Color = MonitorColors.text) {
 }
 
 /**
- * The big glowing reading, fitted to the space it has: as large as the height allows without overflowing the
- * width, centred both ways. [arrow] is +1 / -1 / 0.
+ * Blue → green → yellow → red for a trend from -1 (falling) through 0 (steady) to +1 (rising).
+ */
+fun trendColor(trend: Double): Color {
+    val stops = listOf(
+        -1.0 to Color(0xFF38BDF8),
+        -0.5 to Color(0xFF2DD4BF),
+        0.0 to Color(0xFF4ADE80),
+        0.5 to Color(0xFFFACC15),
+        1.0 to Color(0xFFF87171)
+    )
+    val t = trend.coerceIn(-1.0, 1.0)
+    for (i in 0 until stops.size - 1) {
+        val (a, ca) = stops[i]
+        val (b, cb) = stops[i + 1]
+        if (t <= b) return androidx.compose.ui.graphics.lerp(ca, cb, ((t - a) / (b - a)).toFloat())
+    }
+    return stops.last().second
+}
+
+/**
+ * The big glowing reading, fitted to the space it has and centred. Its size comes from [maxChars] (the widest
+ * value this metric can show), not the current text, and the trend line always has its slot reserved — so
+ * nothing jumps or shifts when digits change or the trend appears.
  */
 @Composable
 fun BigReading(
     value: String,
     color: Color,
     modifier: Modifier = Modifier,
-    arrow: Int = 0,
-    arrowGood: Int = 0,
-    suffix: String? = null,
+    maxChars: Int = value.length,
+    trend: List<Double>? = null,
+    trendColor: Color = color,
+    leading: (@Composable (sizeDp: Float) -> Unit)? = null,
     maxSizeDp: Float = 260f
 ) {
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
-        val showArrow = arrow != 0 && value != "--"
-        val chars = max(value.length, 2) + (if (showArrow) 1 else 0) + (suffix?.length?.times(0.45f) ?: 0f).toInt()
-        val byHeight = maxHeight.value * 0.92f
-        val byWidth = maxWidth.value / (chars * 0.62f + 0.25f)
-        val sizeDp = min(min(byHeight, byWidth), maxSizeDp).coerceAtLeast(MinTextSp + 6f)
+        val chars = max(maxChars, value.length).coerceAtLeast(2)
+        val leadingEm = if (leading != null) 0.8f else 0f
+        val textEm = chars * 0.6f + 0.1f
+        // Two ways to place the trend line: beside the number, or underneath it. Use whichever lets the
+        // number be bigger. The choice depends only on the box size, so it doesn't flip as values change.
+        val besideSize = min(maxWidth.value / (textEm + leadingEm + (if (trend != null) 1.7f else 0f) + 0.05f), maxHeight.value * 0.9f)
+        val belowSize = if (trend == null) 0f else min(maxWidth.value / (textEm + leadingEm + 0.05f), maxHeight.value * 0.9f / 1.4f)
+        val below = trend != null && belowSize > besideSize * 1.15f
+        val sizeDp = min(if (below) belowSize else besideSize, maxSizeDp).coerceAtLeast(MinTextSp + 6f)
         val fontSize = with(LocalDensity.current) { sizeDp.dp.toSp() }
-        val arrowColor = when {
-            arrowGood == 0 -> color
-            arrow == arrowGood -> MonitorColors.good
-            else -> MonitorColors.load
+        val number: @Composable () -> Unit = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (leading != null) {
+                    Box(Modifier.size((sizeDp * leadingEm).dp, sizeDp.dp), contentAlignment = Alignment.Center) { leading(sizeDp * 0.62f) }
+                }
+                Text(
+                    value,
+                    color = color,
+                    maxLines = 1,
+                    softWrap = false,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.width((sizeDp * textEm).dp),
+                    style = TextStyle(
+                        fontSize = fontSize,
+                        lineHeight = fontSize,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        shadow = Shadow(color.copy(alpha = 0.7f), Offset.Zero, blurRadius = 26f)
+                    )
+                )
+                if (trend != null && !below) {
+                    TrendLine(trend, trendColor, Modifier.size((sizeDp * 1.7f).dp, (sizeDp * 0.62f).dp).padding(start = (sizeDp * 0.12f).dp))
+                }
+            }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                value,
-                color = color,
-                maxLines = 1,
-                softWrap = false,
-                style = TextStyle(
-                    fontSize = fontSize,
-                    lineHeight = fontSize,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    shadow = Shadow(color.copy(alpha = 0.7f), Offset.Zero, blurRadius = 26f)
-                )
-            )
-            if (suffix != null) {
-                Text(
-                    suffix,
-                    color = color.copy(alpha = 0.8f),
-                    fontSize = max(MinTextSp, fontSize.value * 0.32f).sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(start = 3.dp)
-                )
+        if (below) {
+            androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                number()
+                TrendLine(trend!!, trendColor, Modifier.size((sizeDp * textEm).dp, (sizeDp * 0.36f).dp).padding(top = (sizeDp * 0.04f).dp))
             }
-            if (showArrow) {
-                Text(
-                    if (arrow > 0) "▲" else "▼",
-                    color = arrowColor,
-                    fontSize = max(MinTextSp, fontSize.value * 0.34f).sp,
-                    modifier = Modifier.padding(start = 4.dp)
-                )
-            }
+        } else {
+            number()
         }
     }
+}
+
+/** Small trend line (last ~2 minutes). Draws nothing until there are a few points, but always keeps its space. */
+@Composable
+fun TrendLine(values: List<Double>, color: Color, modifier: Modifier) {
+    androidx.compose.foundation.Canvas(modifier) {
+        if (values.size < 3) return@Canvas
+        val lo = values.min()
+        val hi = values.max()
+        val span = if (hi - lo < 1e-6) 1.0 else hi - lo
+        val pad = size.height * 0.12f
+        val path = androidx.compose.ui.graphics.Path()
+        values.forEachIndexed { i, v ->
+            val x = i.toFloat() / (values.size - 1) * size.width
+            val y = size.height - pad - ((v - lo) / span).toFloat() * (size.height - 2 * pad)
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.2f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+        val lastY = size.height - pad - ((values.last() - lo) / span).toFloat() * (size.height - 2 * pad)
+        drawCircle(color, radius = 3f * density, center = Offset(size.width, lastY))
+    }
+}
+
+/** A heart that pulses once per beat at the current RR interval. */
+@Composable
+fun BeatingHeart(intervalMs: Long?, color: Color, sizeDp: Float) {
+    val scale = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(1f) }
+    val interval by androidx.compose.runtime.rememberUpdatedState(intervalMs)
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            val i = interval
+            if (i == null) { kotlinx.coroutines.delay(500L); continue }
+            scale.animateTo(1.28f, androidx.compose.animation.core.tween(90))
+            scale.animateTo(1f, androidx.compose.animation.core.tween(160))
+            kotlinx.coroutines.delay((i - 250L).coerceAtLeast(60L))
+        }
+    }
+    Text(
+        "♥",
+        color = if (intervalMs == null) MonitorColors.dim else color,
+        fontSize = with(LocalDensity.current) { sizeDp.dp.toSp() },
+        modifier = Modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value },
+        style = TextStyle(shadow = Shadow(color.copy(alpha = 0.6f), Offset.Zero, blurRadius = 18f))
+    )
 }
 
 fun fmt(value: Double?, decimals: Int = 0): String = value?.let { "%.${decimals}f".format(it) } ?: "--"

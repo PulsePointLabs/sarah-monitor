@@ -34,7 +34,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pulsepointlabs.sarahmonitor.ble.ConnectionState
 import com.pulsepointlabs.sarahmonitor.core.CaptureKind
+import com.pulsepointlabs.sarahmonitor.core.Metric
 import com.pulsepointlabs.sarahmonitor.core.MonitorHub
+import com.pulsepointlabs.sarahmonitor.core.RecentHistory
 import com.pulsepointlabs.sarahmonitor.core.RestSource
 import kotlinx.coroutines.delay
 
@@ -99,17 +101,6 @@ fun MonitorCard(type: CardType, modifier: Modifier = Modifier) {
     }
 }
 
-private fun hrDirection(recent: List<Int>): Int {
-    if (recent.size < 12) return 0
-    val now = recent.takeLast(6).average()
-    val before = recent.dropLast(6).takeLast(6).average()
-    return when {
-        now - before > 3 -> 1
-        before - now > 3 -> -1
-        else -> 0
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun Chips(content: @Composable () -> Unit) {
@@ -139,15 +130,21 @@ private fun linkLabel(state: ConnectionState, fresh: Boolean): Pair<String, Colo
 @Composable
 private fun HeartRateCard() {
     val heart by MonitorHub.heart.collectAsState()
+    val recent by MonitorHub.recent.collectAsState()
     val state by MonitorHub.h10.state.collectAsState()
     val fresh = heart.updatedAtMs?.let { System.currentTimeMillis() - it < 5_000L } == true
     val (link, linkColor) = linkLabel(state, fresh)
+    val tint = trendColor(recent.trend(Metric.Hr))
+    val beatMs = if (!fresh) null else heart.latestRrMs?.takeIf { it in 300..2_000 }?.toLong()
+        ?: heart.heartRate?.takeIf { it in 30..220 }?.let { 60_000L / it }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         CardTitle("HR", MonitorColors.hr, "bpm") { Text(link, color = linkColor, fontSize = LocalCardScale.current.sp(11f), maxLines = 1) }
         BigReading(
             value = if (fresh) heart.heartRate?.toString() ?: "--" else "--",
-            color = MonitorColors.hr,
-            arrow = hrDirection(heart.recentHr),
+            color = tint,
+            maxChars = 3,
+            trend = recent.values(Metric.Hr),
+            leading = { size -> BeatingHeart(beatMs, Color(0xFFFB7185), size) },
             modifier = Modifier.fillMaxWidth().weight(1f)
         )
         Chips {
@@ -162,23 +159,24 @@ private fun HeartRateCard() {
 @Composable
 private fun HrvCard() {
     val heart by MonitorHub.heart.collectAsState()
+    val recent by MonitorHub.recent.collectAsState()
     val s = LocalCardScale.current
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         CardTitle("HRV", MonitorColors.rmssd, "2 min") { Text(heart.hrvQuality, color = MonitorColors.label, fontSize = s.sp(11f), maxLines = 1) }
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
             val wide = maxWidth > maxHeight * 1.5f
-            val items: List<Triple<String, String, Color>> = listOf(
-                Triple("RMSSD", fmt(heart.rmssdMs, 1), MonitorColors.rmssd),
-                Triple("SDNN", fmt(heart.sdnnMs, 1), MonitorColors.sdnn),
-                Triple("pNN50", fmt(heart.pnn50Percent), MonitorColors.pnn50)
+            val items = listOf(
+                HrvItem("RMSSD", fmt(heart.rmssdMs, 1), MonitorColors.rmssd, 5, Metric.Rmssd),
+                HrvItem("SDNN", fmt(heart.sdnnMs, 1), MonitorColors.sdnn, 5, Metric.Sdnn),
+                HrvItem("pNN50", fmt(heart.pnn50Percent), MonitorColors.pnn50, 3, Metric.Pnn50)
             )
             if (wide) {
                 Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items.forEach { (label, value, color) -> HrvValue(label, value, color, Modifier.weight(1f).fillMaxSize()) }
+                    items.forEach { HrvValue(it, recent, Modifier.weight(1f).fillMaxSize()) }
                 }
             } else {
                 Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    items.forEach { (label, value, color) -> HrvValue(label, value, color, Modifier.weight(1f).fillMaxWidth()) }
+                    items.forEach { HrvValue(it, recent, Modifier.weight(1f).fillMaxWidth()) }
                 }
             }
         }
@@ -186,19 +184,23 @@ private fun HrvCard() {
     }
 }
 
+private data class HrvItem(val label: String, val value: String, val color: Color, val maxChars: Int, val metric: Metric)
+
 @Composable
-private fun HrvValue(label: String, value: String, color: Color, modifier: Modifier) {
+private fun HrvValue(item: HrvItem, recent: RecentHistory, modifier: Modifier) {
     val s = LocalCardScale.current
+    val tint = trendColor(recent.trend(item.metric))
+    val values = recent.values(item.metric)
     BoxWithConstraints(modifier) {
         if (maxWidth > maxHeight * 2.2f) {
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                Text(label, color = color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.32f))
-                BigReading(value, color, Modifier.weight(0.68f).fillMaxSize())
+                Text(item.label, color = item.color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.3f))
+                BigReading(item.value, tint, Modifier.weight(0.7f).fillMaxSize(), maxChars = item.maxChars, trend = values)
             }
         } else {
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(label, color = color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold)
-                BigReading(value, color, Modifier.fillMaxWidth().weight(1f))
+                Text(item.label, color = item.color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold)
+                BigReading(item.value, tint, Modifier.fillMaxWidth().weight(1f), maxChars = item.maxChars, trend = values)
             }
         }
     }
@@ -207,11 +209,15 @@ private fun HrvValue(label: String, value: String, color: Color, modifier: Modif
 @Composable
 private fun LoadCard() {
     val heart by MonitorHub.heart.collectAsState()
+    val recent by MonitorHub.recent.collectAsState()
     val load = heart.load
     val color = loadColor(load.score)
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         CardTitle("Load", MonitorColors.load, "0–100") { Text(loadLabel(load.score), color = color, fontSize = LocalCardScale.current.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1) }
-        BigReading(load.score?.toString() ?: "--", color, Modifier.fillMaxWidth().weight(1f))
+        BigReading(
+            load.score?.toString() ?: "--", trendColor(recent.trend(Metric.Load)), Modifier.fillMaxWidth().weight(1f),
+            maxChars = 3, trend = recent.values(Metric.Load)
+        )
         Chips {
             StatChip("HR load", load.hrLoadPercent?.let { "$it%" } ?: "--")
             StatChip("HRV supp.", load.hrvSuppressionPercent?.let { "$it%" } ?: "--")
@@ -262,6 +268,7 @@ private fun TrendCardFrame(
     title: String,
     color: Color,
     unit: String,
+    current: @Composable () -> Unit = {},
     content: @Composable (startMs: Long, endMs: Long) -> Unit
 ) {
     var window by rememberSaveable(title) { mutableStateOf(TrendWindow.M15) }
@@ -269,7 +276,10 @@ private fun TrendCardFrame(
     val end = trends.lastOrNull()?.timestampMs ?: System.currentTimeMillis()
     val start = window.ms?.let { end - it } ?: (trends.firstOrNull()?.timestampMs ?: end - 60_000L)
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        CardTitle(title, color, unit) { WindowPicker(window) { window = it } }
+        CardTitle(title, color, unit) {
+            current()
+            WindowPicker(window) { window = it }
+        }
         Box(Modifier.fillMaxWidth().weight(1f)) { content(start, end) }
     }
 }
@@ -277,7 +287,11 @@ private fun TrendCardFrame(
 @Composable
 private fun HrTrendCard() {
     val trends by MonitorHub.trends.collectAsState()
-    TrendCardFrame("HR trend", MonitorColors.hr, "bpm") { start, end ->
+    val heart by MonitorHub.heart.collectAsState()
+    val recent by MonitorHub.recent.collectAsState()
+    TrendCardFrame("HR trend", MonitorColors.hr, "bpm", current = {
+        LiveValue(null, heart.heartRate?.toString(), 3, trendColor(recent.trend(Metric.Hr)))
+    }) { start, end ->
         val avg = trends.filter { it.timestampMs >= start }.mapNotNull { it.hr }.takeIf { it.isNotEmpty() }?.average()
         TrendChart(
             series = listOf(Series("HR", MonitorColors.hr, trends.map { it.timestampMs to it.hr })),
@@ -290,7 +304,12 @@ private fun HrTrendCard() {
 @Composable
 private fun HrvTrendCard() {
     val trends by MonitorHub.trends.collectAsState()
-    TrendCardFrame("HRV trend", MonitorColors.rmssd, "ms") { start, end ->
+    val heart by MonitorHub.heart.collectAsState()
+    val recent by MonitorHub.recent.collectAsState()
+    TrendCardFrame("HRV trend", MonitorColors.rmssd, "ms", current = {
+        LiveValue("RMSSD", heart.rmssdMs?.let { fmt(it, 1) }, 5, trendColor(recent.trend(Metric.Rmssd)))
+        LiveValue("SDNN", heart.sdnnMs?.let { fmt(it, 1) }, 5, trendColor(recent.trend(Metric.Sdnn)))
+    }) { start, end ->
         Column(Modifier.fillMaxSize()) {
             TrendChart(
                 series = listOf(
@@ -306,6 +325,23 @@ private fun HrvTrendCard() {
     }
 }
 
+/** A live number for a card header, padded to a fixed width so it never shifts its neighbours. */
+@Composable
+private fun LiveValue(label: String?, value: String?, maxChars: Int, color: Color) {
+    val s = LocalCardScale.current
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 6.dp)) {
+        if (label != null) Text("$label ", color = MonitorColors.label, fontSize = s.sp(11f), maxLines = 1)
+        Text(
+            (value ?: "--").padStart(maxChars),
+            color = if (value == null) MonitorColors.dim else color,
+            fontSize = s.sp(15f),
+            fontWeight = FontWeight.Bold,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            maxLines = 1
+        )
+    }
+}
+
 @Composable
 private fun Legend(label: String, color: Color) {
     val s = LocalCardScale.current
@@ -318,7 +354,11 @@ private fun Legend(label: String, color: Color) {
 @Composable
 private fun PelvicTrendCard() {
     val trends by MonitorHub.trends.collectAsState()
-    TrendCardFrame("Pressure trend", MonitorColors.pelvic, "kPa") { start, end ->
+    val pelvic by MonitorHub.pelvic.collectAsState()
+    val recent by MonitorHub.recent.collectAsState()
+    TrendCardFrame("Pressure trend", MonitorColors.pelvic, "kPa", current = {
+        LiveValue(null, pelvic.aboveRestKpa?.let { fmt(it, 1) }, 4, trendColor(recent.trend(Metric.Pelvic)))
+    }) { start, end ->
         TrendChart(
             series = listOf(Series("Above rest", MonitorColors.pelvic, trends.map { it.timestampMs to it.pelvic })),
             startMs = start, endMs = end, modifier = Modifier.fillMaxSize(), minSpan = 1.0, decimals = 1,
@@ -341,24 +381,19 @@ private fun PelvicCard() {
         p.lastPulse != null -> "last ${fmt(p.lastPulse!!.durationS, 1)}s"
         else -> "hold --"
     }
-    val color = if (p.holding) Color(0xFF7CFFE9) else MonitorColors.pelvic
+    val recent by MonitorHub.recent.collectAsState()
+    val color = trendColor(recent.trend(Metric.Pelvic))
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         CardTitle("Pelvic pressure", MonitorColors.pelvic, "kPa") { Text(link, color = linkColor, fontSize = s.sp(11f), maxLines = 1) }
-        Row(Modifier.fillMaxWidth().weight(if (s.compact) 1f else 0.9f), verticalAlignment = Alignment.CenterVertically) {
-            BigReading(
-                value = if (fresh) fmt(p.aboveRestKpa, 1) else "--",
-                color = color,
-                arrow = p.trend,
-                modifier = Modifier.weight(1f).fillMaxSize()
-            )
-            p.percentOfReference?.takeIf { fresh }?.let {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(start = 6.dp)) {
-                    Text("${"%.0f".format(it)}%", color = MonitorColors.pelvic, fontSize = s.sp(22f), fontWeight = FontWeight.Bold)
-                    Text("of ref", color = MonitorColors.label, fontSize = s.sp(11f))
-                }
-            }
-        }
+        BigReading(
+            value = if (fresh) fmt(p.aboveRestKpa, 1) else "--",
+            color = color,
+            maxChars = 4,
+            trend = recent.values(Metric.Pelvic),
+            modifier = Modifier.fillMaxWidth().weight(if (s.compact) 1f else 0.9f)
+        )
         Chips {
+            if (p.referenceKpa != null) StatChip("of ref", p.percentOfReference?.takeIf { fresh }?.let { "${"%.0f".format(it)}%" } ?: "--", MonitorColors.pelvic)
             StatChip("30s avg", fmt(p.average30s, 1))
             StatChip("30s max", fmt(p.max30s, 1))
             StatChip("max", fmt(p.sessionMax, 1))
@@ -434,6 +469,7 @@ private fun BloodPressureCard() {
         }
         BigReading(
             value = latest?.let { "${it.systolic}/${it.diastolic}" } ?: "--/--",
+            maxChars = 7,
             color = latest?.let { bpColor(it.systolic, it.diastolic) } ?: MonitorColors.dim,
             modifier = Modifier.fillMaxWidth().weight(1f)
         )
@@ -474,7 +510,7 @@ private fun GlucoseCard() {
         CardTitle("Glucose", MonitorColors.glucose, "mg/dL") {
             Text(latest?.let { agoLabel(it.timestampMs) } ?: "", color = MonitorColors.label, fontSize = s.sp(11f), maxLines = 1)
         }
-        BigReading(latest?.let { fmt(it.mgDl) } ?: "--", glucoseColor(latest?.mgDl), Modifier.fillMaxWidth().weight(1f))
+        BigReading(latest?.let { fmt(it.mgDl) } ?: "--", glucoseColor(latest?.mgDl), Modifier.fillMaxWidth().weight(1f), maxChars = 3)
         Chips {
             val previous = readings.dropLast(1).lastOrNull()
             if (latest != null && previous != null) StatChip("Δ", "${if (latest.mgDl >= previous.mgDl) "+" else ""}${fmt(latest.mgDl - previous.mgDl)}")

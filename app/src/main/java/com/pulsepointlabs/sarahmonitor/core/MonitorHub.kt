@@ -51,6 +51,11 @@ object MonitorHub {
     private val _pelvic = MutableStateFlow(PelvicSnapshot())
     val pelvic: StateFlow<PelvicSnapshot> = _pelvic
 
+    private val recentRecorder = RecentHistoryRecorder()
+    private val _recent = MutableStateFlow(RecentHistory())
+    /** Last 2 minutes of each metric, for trend lines and trend colours. */
+    val recent: StateFlow<RecentHistory> = _recent
+
     private val _trends = MutableStateFlow<List<TrendPoint>>(emptyList())
     val trends: StateFlow<List<TrendPoint>> = _trends
 
@@ -77,6 +82,13 @@ object MonitorHub {
                 trendRecorder.addHeart(reading.timestampMs, snapshot)
                 _heart.value = snapshot
                 recorder.onHeart(snapshot, heartEngine.lastRr)
+                val t = reading.timestampMs
+                recentRecorder.add(Metric.Hr, t, snapshot.heartRate?.toDouble())
+                recentRecorder.add(Metric.Rmssd, t, snapshot.rmssdMs)
+                recentRecorder.add(Metric.Sdnn, t, snapshot.sdnnMs)
+                recentRecorder.add(Metric.Pnn50, t, snapshot.pnn50Percent)
+                recentRecorder.add(Metric.Load, t, snapshot.load.score?.toDouble())
+                _recent.value = recentRecorder.snapshot()
             }
         }
         scope.launch {
@@ -95,6 +107,7 @@ object MonitorHub {
                 if (sample.monotonicMs - lastPublish >= 33L || snapshot.capture != null) {
                     lastPublish = sample.monotonicMs
                     _pelvic.value = snapshot
+                    if (recentRecorder.add(Metric.Pelvic, sample.timestampMs, snapshot.aboveRestKpa)) _recent.value = recentRecorder.snapshot()
                 }
             }
         }
@@ -163,6 +176,8 @@ object MonitorHub {
         heartEngine.reset()
         pelvicProcessor.resetStats()
         trendRecorder.clear()
+        recentRecorder.clear()
+        _recent.value = RecentHistory()
         _heart.value = HeartSnapshot()
         _trends.value = emptyList()
     }

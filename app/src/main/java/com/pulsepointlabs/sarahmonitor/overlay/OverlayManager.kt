@@ -46,7 +46,9 @@ import kotlin.math.roundToInt
 
 /** The independent floating overlays, one per sensor. */
 enum class OverlayKind(val label: String, val card: CardType, val defaultWidthDp: Int, val defaultHeightDp: Int) {
-    HeartRate("Heart rate", CardType.HeartRate, 230, 180),
+    HeartRate("Heart rate", CardType.HeartRate, 250, 180),
+    Hrv("HRV (RMSSD · SDNN · pNN50)", CardType.Hrv, 300, 200),
+    Load("Physiological load", CardType.Load, 230, 160),
     BloodPressure("Blood pressure", CardType.BloodPressure, 280, 230),
     Pelvic("Pelvic pressure", CardType.Pelvic, 320, 340)
 }
