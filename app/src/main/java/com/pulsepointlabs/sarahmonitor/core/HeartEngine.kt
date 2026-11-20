@@ -59,6 +59,10 @@ class HeartEngine {
     private var lastMovement: String? = null
     private var snapshot = HeartSnapshot()
 
+    /** RR intervals (with filter results) from the most recent [add] call, for session recording. */
+    var lastRr: List<RrSampleEntity> = emptyList()
+        private set
+
     @Synchronized
     fun reset() {
         hrWindow.clear(); rrWindow.clear(); acceptedSeed.clear(); rawSeed.clear()
@@ -86,6 +90,7 @@ class HeartEngine {
             maxHr = maxOf(maxHr ?: bpm, bpm)
             smoothed = if (smoothed == 0.0) bpm.toDouble() else smoothed * 0.75 + bpm * 0.25
         }
+        val batch = mutableListOf<RrSampleEntity>()
         reading.rrIntervalsMs.forEachIndexed { index, raw ->
             val filtered = HrvCalculator.filterContextual(raw, acceptedSeed.toList(), rawSeed.toList())
             if (filtered.accepted && filtered.cleanMs != null) {
@@ -108,8 +113,10 @@ class HeartEngine {
                 accepted = filtered.accepted
             )
             rrWindow.addLast(entity)
+            batch += entity
             estimator.addRr(now, entity.cleanIntervalMs, entity.accepted, HrvCalculator.isEctopic(entity))
         }
+        lastRr = batch
         while (rrWindow.isNotEmpty() && now - rrWindow.first().timestampMs > HRV_WINDOW_MS) rrWindow.removeFirst()
         estimator.addHeartRate(now, bpm)
         val windowSpan = hrWindow.let { if (it.size < 2) null else it.last().first - it.first().first + 1_000L }

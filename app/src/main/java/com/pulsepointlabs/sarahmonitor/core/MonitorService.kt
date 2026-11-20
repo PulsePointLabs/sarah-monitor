@@ -80,7 +80,7 @@ class MonitorService : Service() {
             }
         }
         scope.launch {
-            combine(MonitorHub.heart, MonitorHub.pelvic) { h, p -> h to p }.collect { (h, p) ->
+            combine(MonitorHub.heart, MonitorHub.pelvic, MonitorHub.session) { h, p, _ -> h to p }.collect { (h, p) ->
                 val parts = listOfNotNull(
                     h.heartRate?.let { "HR $it" },
                     p.aboveRestKpa?.let { "Pelvic ${"%.1f".format(it)} kPa" },
@@ -94,6 +94,14 @@ class MonitorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_MARK) {
+            MonitorHub.markEvent(System.currentTimeMillis(), setOf("event"), "") { ok ->
+                android.os.Handler(mainLooper).post {
+                    android.widget.Toast.makeText(this, if (ok) "Event marked — add details in review" else "Not recording", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+            return START_STICKY
+        }
         if (intent?.action == ACTION_STOP) {
             overlays.hideAll()
             stopSelf()
@@ -126,6 +134,10 @@ class MonitorService : Service() {
         val stop = PendingIntent.getService(
             this, 1, Intent(this, MonitorService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE
         )
+        val mark = PendingIntent.getService(
+            this, 2, Intent(this, MonitorService::class.java).setAction(ACTION_MARK), PendingIntent.FLAG_IMMUTABLE
+        )
+        val recording = MonitorHub.session.value
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_monitor)
             .setContentTitle("Sarah Monitor")
@@ -133,6 +145,8 @@ class MonitorService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(open)
+            .apply { if (recording != null) addAction(0, "★ Mark event", mark) }
+            .setSubText(if (recording != null) "● Recording" else null)
             .addAction(0, "Stop", stop)
             .build()
     }
@@ -141,6 +155,7 @@ class MonitorService : Service() {
         private const val CHANNEL = "monitor"
         private const val NOTIFICATION_ID = 7
         const val ACTION_STOP = "com.pulsepointlabs.sarahmonitor.STOP"
+        const val ACTION_MARK = "com.pulsepointlabs.sarahmonitor.MARK"
 
         fun start(context: Context) {
             val bluetoothGranted = Build.VERSION.SDK_INT < 31 ||

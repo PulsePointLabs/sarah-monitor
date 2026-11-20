@@ -1,0 +1,159 @@
+package com.pulsepointlabs.sarahmonitor.review
+
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import com.pulsepointlabs.sarahmonitor.core.MonitorHub
+import com.pulsepointlabs.sarahmonitor.session.MarkerEntity
+import com.pulsepointlabs.sarahmonitor.session.MarkerPreferences
+import com.pulsepointlabs.sarahmonitor.session.MarkerTypes
+import com.pulsepointlabs.sarahmonitor.session.VoiceNoteRecognizer
+import com.pulsepointlabs.sarahmonitor.ui.MonitorColors
+import com.pulsepointlabs.sarahmonitor.ui.fmt
+
+/** Colour per event type, used for chips, chart marker lines and the event list. */
+fun markerColor(types: String): Color = when (MarkerTypes.split(types).firstOrNull()) {
+    "symptom" -> MonitorColors.warn
+    "activity" -> MonitorColors.sdnn
+    "intake" -> MonitorColors.glucose
+    "recovery" -> MonitorColors.good
+    "arousal" -> MonitorColors.bp
+    "edge" -> MonitorColors.pelvic
+    "orgasm" -> Color(0xFFFF7AB6)
+    else -> Color(0xFFE6EEF5)
+}
+
+
+/**
+ * Mark (or edit) an event. The time is the moment the dialog was opened, so typing a note doesn't move the
+ * marker. Shows the live numbers at that moment, like SarahVS.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun MarkEventDialog(
+    pressedAtMs: Long,
+    editing: MarkerEntity? = null,
+    onSave: (types: Set<String>, note: String) -> Unit,
+    onDelete: (() -> Unit)? = null,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val heart by MonitorHub.heart.collectAsState()
+    val pelvic by MonitorHub.pelvic.collectAsState()
+    var types by remember { mutableStateOf(editing?.let { MarkerTypes.split(it.types) } ?: setOf("event")) }
+    var note by remember { mutableStateOf(editing?.note ?: "") }
+    var status by remember { mutableStateOf("") }
+    val last = remember { if (editing == null) MarkerPreferences.last(context) else null }
+    val recognizer = remember { VoiceNoteRecognizer(context) }
+    DisposableEffect(Unit) { onDispose { recognizer.stop() } }
+    fun listen() = recognizer.start(note, onText = { note = it }, onStatus = { status = it }, onError = { status = it })
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { if (it) listen() else status = "Microphone permission is needed for voice notes" }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MonitorColors.panel,
+        title = {
+            Column {
+                Text(if (editing == null) "Mark event" else if (editing.id.isEmpty()) "Add event" else "Edit event", color = MonitorColors.text, fontWeight = FontWeight.Bold)
+                Text(
+                    "${clockLabel(pressedAtMs, seconds = true)}" +
+                        if (editing == null) "  ·  HR ${heart.heartRate ?: "--"}  ·  load ${heart.load.score ?: "--"}  ·  pressure ${fmt(pelvic.aboveRestKpa, 1)} kPa" else "",
+                    color = MonitorColors.label,
+                    fontSize = 13.sp
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                last?.let { l ->
+                    Text(
+                        "↻ Repeat last: ${l.label}",
+                        color = MonitorColors.pelvic,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, MonitorColors.pelvic.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                            .clickable { onSave(l.types, l.note) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    )
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MarkerTypes.all.forEach { type ->
+                        val on = type.id in types
+                        val color = markerColor(type.id)
+                        Text(
+                            type.label,
+                            color = if (on) MonitorColors.background else color,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .background(if (on) color else Color.Transparent, RoundedCornerShape(16.dp))
+                                .border(1.dp, color.copy(alpha = 0.7f), RoundedCornerShape(16.dp))
+                                .clickable { types = if (on && types.size > 1) types - type.id else types + type.id }
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = note,
+                        onValueChange = { note = it },
+                        label = { Text("Note (optional)") },
+                        modifier = Modifier.weight(1f),
+                        maxLines = 4
+                    )
+                    IconButton(onClick = {
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) listen()
+                        else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                    }) { Icon(Icons.Default.Mic, contentDescription = "Voice note", tint = MonitorColors.pelvic) }
+                }
+                if (status.isNotBlank()) Text(status, color = MonitorColors.label, fontSize = 12.sp)
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(types, note) }) { Text("Save") } },
+        dismissButton = {
+            Row {
+                if (onDelete != null) TextButton(onClick = onDelete) { Text("Delete", color = MonitorColors.alarm) }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        }
+    )
+}

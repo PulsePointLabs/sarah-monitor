@@ -34,6 +34,9 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.pulsepointlabs.sarahmonitor.MainActivity
+import com.pulsepointlabs.sarahmonitor.core.MonitorHub
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import com.pulsepointlabs.sarahmonitor.ui.CardType
 import com.pulsepointlabs.sarahmonitor.ui.MonitorCard
 import com.pulsepointlabs.sarahmonitor.ui.MonitorColors
@@ -190,6 +193,18 @@ class OverlayManager(private val base: Context) {
                             .clickable { OverlaySettings.set(base, kind, false) }
                             .padding(horizontal = 8.dp, vertical = 0.dp)
                     )
+                    val recording by MonitorHub.session.collectAsState()
+                    if (recording != null) {
+                        Text(
+                            "＋",
+                            color = MonitorColors.warn,
+                            fontSize = 18.sp,
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .clickable { quickMark() }
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
                     Text(
                         "⤢",
                         color = MonitorColors.label,
@@ -234,6 +249,14 @@ class OverlayManager(private val base: Context) {
         }
         shown[kind] = Shown(view, owner, params, wm, displayId)
         commit()
+    }
+
+    private fun quickMark() {
+        MonitorHub.markEvent(System.currentTimeMillis(), setOf("event"), "") { ok ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(base, if (ok) "Event marked — add details in review" else "Not recording", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun openApp(displayId: Int) {

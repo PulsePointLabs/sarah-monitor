@@ -5,6 +5,9 @@ import android.util.Log
 import com.pulsepointlabs.sarahmonitor.ble.BluetoothHrClient
 import com.pulsepointlabs.sarahmonitor.ble.CivetClient
 import com.pulsepointlabs.sarahmonitor.ble.OmronBleClient
+import com.pulsepointlabs.sarahmonitor.session.MarkerPreferences
+import com.pulsepointlabs.sarahmonitor.session.SessionEntity
+import com.pulsepointlabs.sarahmonitor.session.SessionRecorder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,6 +36,10 @@ object MonitorHub {
     lateinit var omron: OmronBleClient; private set
     lateinit var bp: BpStore; private set
     lateinit var glucose: GlucoseStore; private set
+    lateinit var recorder: SessionRecorder; private set
+
+    /** The session being recorded, or null. */
+    val session: StateFlow<SessionEntity?> get() = recorder.active
 
     private val heartEngine = HeartEngine()
     private val pelvicProcessor = PelvicProcessor()
@@ -56,27 +63,34 @@ object MonitorHub {
         if (initialized) return
         initialized = true
         val app = context.applicationContext
+        appContext = app
         h10 = BluetoothHrClient(app)
         civet = CivetClient(app)
         omron = OmronBleClient(app)
         bp = BpStore(app)
         glucose = GlucoseStore(app)
+        recorder = SessionRecorder(app, scope)
 
         scope.launch {
             h10.readings.collect { reading ->
                 val snapshot = heartEngine.add(reading)
                 trendRecorder.addHeart(reading.timestampMs, snapshot)
                 _heart.value = snapshot
+                recorder.onHeart(snapshot, heartEngine.lastRr)
             }
         }
         scope.launch {
             h10.accelerometerBatches.collect { heartEngine.addAccelerometer(it) }
         }
         scope.launch {
+            h10.ecgBatches.collect { recorder.onEcg(it) }
+        }
+        scope.launch {
             var lastPublish = 0L
             civet.samples.collect { sample ->
                 val snapshot = pelvicProcessor.ingest(sample.timestampMs, sample.pressureKpa)
                 trendRecorder.addPelvic(sample.timestampMs, snapshot.aboveRestKpa)
+                recorder.onPelvic(sample.timestampMs, sample.pressureKpa, snapshot.aboveRestKpa, snapshot.holding)
                 // Pressure can arrive faster than the screen refreshes; publish at most every 33 ms.
                 if (sample.monotonicMs - lastPublish >= 33L || snapshot.capture != null) {
                     lastPublish = sample.monotonicMs
@@ -120,6 +134,29 @@ object MonitorHub {
     fun startPelvicCapture(kind: CaptureKind): String? = pelvicProcessor.startCapture(kind, System.currentTimeMillis())
 
     fun clearPelvicCalibration() = pelvicProcessor.clearCalibration()
+
+    /** Starts recording a session; live statistics and trends restart with it. */
+    fun startSession() {
+        scope.launch {
+            if (recorder.active.value == null) resetSession()
+            recorder.start()
+        }
+    }
+
+    fun stopSession(onStopped: (SessionEntity?) -> Unit = {}) {
+        scope.launch { onStopped(recorder.stop()) }
+    }
+
+    /** Marks an event at [timestampMs] (the moment the button was pressed). Returns false if not recording. */
+    fun markEvent(timestampMs: Long, types: Set<String>, note: String, onDone: (Boolean) -> Unit = {}) {
+        scope.launch {
+            val marker = recorder.addMarker(timestampMs, types, note)
+            if (marker != null) MarkerPreferences.remember(appContext, types, note)
+            onDone(marker != null)
+        }
+    }
+
+    private lateinit var appContext: Context
 
     /** Starts a fresh monitoring period: clears HR/HRV/Load stats, pelvic counts and the trend graphs. */
     fun resetSession() {

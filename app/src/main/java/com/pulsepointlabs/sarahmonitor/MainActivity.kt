@@ -1,6 +1,23 @@
 package com.pulsepointlabs.sarahmonitor
 
 import android.Manifest
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import com.pulsepointlabs.sarahmonitor.review.MarkEventDialog
+import com.pulsepointlabs.sarahmonitor.review.ReviewScreen
+import com.pulsepointlabs.sarahmonitor.review.SessionsScreen
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
@@ -98,6 +115,16 @@ class MainActivity : ComponentActivity() {
         else toast("Health Connect access wasn't granted.")
     }
 
+    private var pendingCsv: String? = null
+    private val csvExportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        val text = pendingCsv
+        pendingCsv = null
+        if (uri != null && text != null) {
+            runCatching { contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) } }
+                .onSuccess { toast("CSV saved") }.onFailure { toast("Couldn't save the CSV") }
+        }
+    }
+
     private val csvLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importCsv) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,6 +140,7 @@ class MainActivity : ComponentActivity() {
                     layoutStore = layoutStore,
                     onCsvImport = { csvLauncher.launch(arrayOf("text/*", "application/csv", "application/vnd.ms-excel", "*/*")) },
                     onHealthConnect = ::requestHealthConnect,
+                    onExportCsv = { name, text -> pendingCsv = text; csvExportLauncher.launch(name) },
                     onMessage = ::toast
                 )
             }
@@ -238,20 +266,36 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private enum class Screen { Monitor, Sessions }
+
 @Composable
 private fun MonitorScreen(
     layoutStore: LayoutStore,
     onCsvImport: () -> Unit,
     onHealthConnect: () -> Unit,
+    onExportCsv: (String, String) -> Unit,
     onMessage: (String) -> Unit
 ) {
     var slots by remember { mutableStateOf(layoutStore.load()) }
     var locked by remember { mutableStateOf(layoutStore.locked()) }
+    var screen by rememberSaveable { mutableStateOf(Screen.Monitor) }
+    var reviewId by rememberSaveable { mutableStateOf<String?>(null) }
     var showDevices by remember { mutableStateOf(false) }
     var showCards by remember { mutableStateOf(false) }
     var showOverlays by remember { mutableStateOf(false) }
     var showAddGlucose by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
+    var confirmStop by remember { mutableStateOf(false) }
+    var markAt by remember { mutableStateOf<Long?>(null) }
+    val session by MonitorHub.session.collectAsState()
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    fun mark() {
+        if (session == null) onMessage("Start recording (● Record) to mark events.") else markAt = System.currentTimeMillis()
+    }
+    BackHandler(enabled = reviewId != null || screen != Screen.Monitor) {
+        if (reviewId != null) reviewId = null else screen = Screen.Monitor
+    }
     val actions = remember {
         CardActions(
             onAddGlucose = { showAddGlucose = true },
@@ -267,9 +311,25 @@ private fun MonitorScreen(
                 .background(MonitorColors.background)
                 .safeDrawingPadding()
                 .padding(horizontal = 8.dp, vertical = 4.dp)
+                .focusRequester(focus)
+                .focusable()
+                // DeX / keyboard: M marks an event, R starts or stops recording.
+                .onPreviewKeyEvent { e ->
+                    if (e.type != KeyEventType.KeyDown || markAt != null) return@onPreviewKeyEvent false
+                    when (e.key) {
+                        Key.M -> { mark(); true }
+                        Key.R -> { if (session == null) MonitorHub.startSession() else confirmStop = true; true }
+                        else -> false
+                    }
+                }
         ) {
             TopBar(
+                screen = if (reviewId != null) Screen.Sessions else screen,
+                recording = session,
                 locked = locked,
+                onScreen = { screen = it; reviewId = null },
+                onRecord = { if (session == null) MonitorHub.startSession() else confirmStop = true },
+                onMark = ::mark,
                 onDevices = { showDevices = true },
                 onCards = { showCards = true },
                 onOverlays = { showOverlays = true },
@@ -277,13 +337,49 @@ private fun MonitorScreen(
                 onReset = { confirmReset = true }
             )
             Spacer(Modifier.size(4.dp))
-            Dashboard(
-                slots = slots,
-                locked = locked,
-                onChange = { slots = it; layoutStore.save(it) },
-                modifier = Modifier.fillMaxSize()
-            )
+            val openReview = reviewId
+            when {
+                openReview != null -> ReviewScreen(
+                    sessionId = openReview,
+                    onBack = { reviewId = null },
+                    onExportCsv = onExportCsv,
+                    onMessage = onMessage,
+                    modifier = Modifier.fillMaxSize()
+                )
+                screen == Screen.Sessions -> SessionsScreen(onOpen = { reviewId = it }, modifier = Modifier.fillMaxSize())
+                else -> Dashboard(
+                    slots = slots,
+                    locked = locked,
+                    onChange = { slots = it; layoutStore.save(it) },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
+    }
+    markAt?.let { t ->
+        MarkEventDialog(
+            pressedAtMs = t,
+            onSave = { types, note ->
+                MonitorHub.markEvent(t, types, note) { ok -> if (!ok) onMessage("Not recording; event not saved.") }
+                markAt = null
+            },
+            onDismiss = { markAt = null }
+        )
+    }
+    if (confirmStop) {
+        AlertDialog(
+            onDismissRequest = { confirmStop = false },
+            containerColor = MonitorColors.panel,
+            title = { Text("Stop recording?", color = MonitorColors.text) },
+            text = { Text("The session is saved and opens for review. Sensors stay connected.", color = MonitorColors.label) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmStop = false
+                    MonitorHub.stopSession { stopped -> stopped?.let { reviewId = it.id; screen = Screen.Sessions } }
+                }) { Text("Stop & review") }
+            },
+            dismissButton = { TextButton(onClick = { confirmStop = false }) { Text("Keep recording") } }
+        )
     }
     if (showDevices) DevicesPanel({ showDevices = false }, onHealthConnect, onCsvImport, onMessage)
     if (showCards) {
@@ -300,7 +396,7 @@ private fun MonitorScreen(
         AlertDialog(
             onDismissRequest = { confirmReset = false },
             title = { Text("Start fresh?") },
-            text = { Text("Clears HR/HRV/Load statistics, pressure counts and the trend graphs. Sensors stay connected; BP and glucose readings are kept.") },
+            text = { Text("Clears the live HR/HRV/Load statistics, pressure counts and trend graphs. Sensors stay connected; recorded sessions, BP and glucose are kept.") },
             confirmButton = { TextButton(onClick = { MonitorHub.resetSession(); confirmReset = false }) { Text("Reset") } },
             dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Cancel") } }
         )
@@ -311,7 +407,12 @@ private val clockFormat = DateTimeFormatter.ofPattern("HH:mm:ss")
 
 @Composable
 private fun TopBar(
+    screen: Screen,
+    recording: com.pulsepointlabs.sarahmonitor.session.SessionEntity?,
     locked: Boolean,
+    onScreen: (Screen) -> Unit,
+    onRecord: () -> Unit,
+    onMark: () -> Unit,
     onDevices: () -> Unit,
     onCards: () -> Unit,
     onOverlays: () -> Unit,
@@ -323,20 +424,97 @@ private fun TopBar(
     val h10 by MonitorHub.h10.state.collectAsState()
     val civet by MonitorHub.civet.state.collectAsState()
     val omron by MonitorHub.omron.state.collectAsState()
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Sarah Monitor", color = MonitorColors.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Text(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(clockFormat), color = MonitorColors.label, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
-        Spacer(Modifier.weight(1f))
-        DevicePill("H10", h10, onDevices)
-        DevicePill("CIVET", civet, onDevices)
-        DevicePill("BP", omron, onDevices)
-        Spacer(Modifier.width(4.dp))
-        BarIcon(Icons.Default.Bluetooth, "Sensors", onDevices)
-        BarIcon(Icons.Default.Dashboard, "Cards", onCards)
-        BarIcon(Icons.Default.Layers, "Overlays", onOverlays)
-        BarIcon(if (locked) Icons.Default.Lock else Icons.Default.LockOpen, if (locked) "Unlock layout" else "Lock layout", onLock)
-        BarIcon(Icons.Default.RestartAlt, "Start fresh", onReset)
+    var menu by remember { mutableStateOf(false) }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val narrow = maxWidth < 760.dp
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (narrow) 4.dp else 8.dp)) {
+            if (!narrow) {
+                Text("Sarah Monitor", color = MonitorColors.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(clockFormat), color = MonitorColors.label, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
+            }
+            Tabs(screen, onScreen)
+            Spacer(Modifier.weight(1f))
+            RecordButton(recording, now, compact = narrow, onClick = onRecord)
+            MarkButton(enabled = recording != null, compact = narrow, onClick = onMark)
+            if (!narrow) {
+                DevicePill("H10", h10, onDevices)
+                DevicePill("CIVET", civet, onDevices)
+                DevicePill("BP", omron, onDevices)
+                BarIcon(Icons.Default.Bluetooth, "Sensors", onDevices)
+                if (screen == Screen.Monitor) {
+                    BarIcon(Icons.Default.Dashboard, "Cards", onCards)
+                    BarIcon(Icons.Default.Layers, "Overlays", onOverlays)
+                    BarIcon(if (locked) Icons.Default.Lock else Icons.Default.LockOpen, if (locked) "Unlock layout" else "Lock layout", onLock)
+                    BarIcon(Icons.Default.RestartAlt, "Start fresh", onReset)
+                }
+            } else {
+                Box {
+                    BarIcon(Icons.Default.MoreVert, "More", { menu = true })
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MonitorColors.panel) {
+                        DropdownMenuItem(text = { Text("Sensors") }, onClick = { menu = false; onDevices() })
+                        DropdownMenuItem(text = { Text("Cards") }, onClick = { menu = false; onCards() })
+                        DropdownMenuItem(text = { Text("Overlays") }, onClick = { menu = false; onOverlays() })
+                        DropdownMenuItem(text = { Text("Start fresh") }, onClick = { menu = false; onReset() })
+                    }
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun Tabs(screen: Screen, onScreen: (Screen) -> Unit) {
+    Row(Modifier.border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(8.dp))) {
+        Screen.entries.forEach { s ->
+            val on = s == screen
+            Text(
+                if (s == Screen.Monitor) "Monitor" else "Sessions",
+                color = if (on) MonitorColors.background else MonitorColors.label,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .background(if (on) MonitorColors.label else Color.Transparent, RoundedCornerShape(8.dp))
+                    .clickable { onScreen(s) }
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecordButton(recording: com.pulsepointlabs.sarahmonitor.session.SessionEntity?, now: Long, compact: Boolean, onClick: () -> Unit) {
+    val active = recording != null
+    Row(
+        Modifier
+            .background(if (active) MonitorColors.alarm else Color.Transparent, RoundedCornerShape(8.dp))
+            .border(1.dp, MonitorColors.alarm, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            if (active) "■ " + com.pulsepointlabs.sarahmonitor.session.SessionAnalysis.elapsed(now - recording!!.startTimeMs) else if (compact) "● Rec" else "● Record",
+            color = if (active) Color.White else MonitorColors.alarm,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = if (active) FontFamily.Monospace else FontFamily.Default
+        )
+    }
+}
+
+@Composable
+private fun MarkButton(enabled: Boolean, compact: Boolean, onClick: () -> Unit) {
+    val color = if (enabled) MonitorColors.warn else MonitorColors.dim
+    Text(
+        if (compact) "★" else "★ Mark",
+        color = color,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .border(1.dp, color.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 5.dp)
+    )
 }
 
 @Composable
