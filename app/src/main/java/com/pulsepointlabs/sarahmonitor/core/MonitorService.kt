@@ -56,7 +56,7 @@ class MonitorService : Service() {
         }
         MonitorHub.connectRemembered()
         scope.launch {
-            OverlaySettings.enabled.collect { overlays.sync(it) }
+            combine(OverlaySettings.enabled, OverlaySettings.appInFront) { enabled, _ -> enabled }.collect { overlays.sync(it) }
         }
         // Follow the app between the phone screen and DeX, and pick up a newly granted overlay permission.
         scope.launch {

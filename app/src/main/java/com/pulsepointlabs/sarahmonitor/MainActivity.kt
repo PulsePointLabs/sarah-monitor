@@ -184,8 +184,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Overlays hide while this window is the focused one (on DeX: the active window) and come back after.
+    override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
+        super.onTopResumedActivityChanged(isTopResumedActivity)
+        OverlaySettings.setAppInFront(isTopResumedActivity)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (Build.VERSION.SDK_INT < 29) OverlaySettings.setAppInFront(false)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        OverlaySettings.setAppInFront(false)
+    }
+
     override fun onResume() {
         super.onResume()
+        if (Build.VERSION.SDK_INT < 29) OverlaySettings.setAppInFront(true)
         OverlayDisplay.recordActivityDisplay(this)
         MonitorHub.connectRemembered()
     }
@@ -608,7 +625,7 @@ private fun OverlaysDialog(onDismiss: () -> Unit) {
         title = { Text("Floating overlays", color = MonitorColors.text) },
         text = {
             Column {
-                Text("Each overlay floats over other apps on its own: drag to move, drag the corner to resize, × to close.", color = MonitorColors.label, fontSize = 13.sp)
+                Text("Each overlay floats over other apps on its own: drag to move, drag the corner to resize, × to close. They hide while Sarah Monitor is the active window and come back when you switch away. The ＋ button opens event entry.", color = MonitorColors.label, fontSize = 13.sp)
                 if (!canDraw) {
                     TextButton(onClick = { context.startActivity(OverlaySettings.permissionIntent(context)) }) {
                         Text("Allow \"display over other apps\"", color = MonitorColors.warn)

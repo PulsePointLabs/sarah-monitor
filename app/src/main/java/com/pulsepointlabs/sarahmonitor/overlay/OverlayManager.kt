@@ -10,7 +10,10 @@ import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -45,7 +48,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.roundToInt
 
 /** The independent floating overlays, one per sensor. */
-enum class OverlayKind(val label: String, val card: CardType, val defaultWidthDp: Int, val defaultHeightDp: Int) {
+enum class OverlayKind(
+    val label: String,
+    val card: CardType?,
+    val defaultWidthDp: Int,
+    val defaultHeightDp: Int,
+    val minWidthDp: Int = 150,
+    val minHeightDp: Int = 100
+) {
+    MarkEvent("＋ Mark event button", null, 76, 76, 44, 44),
     HeartRate("Heart rate", CardType.HeartRate, 250, 180),
     Hrv("HRV (RMSSD · SDNN · pNN50)", CardType.Hrv, 300, 200),
     Load("Physiological load", CardType.Load, 230, 160),
@@ -58,6 +69,12 @@ object OverlaySettings {
     private const val PREFS = "sarahmonitor_overlays"
     private val _enabled = MutableStateFlow<Set<OverlayKind>>(emptySet())
     val enabled: StateFlow<Set<OverlayKind>> = _enabled
+
+    /** True while Sarah Monitor's own window is the focused one; overlays step aside then. */
+    private val _appInFront = MutableStateFlow(false)
+    val appInFront: StateFlow<Boolean> = _appInFront
+
+    fun setAppInFront(inFront: Boolean) { _appInFront.value = inFront }
 
     fun load(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -117,7 +134,8 @@ class OverlayManager(private val base: Context) {
 
     private val shown = mutableMapOf<OverlayKind, Shown>()
 
-    fun sync(enabled: Set<OverlayKind>) {
+    fun sync(requested: Set<OverlayKind>) {
+        val enabled = if (OverlaySettings.appInFront.value) emptySet() else requested
         val canDraw = OverlaySettings.canDraw(base)
         val display = OverlayDisplay.targetDisplayId(base)
         // Hide removed ones and ones that are on the wrong display.
@@ -152,8 +170,8 @@ class OverlayManager(private val base: Context) {
             this.y = y
         }
         val owner = OverlayOwner().also { it.start() }
-        val minW = (150 * density).roundToInt()
-        val minH = (100 * density).roundToInt()
+        val minW = (kind.minWidthDp * density).roundToInt()
+        val minH = (kind.minHeightDp * density).roundToInt()
 
         fun bounds(): android.graphics.Rect = OverlayDisplay.displayBounds(context, wm)
         fun commit() {
@@ -185,6 +203,10 @@ class OverlayManager(private val base: Context) {
                             )
                         }
                 ) {
+                    if (kind.card == null) {
+                        // The floating ＋: tap to mark an event, drag to move, corner to resize.
+                        PlusButton(onTap = { openMarkEvent(displayId) })
+                    } else {
                     MonitorCard(kind.card, Modifier.fillMaxSize())
                     Text(
                         "×",
@@ -216,6 +238,7 @@ class OverlayManager(private val base: Context) {
                             .clickable { openApp(displayId) }
                             .padding(horizontal = 4.dp)
                     )
+                    }
                     Canvas(
                         Modifier
                             .align(Alignment.BottomEnd)
@@ -261,9 +284,49 @@ class OverlayManager(private val base: Context) {
         }
     }
 
+    private fun openMarkEvent(displayId: Int) {
+        val intent = Intent(base, com.pulsepointlabs.sarahmonitor.review.MarkEventActivity::class.java)
+            .putExtra(com.pulsepointlabs.sarahmonitor.review.MarkEventActivity.EXTRA_PRESSED_AT, System.currentTimeMillis())
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        OverlayDisplay.startActivityOnDisplay(base, intent, displayId)
+    }
+
     private fun openApp(displayId: Int) {
         val intent = Intent(base, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         OverlayDisplay.startActivityOnDisplay(base, intent, displayId)
     }
 }
+
+
+/** Round glowing ＋ that fills its window; the symbol scales with the button. */
+@androidx.compose.runtime.Composable
+private fun PlusButton(onTap: () -> Unit) {
+    val recording by MonitorHub.session.collectAsState()
+    val color = if (recording != null) MonitorColors.warn else MonitorColors.label
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier
+            .fillMaxSize()
+            .padding(4.dp)
+            .pointerInput(Unit) { detectTapGestures { onTap() } },
+        contentAlignment = Alignment.Center
+    ) {
+        val d = minOf(maxWidth, maxHeight)
+        Box(
+            Modifier
+                .size(d)
+                .plusDisc(color)
+        )
+        Text(
+            "+",
+            color = MonitorColors.background,
+            fontSize = with(androidx.compose.ui.platform.LocalDensity.current) { (d * 0.62f).toSp() },
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+        )
+    }
+}
+
+private fun Modifier.plusDisc(color: androidx.compose.ui.graphics.Color): Modifier =
+    this
+        .then(Modifier.background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(color, color.copy(alpha = 0.75f))), androidx.compose.foundation.shape.CircleShape))
+        .then(Modifier.border(2.dp, androidx.compose.ui.graphics.Color.White.copy(alpha = 0.35f), androidx.compose.foundation.shape.CircleShape))

@@ -34,6 +34,8 @@ import androidx.compose.ui.window.DialogProperties
 import com.pulsepointlabs.sarahmonitor.ble.BleDevice
 import com.pulsepointlabs.sarahmonitor.ble.ConnectionState
 import com.pulsepointlabs.sarahmonitor.core.MonitorHub
+import com.pulsepointlabs.sarahmonitor.session.VoiceSettings
+import androidx.compose.foundation.clickable
 
 @Composable
 fun DevicesPanel(
@@ -56,6 +58,7 @@ fun DevicesPanel(
                 H10Section()
                 CivetSection(onMessage)
                 OmronSection()
+                VoiceSection(onMessage)
                 Section("Glucose", MonitorColors.glucose, "OneTouch Verio Reflect: in the OneTouch Reveal app, share or export your results and pick Sarah Monitor (same as with Sarah). Health Connect and CSV files work too, and you can add a reading by hand on the Glucose card.") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         PanelButton("Import CSV", onCsvImport)
@@ -186,5 +189,59 @@ private fun OmronSection() {
             PanelButton("Forget") { client.disarm(); client.forget() }
         }
         DeviceList(devices) { client.connect(it.address) }
+    }
+}
+
+
+@Composable
+private fun VoiceSection(onMessage: (String) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var engine by remember { mutableStateOf(VoiceSettings.engine(context)) }
+    var saved by remember { mutableStateOf(VoiceSettings.apiKey(context)) }
+    var key by remember { mutableStateOf("") }
+    Section(
+        "Voice notes",
+        MonitorColors.text,
+        "Speech-to-text for event notes. Whisper (OpenAI) is more accurate; it sends the short voice clip to OpenAI with your API key. Android's recognizer works without a key."
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            VoiceSettings.Engine.entries.forEach { e ->
+                val on = e == engine
+                Text(
+                    (if (on) "✓ " else "") + e.label,
+                    color = if (on) MonitorColors.background else MonitorColors.text,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .background(if (on) MonitorColors.pelvic else Color.Transparent, RoundedCornerShape(16.dp))
+                        .border(1.dp, MonitorColors.pelvic.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+                        .clickable { engine = e; VoiceSettings.setEngine(context, e) }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+        if (engine == VoiceSettings.Engine.Whisper) {
+            Text(
+                if (saved.isBlank()) "No API key saved yet; Android's recognizer is used until you add one."
+                else "Key saved: ${saved.take(3)}…${saved.takeLast(4)}",
+                color = if (saved.isBlank()) MonitorColors.warn else MonitorColors.good,
+                fontSize = 13.sp
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = key,
+                    onValueChange = { key = it.trim() },
+                    label = { Text("OpenAI API key (sk-…)") },
+                    singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(enabled = key.isNotBlank(), onClick = {
+                    VoiceSettings.setApiKey(context, key); saved = key; key = ""
+                    onMessage("Whisper key saved. Tap the mic in an event to record, tap again to transcribe.")
+                }) { Text("Save") }
+                if (saved.isNotBlank()) TextButton(onClick = { VoiceSettings.setApiKey(context, ""); saved = "" }) { Text("Remove", color = MonitorColors.alarm) }
+            }
+        }
     }
 }
