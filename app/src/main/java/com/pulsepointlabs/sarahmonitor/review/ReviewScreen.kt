@@ -121,7 +121,7 @@ fun ReviewScreen(
     // A session that's still recording refreshes itself.
     LaunchedEffect(data?.session?.active) {
         while (data?.session?.active == true) {
-            delay(5_000L)
+            delay(3_000L)
             reload++
         }
     }
@@ -136,6 +136,17 @@ fun ReviewScreen(
     val fullStart = d.session.startTimeMs
     val fullEnd = max(d.endMs, fullStart + 60_000L)
     var viewport by remember(sessionId) { mutableStateOf(Viewport(fullStart, fullEnd)) }
+    var shownEnd by remember(sessionId) { mutableStateOf(fullEnd) }
+    if (fullEnd != shownEnd) {
+        // While recording: if you're looking at the live edge, keep following it as new data arrives.
+        val atLiveEdge = viewport.endMs >= shownEnd - 2_000L
+        viewport = when {
+            !atLiveEdge -> viewport.clampTo(fullStart, fullEnd)
+            viewport.startMs <= fullStart + 1_000L -> Viewport(fullStart, fullEnd)
+            else -> Viewport(fullEnd - viewport.spanMs, fullEnd)
+        }
+        shownEnd = fullEnd
+    }
     if (viewport.endMs > fullEnd || viewport.startMs < fullStart) viewport = viewport.clampTo(fullStart, fullEnd)
     var cursor by remember(sessionId) { mutableStateOf<Long?>(null) }
     var selectedMarker by remember(sessionId) { mutableStateOf<String?>(null) }
@@ -346,7 +357,8 @@ private fun SummaryCard(d: SessionData) {
         SessionAnalysis.plainSummary(d).forEach { Text(it, color = MonitorColors.text, fontSize = 14.sp) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Tile("Avg HR", fmt(s.averageHr), "bpm", MonitorColors.hr)
-            Tile("HR range", if (s.minHr != null) "${s.minHr}–${s.maxHr}" else "--", "bpm", MonitorColors.hr)
+            Tile("Min HR", s.minHr?.toString() ?: "--", "bpm", MonitorColors.sdnn)
+            Tile("Max HR", s.maxHr?.toString() ?: "--", "bpm", MonitorColors.alarm)
             Tile("RMSSD", fmt(s.rmssdMs, 1), "ms", MonitorColors.rmssd)
             Tile("SDNN", fmt(s.sdnnMs, 1), "ms", MonitorColors.sdnn)
             Tile("pNN50", fmt(s.pnn50Percent, 0), "%", MonitorColors.pnn50)

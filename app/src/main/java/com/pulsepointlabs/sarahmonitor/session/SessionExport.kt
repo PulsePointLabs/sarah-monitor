@@ -16,14 +16,20 @@ import java.util.Locale
 object SessionRepository {
     /** Loads everything the review needs; BP/glucose are matched to the session by time. */
     suspend fun load(dao: SessionDao, id: String): SessionData? {
-        val session = dao.getSession(id) ?: return null
-        val end = session.endTimeMs ?: System.currentTimeMillis()
+        val stored = dao.getSession(id) ?: return null
+        val end = stored.endTimeMs ?: System.currentTimeMillis()
+        val hr = dao.getHr(id)
+        val rr = dao.getRr(id)
+        val pelvic = dao.getPelvic(id)
+        val markers = dao.getMarkers(id)
+        // A session that's still recording has no saved totals yet; work them out from what's recorded so far.
+        val session = if (stored.active) SessionAnalysis.summarize(stored, hr, rr, pelvic, markers.size) else stored
         return SessionData(
             session = session,
-            hr = dao.getHr(id),
-            rr = dao.getRr(id),
-            pelvic = dao.getPelvic(id),
-            markers = dao.getMarkers(id),
+            hr = hr,
+            rr = rr,
+            pelvic = pelvic,
+            markers = markers,
             bp = MonitorHub.bp.items.value.filter { it.timestampMs in (session.startTimeMs - BP_BEFORE_MS)..(end + BP_AFTER_MS) },
             glucose = MonitorHub.glucose.items.value.filter { it.timestampMs in (session.startTimeMs - GLUCOSE_BEFORE_MS)..(end + BP_AFTER_MS) },
             hasEcg = dao.ecgChunkCount(id) > 0

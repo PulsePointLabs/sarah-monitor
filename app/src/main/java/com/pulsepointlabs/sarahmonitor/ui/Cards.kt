@@ -213,7 +213,7 @@ private fun LoadCard() {
     val load = heart.load
     val color = loadColor(load.score)
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        CardTitle("Load", MonitorColors.load, "0–100") { Text(loadLabel(load.score), color = color, fontSize = LocalCardScale.current.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1) }
+        CardTitle("Load", MonitorColors.load, "0–100") { Text(loadStatus(load), color = if (load.score == null) MonitorColors.warn else color, fontSize = LocalCardScale.current.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1) }
         BigReading(
             load.score?.toString() ?: "--", trendColor(recent.trend(Metric.Load)), Modifier.fillMaxWidth().weight(1f),
             maxChars = 3, trend = recent.values(Metric.Load)
@@ -223,6 +223,7 @@ private fun LoadCard() {
             StatChip("HRV supp.", load.hrvSuppressionPercent?.let { "$it%" } ?: "--")
             StatChip("conf.", load.confidencePercent?.let { "$it%" } ?: "--")
         }
+        StatusLine(loadDetail(load), if (load.score == null) MonitorColors.warn else MonitorColors.label)
     }
 }
 

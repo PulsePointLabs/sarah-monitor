@@ -293,6 +293,31 @@ fun loadColor(score: Int?): Color = when {
     else -> MonitorColors.alarm
 }
 
+/** What the Load reading is doing right now, in plain words. */
+fun loadStatus(r: com.pulsepointlabs.sarahmonitor.hrv.PhysiologicalStressReading): String {
+    if (r.score != null) return loadLabel(r.score)
+    return when (r.level) {
+        com.pulsepointlabs.sarahmonitor.hrv.PhysiologicalStressLevel.EstablishingBaseline ->
+            "Learning baseline ${r.baselineWindowsObserved}/${r.baselineWindowsRequired.coerceAtLeast(1)} min"
+        com.pulsepointlabs.sarahmonitor.hrv.PhysiologicalStressLevel.Moving -> "Moving · paused"
+        com.pulsepointlabs.sarahmonitor.hrv.PhysiologicalStressLevel.PoorSignal -> "Signal too noisy"
+        else -> when {
+            r.motionSamplesObserved < r.motionSamplesRequired && r.hrSamplesObserved >= r.hrSamplesRequired -> "Waiting for motion data"
+            else -> "Collecting (1 min)"
+        }
+    }
+}
+
+/** One-line explanation under the Load reading. */
+fun loadDetail(r: com.pulsepointlabs.sarahmonitor.hrv.PhysiologicalStressReading): String = when {
+    r.score != null -> "vs your resting baseline · HR ${r.baselineHr?.let { "%.0f".format(it) } ?: "--"}, RMSSD ${r.baselineRmssdMs?.let { "%.0f".format(it) } ?: "--"} ms"
+    r.level == com.pulsepointlabs.sarahmonitor.hrv.PhysiologicalStressLevel.EstablishingBaseline -> "Sit still and relaxed for a few minutes; it's saved after that"
+    r.level == com.pulsepointlabs.sarahmonitor.hrv.PhysiologicalStressLevel.Moving -> "Load pauses while you're moving"
+    r.level == com.pulsepointlabs.sarahmonitor.hrv.PhysiologicalStressLevel.PoorSignal -> "Too many rejected beats; check strap contact"
+    r.motionSamplesObserved < r.motionSamplesRequired && r.hrSamplesObserved >= r.hrSamplesRequired -> "H10 motion stream hasn't started"
+    else -> "Needs about a minute of H10 data"
+}
+
 fun loadLabel(score: Int?): String = when {
     score == null -> "Establishing"
     score < 25 -> "Settled"

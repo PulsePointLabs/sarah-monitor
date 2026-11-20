@@ -103,7 +103,9 @@ private fun SessionCard(s: SessionEntity, onClick: () -> Unit) {
         )
         Sparkline(s.hrSparkline, Modifier.fillMaxWidth().height(34.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Stat("HR", s.averageHr?.let { "%.0f".format(it) + (s.maxHr?.let { m -> " / $m" } ?: "") }, MonitorColors.hr)
+            Stat("Avg HR", s.averageHr?.let { "%.0f".format(it) }, MonitorColors.hr)
+            Stat("Min", s.minHr?.toString(), MonitorColors.sdnn)
+            Stat("Max", s.maxHr?.toString(), MonitorColors.alarm)
             Stat("RMSSD", s.rmssdMs?.let { "%.1f".format(it) }, MonitorColors.rmssd)
             Stat("Pressure max", s.pelvicMaxKpa?.let { "%.1f kPa".format(it) }, MonitorColors.pelvic)
             Stat("Contractions", s.pelvicPulseCount?.toString(), MonitorColors.pelvic)

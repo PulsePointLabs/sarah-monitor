@@ -41,7 +41,7 @@ object MonitorHub {
     /** The session being recorded, or null. */
     val session: StateFlow<SessionEntity?> get() = recorder.active
 
-    private val heartEngine = HeartEngine()
+    private lateinit var heartEngine: HeartEngine
     private val pelvicProcessor = PelvicProcessor()
     private val trendRecorder = TrendRecorder()
 
@@ -75,6 +75,8 @@ object MonitorHub {
         bp = BpStore(app)
         glucose = GlucoseStore(app)
         recorder = SessionRecorder(app, scope)
+        val baselineStore = LoadBaselineStore(app)
+        heartEngine = HeartEngine(baselineStore.load(), baselineStore::save)
 
         scope.launch {
             h10.readings.collect { reading ->

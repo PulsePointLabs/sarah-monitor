@@ -171,13 +171,14 @@ object SessionAnalysis {
     fun plainSummary(data: SessionData): List<String> {
         val s = data.session
         val lines = mutableListOf<String>()
-        lines += "${durationWords(data.endMs - s.startTimeMs)} session" +
-            if (data.markers.isNotEmpty()) " with ${data.markers.size} marked event${if (data.markers.size == 1) "" else "s"}." else "."
+        val events = if (data.markers.isNotEmpty()) " with ${data.markers.size} marked event${if (data.markers.size == 1) "" else "s"}" else ""
+        lines += if (s.active) "Recording for ${durationWords(data.endMs - s.startTimeMs)} so far$events (updates live)."
+        else "${durationWords(data.endMs - s.startTimeMs)} session$events."
         if (s.averageHr != null) {
             lines += "Heart rate averaged ${"%.0f".format(s.averageHr)} bpm (range ${s.minHr}–${s.maxHr})." +
                 (s.rmssdMs?.let { " HRV: RMSSD ${"%.1f".format(it)} ms, SDNN ${s.sdnnMs?.let { v -> "%.1f".format(v) } ?: "--"} ms (${s.hrvQuality ?: "quality unknown"})." } ?: "")
         } else {
-            lines += "No heart-rate data was recorded."
+            lines += if (s.active) "Waiting for heart-rate data from the H10." else "No heart-rate data was recorded."
         }
         if (data.pelvic.isNotEmpty()) {
             val p = pelvic(data.pelvic)

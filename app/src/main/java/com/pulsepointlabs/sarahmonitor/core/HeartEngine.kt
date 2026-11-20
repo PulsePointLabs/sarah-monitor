@@ -4,6 +4,7 @@ import com.pulsepointlabs.sarahmonitor.ble.AccelerometerSample
 import com.pulsepointlabs.sarahmonitor.ble.HrReading
 import com.pulsepointlabs.sarahmonitor.hrv.HrvCalculator
 import com.pulsepointlabs.sarahmonitor.hrv.MovementAnalyzer
+import com.pulsepointlabs.sarahmonitor.hrv.PhysiologicalStressBaseline
 import com.pulsepointlabs.sarahmonitor.hrv.PhysiologicalStressEstimator
 import com.pulsepointlabs.sarahmonitor.hrv.PhysiologicalStressReading
 import com.pulsepointlabs.sarahmonitor.hrv.RrSampleEntity
@@ -43,8 +44,12 @@ data class TrendPoint(
  * Live H10 processing: the same contextual RR filter, HRV maths and Load (physiological stress) estimator as
  * SarahVS, kept in memory for the monitor.
  */
-class HeartEngine {
-    private val estimator = PhysiologicalStressEstimator()
+class HeartEngine(
+    initialBaseline: PhysiologicalStressBaseline? = null,
+    onBaselineUpdated: (PhysiologicalStressBaseline) -> Unit = {}
+) {
+    // The personal Load baseline is saved, so it isn't relearned (5 calm minutes) after every restart.
+    private val estimator = PhysiologicalStressEstimator(initialBaseline, onBaselineUpdated)
     private val hrWindow = ArrayDeque<Pair<Long, Int>>()
     private val rrWindow = ArrayDeque<RrSampleEntity>()
     private val acceptedSeed = ArrayDeque<Int>()
@@ -201,5 +206,21 @@ class TrendRecorder(private val bucketMs: Long = 5_000L, private val keepMs: Lon
     fun clear() {
         points.clear(); bucketStart = -1
         listOf(hr, rmssd, sdnn, pnn, load, pelvic).forEach { it.sum = 0.0; it.n = 0 }
+    }
+}
+
+
+/** Remembers the Load baseline (resting HR and RMSSD) between app launches. */
+class LoadBaselineStore(context: android.content.Context) {
+    private val prefs = context.getSharedPreferences("sarahmonitor_load_baseline", android.content.Context.MODE_PRIVATE)
+
+    fun load(): PhysiologicalStressBaseline? {
+        val hr = prefs.getFloat("hr", Float.NaN)
+        val rmssd = prefs.getFloat("rmssd", Float.NaN)
+        return if (hr.isNaN() || rmssd.isNaN() || rmssd <= 0f) null else PhysiologicalStressBaseline(hr.toDouble(), rmssd.toDouble())
+    }
+
+    fun save(baseline: PhysiologicalStressBaseline) {
+        prefs.edit().putFloat("hr", baseline.hr.toFloat()).putFloat("rmssd", baseline.rmssdMs.toFloat()).apply()
     }
 }
