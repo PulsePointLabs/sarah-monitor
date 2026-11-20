@@ -82,7 +82,10 @@ fun Dashboard(
 ) {
     BoxWithConstraints(modifier) {
         if (maxWidth < 600.dp) {
-            StackedDashboard(slots)
+            StackedDashboard(slots, columns = 1)
+        } else if (maxHeight < 480.dp) {
+            // Phone held sideways: too short for the screen-filling grid; two scrolling columns instead.
+            StackedDashboard(slots, columns = 2)
         } else {
             Column(Modifier.fillMaxSize()) {
                 if (arranging) ArrangeBanner { onArrangingChange(false) }
@@ -123,21 +126,28 @@ private fun ArrangeBanner(onDone: () -> Unit) {
 }
 
 @Composable
-private fun StackedDashboard(slots: List<CardSlot>) {
+private fun StackedDashboard(slots: List<CardSlot>, columns: Int) {
+    val ordered = slots.filter { it.visible }.sortedWith(compareBy({ it.y }, { it.x }))
+    fun height(type: CardType) = when (type) {
+        CardType.Pelvic -> if (columns == 1) 420.dp else 300.dp
+        CardType.Ecg -> 190.dp
+        CardType.BloodPressure -> 250.dp
+        CardType.Load -> 170.dp
+        CardType.HeartRate -> 200.dp
+        else -> 210.dp
+    }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        slots.filter { it.visible }.sortedWith(compareBy({ it.y }, { it.x })).forEach { slot ->
-            val height = when (slot.type) {
-                CardType.Pelvic -> 420.dp
-                CardType.Ecg -> 200.dp
-                CardType.BloodPressure -> 260.dp
-                CardType.Load -> 150.dp
-                else -> 210.dp
+        ordered.chunked(columns).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val h = row.maxOf { height(it.type).value }.dp
+                row.forEach { slot -> MonitorCard(slot.type, Modifier.weight(1f).height(h)) }
+                repeat(columns - row.size) { Box(Modifier.weight(1f)) }
             }
-            MonitorCard(slot.type, Modifier.fillMaxWidth().height(height))
         }
+        Box(Modifier.height(8.dp))
     }
 }
 

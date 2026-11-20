@@ -233,7 +233,7 @@ fun ReviewScreen(
             onDelete = { confirmDelete = true }
         )
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            if (maxWidth >= 900.dp) {
+            if (maxWidth >= 900.dp && maxHeight >= 500.dp) {
                 Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Column(Modifier.weight(1.7f).fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) { charts() }
                     Column(Modifier.weight(1f).fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) { details() }

@@ -25,6 +25,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
 
+/** A Bluetooth device seen while scanning; [likelyCivet] when its name or services match the sensor. */
+data class NearbyDevice(val name: String?, val address: String, val rssi: Int, val likelyCivet: Boolean)
+
 /** One pressure reading from the CIVET pelvic sensor. */
 data class CivetSample(
     val timestampMs: Long,
@@ -94,45 +97,117 @@ class CivetClient(private val context: Context) {
         }
     }
 
+    /** Everything nearby from the last scan (for "Show all nearby devices"), strongest signal first. */
+    private val _allDevices = MutableStateFlow<List<NearbyDevice>>(emptyList())
+    val allDevices: StateFlow<List<NearbyDevice>> = _allDevices
+    private val everything = linkedMapOf<String, NearbyDevice>()
+
+    private val _scanStatus = MutableStateFlow<String?>(null)
+    /** What the last scan did ("Scanning…", "Found 1 CIVET", a failure reason). */
+    val scanStatus: StateFlow<String?> = _scanStatus
+
     private val scanCallback = object : ScanCallback() {
-        @SuppressLint("MissingPermission")
-        override fun onScanResult(callbackType: Int, result: ScanResult) {
-            val name = result.scanRecord?.deviceName ?: result.device.name ?: return
-            if (!isCivetName(name)) return
-            found[result.device.address] = BleDevice(name, result.device.address)
-            _devices.value = found.values.toList()
+        override fun onScanResult(callbackType: Int, result: ScanResult) = handleResult(result)
+
+        override fun onBatchScanResults(results: MutableList<ScanResult>) = results.forEach(::handleResult)
+
+        override fun onScanFailed(errorCode: Int) {
+            scanning = false
+            _scanStatus.value = when (errorCode) {
+                SCAN_FAILED_APPLICATION_REGISTRATION_FAILED ->
+                    "Android refused the scan (often too many scans in a short time). Wait 30 s and try again."
+                SCAN_FAILED_FEATURE_UNSUPPORTED -> "This phone's Bluetooth doesn't support that scan; retrying the basic way."
+                else -> "Scan failed (code $errorCode). Toggle Bluetooth off and on, then try again."
+            }
+            if (errorCode == SCAN_FAILED_FEATURE_UNSUPPORTED && !legacyOnly) {
+                legacyOnly = true
+                handler.post { scan() }
+            } else if (_state.value == ConnectionState.Scanning) {
+                _state.value = ConnectionState.NotConfigured
+            }
         }
     }
+
+    private var legacyOnly = false
+
+    @SuppressLint("MissingPermission")
+    private fun handleResult(result: ScanResult) {
+        val name = result.scanRecord?.deviceName ?: runCatching { result.device.name }.getOrNull()
+        val services = result.scanRecord?.serviceUuids?.map { it.uuid }.orEmpty()
+        // Match by name (DG-LAB: "47L124000") or by the CIVET service 0x180C in the advertisement.
+        val isCivet = (name != null && isCivetName(name)) || services.contains(SERVICE_UUID)
+        handler.post {
+            everything[result.device.address] = NearbyDevice(name, result.device.address, result.rssi, isCivet)
+            _allDevices.value = everything.values.sortedWith(compareByDescending<NearbyDevice> { it.likelyCivet }.thenByDescending { it.rssi })
+            if (isCivet) {
+                found[result.device.address] = BleDevice(name ?: "CIVET", result.device.address)
+                _devices.value = found.values.toList()
+                _scanStatus.value = "Found ${found.size} CIVET sensor${if (found.size == 1) "" else "s"} — tap Connect"
+            }
+        }
+    }
+
+    private val scanTimeout = Runnable { stopScan() }
 
     fun rememberedAddress(): String? = prefs.getString(KEY_ADDRESS, null)?.takeIf { it.isNotBlank() }
     fun rememberedName(): String? = prefs.getString(KEY_NAME, null)?.takeIf { it.isNotBlank() }
 
     @SuppressLint("MissingPermission")
     fun scan() {
-        if (!hasPermission()) {
-            _state.value = ConnectionState.Error
-            _error.value = "Bluetooth permission is needed."
+        if (!hasScanPermission()) {
+            _scanStatus.value = "Sarah Monitor needs the \"Nearby devices\" permission to scan (Settings → Apps → Sarah Monitor → Permissions)."
             return
         }
-        val scanner = adapter?.bluetoothLeScanner ?: run {
-            _error.value = "Bluetooth is off."
+        val adapter = adapter
+        if (adapter == null || !adapter.isEnabled) {
+            _scanStatus.value = "Bluetooth is off. Turn it on and scan again."
             return
         }
-        found.clear()
-        _devices.value = emptyList()
+        val scanner = adapter.bluetoothLeScanner ?: run {
+            _scanStatus.value = "Bluetooth scanner unavailable. Toggle Bluetooth off and on."
+            return
+        }
+        found.clear(); everything.clear()
+        _devices.value = emptyList(); _allDevices.value = emptyList()
+        handler.removeCallbacks(scanTimeout)
         if (scanning) runCatching { scanner.stopScan(scanCallback) }
-        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
-        scanning = runCatching { scanner.startScan(null, settings, scanCallback) }.isSuccess
+        // Report extended (Bluetooth 5) advertisements as well as legacy ones, on every PHY the phone supports.
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setReportDelay(0)
+            .apply {
+                if (Build.VERSION.SDK_INT >= 26 && !legacyOnly) {
+                    setLegacy(false)
+                    setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED)
+                }
+            }
+            .build()
+        val started = runCatching { scanner.startScan(null, settings, scanCallback) }
+        scanning = started.isSuccess
+        if (!scanning) {
+            _scanStatus.value = "Couldn't start scanning (${started.exceptionOrNull()?.message ?: "unknown error"})."
+            return
+        }
+        _scanStatus.value = "Scanning for 20 s… (sensor in pairing mode: Bluetooth icon yellow)"
         if (!enabled) _state.value = ConnectionState.Scanning
-        handler.postDelayed({ stopScan() }, 12_000L)
+        handler.postDelayed(scanTimeout, 20_000L)
     }
 
     @SuppressLint("MissingPermission")
-    private fun stopScan() {
+    fun stopScan() {
+        handler.removeCallbacks(scanTimeout)
         if (scanning) runCatching { adapter?.bluetoothLeScanner?.stopScan(scanCallback) }
+        val wasScanning = scanning
         scanning = false
+        if (wasScanning && found.isEmpty()) {
+            _scanStatus.value = "No CIVET found (${everything.size} other Bluetooth device${if (everything.size == 1) "" else "s"} seen). " +
+                "Check it's in pairing mode and not connected to another app, or use \"Show all nearby devices\"."
+        }
         if (_state.value == ConnectionState.Scanning) _state.value = ConnectionState.NotConfigured
     }
+
+    /** Connect to a device picked from the "all nearby devices" list. */
+    fun connect(device: NearbyDevice) = connect(BleDevice(device.name ?: "CIVET", device.address))
 
     fun connect(device: BleDevice) {
         prefs.edit().putString(KEY_ADDRESS, device.address).putString(KEY_NAME, device.name).apply()
@@ -373,6 +448,14 @@ class CivetClient(private val context: Context) {
         }
     }
 
+    private fun hasScanPermission(): Boolean =
+        if (Build.VERSION.SDK_INT >= 31) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        }
+
     private fun hasPermission(): Boolean =
         Build.VERSION.SDK_INT < 31 ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
@@ -385,6 +468,8 @@ class CivetClient(private val context: Context) {
         private const val STALE_MS = 1_500L
         private const val BATTERY_REFRESH_MS = 5 * 60_000L
         private fun uuid(short: String): UUID = UUID.fromString("0000$short-0000-1000-8000-00805f9b34fb")
+        /** DG-LAB: Civet service 0x180C carries the command and pressure characteristics. */
+        val SERVICE_UUID: UUID = uuid("180c")
         val COMMAND_UUID: UUID = uuid("150a")
         val PRESSURE_UUID: UUID = uuid("150b")
         val BATTERY_UUID: UUID = uuid("1500")

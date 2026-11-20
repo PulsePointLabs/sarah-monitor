@@ -37,38 +37,43 @@ import com.pulsepointlabs.sarahmonitor.core.MonitorHub
 import com.pulsepointlabs.sarahmonitor.session.VoiceSettings
 import androidx.compose.foundation.clickable
 
+/**
+ * Sensor setup as a full screen (a tab next to Monitor and Sessions), so every sensor — including the BP
+ * cuff — is easy to find on a phone. Buttons wrap onto extra lines instead of squashing.
+ */
 @Composable
-fun DevicesPanel(
-    onDismiss: () -> Unit,
+fun SensorsScreen(
     onHealthConnectImport: () -> Unit,
     onCsvImport: () -> Unit,
-    onMessage: (String) -> Unit
+    onMessage: (String) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-        modifier = Modifier.widthIn(max = 640.dp).padding(16.dp),
-        containerColor = MonitorColors.panel,
-        title = { Text("Sensors", color = MonitorColors.text, fontWeight = FontWeight.Bold) },
-        text = {
-            Column(
-                Modifier.verticalScroll(rememberScrollState()).heightIn(max = 640.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                H10Section()
-                CivetSection(onMessage)
-                OmronSection()
-                VoiceSection(onMessage)
-                Section("Glucose", MonitorColors.glucose, "OneTouch Verio Reflect: in the OneTouch Reveal app, share or export your results and pick Sarah Monitor (same as with Sarah). Health Connect and CSV files work too, and you can add a reading by hand on the Glucose card.") {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PanelButton("Import CSV", onCsvImport)
-                        PanelButton("Health Connect", onHealthConnectImport)
-                    }
+    androidx.compose.foundation.layout.Box(modifier, contentAlignment = Alignment.TopCenter) {
+        Column(
+            Modifier.widthIn(max = 760.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            H10Section()
+            CivetSection(onMessage)
+            OmronSection()
+            Section("Glucose", MonitorColors.glucose, "OneTouch Verio Reflect: in OneTouch Reveal, share or export your results and pick Sarah Monitor. Health Connect and CSV files work too, and you can add a reading by hand on the Glucose card.") {
+                Buttons {
+                    PanelButton("Import CSV", onCsvImport)
+                    PanelButton("Health Connect", onHealthConnectImport)
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
-    )
+            VoiceSection(onMessage)
+        }
+    }
+}
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun Buttons(content: @Composable () -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) { content() }
 }
 
 @Composable
@@ -89,7 +94,11 @@ private fun Section(title: String, color: Color, subtitle: String? = null, conte
 
 @Composable
 private fun PanelButton(label: String, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick) { Text(label, fontSize = 13.sp) }
+    OutlinedButton(
+        onClick = onClick,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+        modifier = Modifier.heightIn(min = 40.dp)
+    ) { Text(label, fontSize = 14.sp, maxLines = 1, softWrap = false) }
 }
 
 @Composable
@@ -129,7 +138,7 @@ private fun H10Section() {
     val battery by client.batteryPercent.collectAsState()
     Section("Polar H10", MonitorColors.hr, "HR, RR, ECG and motion. Remembered and reconnected automatically.") {
         StateText(state, client.rememberedName(), battery)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Buttons {
             PanelButton("Scan") { client.scan() }
             if (client.rememberedAddress() != null) PanelButton("Reconnect") { client.connectRemembered() }
             PanelButton("Disconnect") { client.disconnect() }
@@ -146,19 +155,44 @@ private fun CivetSection(onMessage: (String) -> Unit) {
     val devices by client.devices.collectAsState()
     val battery by client.batteryPercent.collectAsState()
     val error by client.error.collectAsState()
+    val scanStatus by client.scanStatus.collectAsState()
+    val nearby by client.allDevices.collectAsState()
+    var showAll by remember { mutableStateOf(false) }
     var confirmZero by remember { mutableStateOf(false) }
-    Section("Civet edging sensor (pelvic pressure)", MonitorColors.pelvic, "Not showing up? Press its power button 5 times — the Bluetooth icon turns yellow when it's discoverable — then Scan. It's remembered and reconnects by itself.") {
+    val remembered = client.rememberedAddress() != null
+    Section(
+        "Civet edging sensor (pelvic pressure)", MonitorColors.pelvic,
+        "To pair: make sure no other app (Sarah, DG-LAB) is connected to it, press its power button 5 times until the Bluetooth icon is yellow, then Scan."
+    ) {
         StateText(state, client.rememberedName(), battery)
-        error?.let { Text(it, color = MonitorColors.warn, fontSize = 13.sp) }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        error?.takeIf { remembered }?.let { Text(it, color = MonitorColors.warn, fontSize = 13.sp) }
+        Buttons {
             PanelButton("Scan") { client.scan() }
-            if (client.rememberedAddress() != null) PanelButton("Reconnect") { client.connectRemembered() }
-            PanelButton("Disconnect") { client.disconnect() }
-            PanelButton("Forget") { client.forget() }
-            PanelButton("Flip display") { if (!client.flipDisplay()) onMessage("Connect the sensor first.") }
+            if (remembered) PanelButton("Reconnect") { client.connectRemembered() }
+            if (remembered) PanelButton("Disconnect") { client.disconnect() }
+            if (remembered) PanelButton("Forget") { client.forget() }
+            if (state == ConnectionState.Connected) PanelButton("Flip display") { if (!client.flipDisplay()) onMessage("Connect the sensor first.") }
         }
+        scanStatus?.let { Text(it, color = if (devices.isEmpty()) MonitorColors.warn else MonitorColors.good, fontSize = 13.sp) }
         DeviceList(devices) { client.connect(it) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (nearby.isNotEmpty()) {
+            TextButton(onClick = { showAll = !showAll }) {
+                Text(if (showAll) "Hide other nearby devices" else "Show all nearby devices (${nearby.size})", fontSize = 13.sp)
+            }
+            if (showAll) {
+                Text("If the sensor shows up under a different name, pick it here. Strongest signal (closest) first.", color = MonitorColors.label, fontSize = 12.sp)
+                nearby.take(25).forEach { d ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(d.name ?: "Unnamed device", color = if (d.likelyCivet) MonitorColors.pelvic else MonitorColors.text, fontSize = 14.sp, maxLines = 1)
+                            Text("${d.address} · signal ${d.rssi} dBm", color = MonitorColors.label, fontSize = 12.sp)
+                        }
+                        TextButton(onClick = { client.connect(d) }) { Text("Connect") }
+                    }
+                }
+            }
+        }
+        if (state == ConnectionState.Connected) Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(
                 checked = confirmZero,
                 onCheckedChange = { confirmZero = it },
@@ -180,9 +214,9 @@ private fun OmronSection() {
     val client = MonitorHub.omron
     val state by client.state.collectAsState()
     val devices by client.devices.collectAsState()
-    Section("Omron BP cuff", MonitorColors.bp, "Pair once. After that, readings appear on the dashboard as soon as the cuff finishes a measurement.") {
+    Section("Omron BP cuff", MonitorColors.bp, "To pair: tap Pair / scan, then on the cuff hold the Bluetooth (transfer) button until a flashing \"P\" appears, and pick it below. After that, each reading appears on the dashboard as soon as the cuff finishes.") {
         StateText(state, client.rememberedName())
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Buttons {
             PanelButton("Pair / scan") { client.scanAndArm() }
             if (client.rememberedAddress() != null) PanelButton("Listen") { client.armRemembered() }
             PanelButton("Stop") { client.disarm() }
@@ -204,7 +238,7 @@ private fun VoiceSection(onMessage: (String) -> Unit) {
         MonitorColors.text,
         "Speech-to-text for event notes. Whisper (OpenAI) is more accurate; it sends the short voice clip to OpenAI with your API key. Android's recognizer works without a key."
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Buttons {
             VoiceSettings.Engine.entries.forEach { e ->
                 val on = e == engine
                 Text(

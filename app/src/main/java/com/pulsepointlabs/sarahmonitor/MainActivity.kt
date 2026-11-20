@@ -5,6 +5,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MonitorHeart
+import androidx.compose.material.icons.filled.History
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -92,7 +97,7 @@ import com.pulsepointlabs.sarahmonitor.overlay.OverlaySettings
 import com.pulsepointlabs.sarahmonitor.ui.CardActions
 import com.pulsepointlabs.sarahmonitor.ui.CardType
 import com.pulsepointlabs.sarahmonitor.ui.Dashboard
-import com.pulsepointlabs.sarahmonitor.ui.DevicesPanel
+import com.pulsepointlabs.sarahmonitor.ui.SensorsScreen
 import com.pulsepointlabs.sarahmonitor.ui.GridLayoutEngine
 import com.pulsepointlabs.sarahmonitor.ui.LayoutStore
 import com.pulsepointlabs.sarahmonitor.ui.LocalCardActions
@@ -284,7 +289,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { Monitor, Sessions }
+private enum class Screen(val label: String) { Monitor("Monitor"), Sessions("Sessions"), Sensors("Sensors") }
 
 @Composable
 private fun MonitorScreen(
@@ -298,7 +303,6 @@ private fun MonitorScreen(
     var arranging by remember { mutableStateOf(false) }
     var screen by rememberSaveable { mutableStateOf(Screen.Monitor) }
     var reviewId by rememberSaveable { mutableStateOf<String?>(null) }
-    var showDevices by remember { mutableStateOf(false) }
     var showCards by remember { mutableStateOf(false) }
     var showOverlays by remember { mutableStateOf(false) }
     var showAddGlucose by remember { mutableStateOf(false) }
@@ -318,7 +322,7 @@ private fun MonitorScreen(
         CardActions(
             onAddGlucose = { showAddGlucose = true },
             onImportGlucose = onCsvImport,
-            onOpenDevices = { showDevices = true },
+            onOpenDevices = { screen = Screen.Sensors; reviewId = null },
             onMessage = onMessage
         )
     }
@@ -348,7 +352,7 @@ private fun MonitorScreen(
                 onScreen = { screen = it; reviewId = null },
                 onRecord = { if (session == null) MonitorHub.startSession() else confirmStop = true },
                 onMark = ::mark,
-                onDevices = { showDevices = true },
+                onDevices = { screen = Screen.Sensors; reviewId = null },
                 onCards = { showCards = true },
                 onOverlays = { showOverlays = true },
                 onArrange = { arranging = !arranging },
@@ -365,6 +369,7 @@ private fun MonitorScreen(
                     modifier = Modifier.fillMaxSize()
                 )
                 screen == Screen.Sessions -> SessionsScreen(onOpen = { reviewId = it }, modifier = Modifier.fillMaxSize())
+                screen == Screen.Sensors -> SensorsScreen(onHealthConnect, onCsvImport, onMessage, Modifier.fillMaxSize())
                 else -> Dashboard(
                     slots = slots,
                     arranging = arranging,
@@ -400,7 +405,6 @@ private fun MonitorScreen(
             dismissButton = { TextButton(onClick = { confirmStop = false }) { Text("Keep recording") } }
         )
     }
-    if (showDevices) DevicesPanel({ showDevices = false }, onHealthConnect, onCsvImport, onMessage)
     if (showCards) {
         CardsDialog(
             slots = slots,
@@ -445,22 +449,23 @@ private fun TopBar(
     val omron by MonitorHub.omron.state.collectAsState()
     var menu by remember { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val narrow = maxWidth < 760.dp
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (narrow) 4.dp else 8.dp)) {
+        // Three widths: full desktop bar (DeX), medium (tablet / phone landscape) and narrow (phone portrait).
+        val full = maxWidth >= 1150.dp
+        val narrow = maxWidth < 600.dp
+        Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (narrow) 6.dp else 8.dp)) {
+            if (full) Text("Sarah Monitor", color = MonitorColors.text, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             if (!narrow) {
-                Text("Sarah Monitor", color = MonitorColors.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(clockFormat), color = MonitorColors.label, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
-                recording?.let { SessionClock(it.startTimeMs, now) }
+                Text(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(clockFormat), color = MonitorColors.label, fontSize = 14.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+                if (full) recording?.let { SessionClock(it.startTimeMs, now) }
             }
-            Tabs(screen, onScreen)
+            Tabs(screen, compact = narrow, onScreen = onScreen)
             Spacer(Modifier.weight(1f))
             RecordButton(recording, now, compact = narrow, onClick = onRecord)
-            MarkButton(enabled = recording != null, compact = narrow, onClick = onMark)
-            if (!narrow) {
+            MarkButton(enabled = recording != null, compact = !full, onClick = onMark)
+            if (full) {
                 DevicePill("H10", h10, onDevices)
                 DevicePill("CIVET", civet, onDevices)
                 DevicePill("BP", omron, onDevices)
-                BarIcon(Icons.Default.Bluetooth, "Sensors", onDevices)
                 if (screen == Screen.Monitor) {
                     BarIcon(Icons.Default.Dashboard, "Cards", onCards)
                     BarIcon(Icons.Default.Layers, "Overlays", onOverlays)
@@ -471,9 +476,8 @@ private fun TopBar(
                 Box {
                     BarIcon(Icons.Default.MoreVert, "More", { menu = true })
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MonitorColors.panel) {
-                        DropdownMenuItem(text = { Text("Sensors") }, onClick = { menu = false; onDevices() })
-                        DropdownMenuItem(text = { Text("Cards") }, onClick = { menu = false; onCards() })
-                        DropdownMenuItem(text = { Text(if (arranging) "Done arranging" else "Arrange cards") }, onClick = { menu = false; onArrange() })
+                        DropdownMenuItem(text = { Text("Cards") }, onClick = { menu = false; onScreen(Screen.Monitor); onCards() })
+                        if (!narrow) DropdownMenuItem(text = { Text(if (arranging) "Done arranging" else "Arrange cards") }, onClick = { menu = false; onScreen(Screen.Monitor); onArrange() })
                         DropdownMenuItem(text = { Text("Overlays") }, onClick = { menu = false; onOverlays() })
                         DropdownMenuItem(text = { Text("Start fresh") }, onClick = { menu = false; onReset() })
                     }
@@ -501,20 +505,31 @@ private fun SessionClock(startMs: Long, now: Long) {
 }
 
 @Composable
-private fun Tabs(screen: Screen, onScreen: (Screen) -> Unit) {
+private fun Tabs(screen: Screen, compact: Boolean, onScreen: (Screen) -> Unit) {
     Row(Modifier.border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(8.dp))) {
         Screen.entries.forEach { s ->
             val on = s == screen
-            Text(
-                if (s == Screen.Monitor) "Monitor" else "Sessions",
-                color = if (on) MonitorColors.background else MonitorColors.label,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
+            val tint = if (on) MonitorColors.background else MonitorColors.label
+            Box(
+                Modifier
                     .background(if (on) MonitorColors.label else Color.Transparent, RoundedCornerShape(8.dp))
                     .clickable { onScreen(s) }
-                    .padding(horizontal = 10.dp, vertical = 5.dp)
-            )
+                    .padding(horizontal = if (compact) 10.dp else 10.dp, vertical = 5.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (compact) {
+                    Icon(
+                        when (s) {
+                            Screen.Monitor -> Icons.Default.MonitorHeart
+                            Screen.Sessions -> Icons.Default.History
+                            Screen.Sensors -> Icons.Default.Bluetooth
+                        },
+                        contentDescription = s.label, tint = tint, modifier = Modifier.size(20.dp)
+                    )
+                } else {
+                    Text(s.label, color = tint, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+            }
         }
     }
 }
@@ -598,8 +613,8 @@ private fun CardsDialog(
         containerColor = MonitorColors.panel,
         title = { Text("Cards", color = MonitorColors.text) },
         text = {
-            Column {
-                Text("Drag a card to move it, drag its corner to resize. Lock the layout when you're happy.", color = MonitorColors.label, fontSize = 13.sp)
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("Choose which cards show. On a big screen (DeX, tablet) use Arrange to move and resize them.", color = MonitorColors.label, fontSize = 13.sp)
                 CardType.entries.forEach { type ->
                     val on = slots.firstOrNull { it.type == type }?.visible ?: false
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -624,7 +639,7 @@ private fun OverlaysDialog(onDismiss: () -> Unit) {
         containerColor = MonitorColors.panel,
         title = { Text("Floating overlays", color = MonitorColors.text) },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("Each overlay floats over other apps on its own: drag to move, drag the corner to resize, × to close. They hide while Sarah Monitor is the active window and come back when you switch away. The ＋ button opens event entry.", color = MonitorColors.label, fontSize = 13.sp)
                 if (!canDraw) {
                     TextButton(onClick = { context.startActivity(OverlaySettings.permissionIntent(context)) }) {
