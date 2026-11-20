@@ -114,6 +114,17 @@ object SessionExport {
                 )
             }
             appendLine()
+            val flags = SessionFlags.detect(data)
+            appendLine("## Automatic flags (found by the app, not entered by me)")
+            if (flags.isEmpty()) appendLine("- Nothing flagged.")
+            flags.forEach { f ->
+                appendLine(
+                    "- ${elapsed(f.startMs)}" + (if (f.durationMs >= 1_000L) "–${elapsed(f.endMs)}" else "") +
+                        " (${at(f.startMs).format(clock)}): ${f.kind.title} [${f.severity.name.lowercase()}]; ${f.detail}" +
+                        (if (f.alongside.isNotEmpty()) "; alongside ${f.alongside.joinToString(", ") { it.lowerTitle }}" else "")
+                )
+            }
+            appendLine()
             appendLine("## Blood pressure")
             if (data.bp.isEmpty()) appendLine("- No readings during the session (±15 min).")
             data.bp.forEach { appendLine("- ${at(it.timestampMs).format(clock)} (${elapsed(it.timestampMs)}): ${it.systolic}/${it.diastolic}${it.pulse?.let { p -> ", pulse $p" } ?: ""}") }
@@ -155,7 +166,8 @@ object SessionExport {
     /** One row per second: HR, rolling HRV, Load, pressure mean/max, and any event in that second. */
     fun csv(data: SessionData): String = buildString {
         val start = data.session.startTimeMs
-        appendLine("local_time,elapsed_s,hr_bpm,rmssd_ms,sdnn_ms,pnn50_pct,load,pressure_kpa,above_rest_kpa_mean,above_rest_kpa_max,holding,event,event_note,bp,glucose_mg_dl")
+        appendLine("local_time,elapsed_s,hr_bpm,rmssd_ms,sdnn_ms,pnn50_pct,load,pressure_kpa,above_rest_kpa_mean,above_rest_kpa_max,holding,event,event_note,bp,glucose_mg_dl,auto_flags")
+        val flags = SessionFlags.detect(data)
         val hrBySecond = data.hr.groupBy { (it.timestampMs - start) / 1000 }
         val pBySecond = data.pelvic.groupBy { (it.timestampMs - start) / 1000 }
         val mBySecond = data.markers.groupBy { (it.timestampMs - start) / 1000 }
@@ -179,7 +191,9 @@ object SessionExport {
             append(q(markers.joinToString(" | ") { it.label })).append(',')
             append(q(markers.joinToString(" | ") { it.note })).append(',')
             append(bpBySecond[sec]?.joinToString(" | ") { "${it.systolic}/${it.diastolic}" } ?: "").append(',')
-            append(gBySecond[sec]?.joinToString(" | ") { "%.0f".format(Locale.US, it.mgDl) } ?: "")
+            append(gBySecond[sec]?.joinToString(" | ") { "%.0f".format(Locale.US, it.mgDl) } ?: "").append(',')
+            val t = start + sec * 1000
+            append(q(flags.filter { t + 999 >= it.startMs && t <= it.endMs }.joinToString(" | ") { it.kind.title }))
             appendLine()
         }
     }

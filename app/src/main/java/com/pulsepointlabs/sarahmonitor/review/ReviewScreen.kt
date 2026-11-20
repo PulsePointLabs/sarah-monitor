@@ -57,6 +57,11 @@ import androidx.compose.ui.unit.sp
 import com.pulsepointlabs.sarahmonitor.ble.EcgSample
 import com.pulsepointlabs.sarahmonitor.core.MonitorHub
 import com.pulsepointlabs.sarahmonitor.session.EcgCodec
+import com.pulsepointlabs.sarahmonitor.session.FlagChart
+import com.pulsepointlabs.sarahmonitor.session.FlagSeverity
+import com.pulsepointlabs.sarahmonitor.session.SessionFlag
+import com.pulsepointlabs.sarahmonitor.session.SessionFlags
+import com.pulsepointlabs.sarahmonitor.session.lowerTitle
 import com.pulsepointlabs.sarahmonitor.session.MarkerEntity
 import com.pulsepointlabs.sarahmonitor.session.MarkerTypes
 import com.pulsepointlabs.sarahmonitor.session.SessionAnalysis
@@ -156,6 +161,18 @@ fun ReviewScreen(
     var confirmDelete by remember { mutableStateOf(false) }
 
     val chartMarkers = d.markers.map { ChartMarker(it.timestampMs, markerColor(it.types), it.id == selectedMarker) }
+    val flags = remember(d) { SessionFlags.detect(d) }
+    var showFlags by remember { mutableStateOf(true) }
+    var selectedFlag by remember(sessionId) { mutableStateOf<SessionFlag?>(null) }
+    fun bands(chart: FlagChart): List<ChartBand> =
+        if (!showFlags) emptyList() else flags.filter { it.kind.chart == chart }.map { ChartBand(it.startMs, it.endMs, flagColor(it.severity), it == selectedFlag) }
+    fun focusFlag(flag: SessionFlag) {
+        selectedFlag = flag
+        selectedMarker = null
+        cursor = flag.startMs
+        val span = maxOf(flag.durationMs * 3, 2 * 60_000L).coerceAtMost(30 * 60_000L)
+        viewport = viewport.centeredOn((flag.startMs + flag.endMs) / 2, span, fullStart, fullEnd)
+    }
     val zoom: (Double, Long) -> Unit = { f, anchor -> viewport = viewport.zoomed(f, anchor, fullStart, fullEnd) }
     val setCursor: (Long) -> Unit = { cursor = it; selectedMarker = null }
     fun focus(marker: MarkerEntity) {
@@ -177,20 +194,24 @@ fun ReviewScreen(
         if (d.hr.isNotEmpty()) {
             val avg = d.session.averageHr ?: d.hr.map { it.bpm }.average()
             ReviewChart("Heart rate", "bpm", listOf(series.hr), viewport, chartMarkers, cursor, setCursor, zoom, 170.dp, minSpan = 20.0,
-                refLines = listOf(avg to "avg ${"%.0f".format(avg)}"))
+                refLines = listOf(avg to "avg ${"%.0f".format(avg)}"), bands = bands(FlagChart.Hr))
         }
-        if (series.hasHrv) ReviewChart("HRV (rolling 2 min)", "ms", listOf(series.rmssd, series.sdnn), viewport, chartMarkers, cursor, setCursor, zoom, 140.dp, minSpan = 10.0, decimals = 1)
-        if (series.hasLoad) ReviewChart("Load", "0–100", listOf(series.load), viewport, chartMarkers, cursor, setCursor, zoom, 100.dp, fixedBounds = 0.0 to 100.0)
-        if (d.pelvic.isNotEmpty()) ReviewChart("Pelvic pressure", "kPa above rest", listOf(series.pelvic), viewport, chartMarkers, cursor, setCursor, zoom, 170.dp, minSpan = 2.0, decimals = 1)
+        if (series.hasHrv) ReviewChart("HRV (rolling 2 min)", "ms", listOf(series.rmssd, series.sdnn), viewport, chartMarkers, cursor, setCursor, zoom, 140.dp, minSpan = 10.0, decimals = 1, bands = bands(FlagChart.Hrv))
+        if (series.hasLoad) ReviewChart("Load", "0–100", listOf(series.load), viewport, chartMarkers, cursor, setCursor, zoom, 100.dp, fixedBounds = 0.0 to 100.0, refLines = listOf(58.0 to "elevated"), bands = bands(FlagChart.Load))
+        if (d.pelvic.isNotEmpty()) ReviewChart("Pelvic pressure", "kPa above rest", listOf(series.pelvic), viewport, chartMarkers, cursor, setCursor, zoom, 170.dp, minSpan = 2.0, decimals = 1, bands = bands(FlagChart.Pelvic))
         if (d.bp.isNotEmpty()) ReviewChart("Blood pressure", "mmHg", listOf(series.sys, series.dia), viewport, chartMarkers, cursor, setCursor, zoom, 120.dp, minSpan = 40.0,
-            emptyText = "Readings are outside the zoomed range")
+            emptyText = "Readings are outside the zoomed range", bands = bands(FlagChart.Bp))
         if (d.glucose.any { it.timestampMs in fullStart..fullEnd }) ReviewChart("Glucose", "mg/dL", listOf(series.glucose), viewport, chartMarkers, cursor, setCursor, zoom, 110.dp, minSpan = 40.0,
-            refLines = listOf(70.0 to "70", 180.0 to "180"), emptyText = "Readings are outside the zoomed range")
+            refLines = listOf(70.0 to "70", 180.0 to "180"), emptyText = "Readings are outside the zoomed range", bands = bands(FlagChart.Glucose))
         if (d.hasEcg && cursor != null) EcgAtCursor(sessionId, cursor!!)
         if (d.hr.isEmpty() && d.pelvic.isEmpty()) Text("No sensor data was recorded in this session.", color = MonitorColors.label, fontSize = 14.sp)
     }
+    val flagsCard: @Composable () -> Unit = {
+        FlagsCard(flags, d, selectedFlag, showFlags, onToggle = { showFlags = it }, onFocus = ::focusFlag)
+    }
     val details: @Composable ColumnScope.() -> Unit = {
-        SummaryCard(d)
+        SummaryCard(d, flags)
+        flagsCard()
         EventsCard(
             d, selectedMarker,
             onFocus = ::focus,
@@ -219,8 +240,9 @@ fun ReviewScreen(
                 }
             } else {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SummaryCard(d)
+                    SummaryCard(d, flags)
                     charts()
+                    flagsCard()
                     EventsCard(d, selectedMarker, onFocus = ::focus, onEdit = { editing = it }, onAdd = { addingAt = cursor ?: d.endMs })
                     NotesCard(d.session.notes) { notes ->
                         scope.launch { withContext(Dispatchers.IO) { dao.upsertSession(d.session.copy(notes = notes)) }; reload++ }
@@ -349,12 +371,13 @@ private fun Section(title: String, modifier: Modifier = Modifier, trailing: @Com
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SummaryCard(d: SessionData) {
+private fun SummaryCard(d: SessionData, flags: List<SessionFlag>) {
     val s = d.session
     val pelvic = remember(d) { SessionAnalysis.pelvic(d.pelvic) }
     val loads = d.hr.mapNotNull { it.load }
     Section("Summary") {
         SessionAnalysis.plainSummary(d).forEach { Text(it, color = MonitorColors.text, fontSize = 14.sp) }
+        SessionFlags.describeCounts(flags)?.let { Text("Flagged automatically: $it.", color = MonitorColors.warn, fontSize = 14.sp) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Tile("Avg HR", fmt(s.averageHr), "bpm", MonitorColors.hr)
             Tile("Min HR", s.minHr?.toString() ?: "--", "bpm", MonitorColors.sdnn)
@@ -493,6 +516,63 @@ private fun EventsCard(d: SessionData, selected: String?, onFocus: (MarkerEntity
                 IconButton(onClick = { onEdit(m) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Edit, contentDescription = "Edit event", tint = MonitorColors.label, modifier = Modifier.size(16.dp)) }
             }
         }
+    }
+}
+
+fun flagColor(severity: FlagSeverity): Color = when (severity) {
+    FlagSeverity.High -> MonitorColors.alarm
+    FlagSeverity.Notable -> MonitorColors.warn
+    FlagSeverity.Info -> MonitorColors.label
+}
+
+/** Things Sarah Monitor noticed by itself; tap one to jump to it on the graphs. */
+@Composable
+private fun FlagsCard(
+    flags: List<SessionFlag>,
+    d: SessionData,
+    selected: SessionFlag?,
+    showOnGraphs: Boolean,
+    onToggle: (Boolean) -> Unit,
+    onFocus: (SessionFlag) -> Unit
+) {
+    var showAll by remember { mutableStateOf(false) }
+    val sorted = flags.sortedWith(compareByDescending<SessionFlag> { it.severity.ordinal }.thenBy { it.startMs })
+    val visible = if (showAll) sorted else sorted.take(8)
+    Section("Automatic flags (${flags.size})", trailing = {
+        TextButton(onClick = { onToggle(!showOnGraphs) }) { Text(if (showOnGraphs) "Hide on graphs" else "Show on graphs", fontSize = 13.sp) }
+    }) {
+        if (flags.isEmpty()) {
+            Text("Nothing stood out: no high HR or load periods, HR surges, HRV drops, unusual contractions, or out-of-range BP/glucose.", color = MonitorColors.label, fontSize = 13.sp)
+        } else {
+            Text("Found automatically from the recording. Prompts for a second look, not diagnoses.", color = MonitorColors.dim, fontSize = 12.sp)
+        }
+        visible.forEach { f ->
+            val color = flagColor(f.severity)
+            val isSelected = f == selected
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(if (isSelected) color.copy(alpha = 0.12f) else Color.Transparent, RoundedCornerShape(8.dp))
+                    .border(1.dp, if (isSelected) color.copy(alpha = 0.7f) else MonitorColors.panelBorder, RoundedCornerShape(8.dp))
+                    .clickable { onFocus(f) }
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(if (f.severity == FlagSeverity.High) "▲" else if (f.severity == FlagSeverity.Notable) "◆" else "•", color = color, fontSize = 13.sp, modifier = Modifier.padding(top = 1.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(f.kind.title, color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text(
+                            clockLabel(f.startMs, seconds = true) + if (f.durationMs >= 1_000L) " · ${SessionAnalysis.durationWords(f.durationMs)}" else "",
+                            color = MonitorColors.label, fontSize = 12.sp, fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    Text(f.detail, color = MonitorColors.text, fontSize = 13.sp)
+                    if (f.alongside.isNotEmpty()) Text("Alongside: " + f.alongside.joinToString(", ") { it.lowerTitle }, color = MonitorColors.label, fontSize = 12.sp)
+                }
+            }
+        }
+        if (sorted.size > 8) TextButton(onClick = { showAll = !showAll }) { Text(if (showAll) "Show fewer" else "Show all ${sorted.size}", fontSize = 13.sp) }
     }
 }
 

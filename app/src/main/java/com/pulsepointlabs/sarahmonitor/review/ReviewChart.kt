@@ -70,6 +70,9 @@ class ReviewSeries(
 
 data class ChartMarker(val timestampMs: Long, val color: Color, val selected: Boolean)
 
+/** A shaded time range on a graph (automatic flags). */
+data class ChartBand(val startMs: Long, val endMs: Long, val color: Color, val selected: Boolean = false)
+
 /** Shared view of the session timeline: what's visible and where the cursor is. */
 data class Viewport(val startMs: Long, val endMs: Long) {
     val spanMs: Long get() = (endMs - startMs).coerceAtLeast(1L)
@@ -121,7 +124,8 @@ fun ReviewChart(
     fixedBounds: Pair<Double, Double>? = null,
     refLines: List<Pair<Double, String>> = emptyList(),
     showTimeAxis: Boolean = true,
-    emptyText: String = "No data in this range"
+    emptyText: String = "No data in this range",
+    bands: List<ChartBand> = emptyList()
 ) {
     val vp by rememberUpdatedState(viewport)
     val cursorCb by rememberUpdatedState(onCursor)
@@ -181,7 +185,7 @@ fun ReviewChart(
                         }
                     }
             ) {
-                drawChart(series, viewport, markers, cursorMs, visibleValues, minSpan, decimals, fixedBounds, refLines, showTimeAxis)
+                drawChart(series, viewport, markers, cursorMs, visibleValues, minSpan, decimals, fixedBounds, refLines, showTimeAxis, bands)
             }
             if (visibleValues.isEmpty()) {
                 Text(emptyText, color = MonitorColors.dim, fontSize = 13.sp, modifier = Modifier.align(Alignment.Center))
@@ -214,7 +218,8 @@ private fun DrawScope.drawChart(
     decimals: Int,
     fixedBounds: Pair<Double, Double>?,
     refLines: List<Pair<Double, String>>,
-    showTimeAxis: Boolean
+    showTimeAxis: Boolean,
+    bands: List<ChartBand> = emptyList()
 ) {
     val labelSp = 11f
     val labelPx = labelSp * density * fontScale
@@ -237,11 +242,19 @@ private fun DrawScope.drawChart(
     fun xFor(t: Long) = left + (t - vp.startMs).toFloat() / vp.spanMs.toFloat() * (right - left)
     fun yFor(v: Double) = bottom - ((v - lo) / span).toFloat() * (bottom - top)
 
+    // Automatic flags: a soft band over the time range plus a stronger strip along the top.
+    bands.forEach { b ->
+        if (b.endMs < vp.startMs || b.startMs > vp.endMs) return@forEach
+        val x0 = xFor(b.startMs)
+        val x1 = max(xFor(b.endMs), x0 + 5f * density)
+        drawRect(b.color.copy(alpha = if (b.selected) 0.22f else 0.11f), Offset(x0, top), Size(x1 - x0, bottom - top))
+        drawRect(b.color.copy(alpha = if (b.selected) 0.95f else 0.65f), Offset(x0, top), Size(x1 - x0, 3f * density))
+    }
     // Grid + y labels (drawn inside the plot so stacked charts share the same x scale exactly).
     niceTicks(lo, hi, 4).forEach { v ->
         val y = yFor(v)
         drawLine(MonitorColors.trendGrid, Offset(left, y), Offset(right, y), strokeWidth = 1f)
-        drawLabel("%.${if (span < 4 && decimals > 0) 1 else 0}f".format(v), left + 3f * density, y - 3f * density, MonitorColors.dim.toArgb(), labelSp)
+        drawLabel(com.pulsepointlabs.sarahmonitor.session.SessionAnalysis.num(v, if (span < 4 && decimals > 0) 1 else 0), left + 3f * density, y - 3f * density, MonitorColors.dim.toArgb(), labelSp)
     }
     if (showTimeAxis) {
         timeTicks(vp.startMs, vp.endMs).forEach { t ->
