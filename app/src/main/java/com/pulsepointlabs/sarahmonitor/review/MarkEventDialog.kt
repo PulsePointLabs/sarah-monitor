@@ -89,7 +89,9 @@ fun MarkEventDialog(
     editing: MarkerEntity? = null,
     onSave: (types: Set<String>, note: String) -> Unit,
     onDelete: (() -> Unit)? = null,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** Drawn as a floating overlay panel (no activity behind it). */
+    inOverlay: Boolean = false
 ) {
     val context = LocalContext.current
     val heart by MonitorHub.heart.collectAsState()
@@ -165,11 +167,11 @@ fun MarkEventDialog(
             }
         }
     }
-    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { if (it) listen() else status = "Microphone permission is needed for voice notes" }
+    // No activity behind an overlay panel to ask for permission from.
+    val micPermission = if (inOverlay) null else rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { if (it) listen() else status = "Microphone permission needed" }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = MonitorColors.panel,
+    EventFrame(
+        inOverlay, onDismiss,
         title = {
             Column {
                 Text(if (editing == null) "Mark event" else if (editing.id.isEmpty()) "Add event" else "Edit event", color = MonitorColors.text, fontWeight = FontWeight.Bold)
@@ -228,7 +230,7 @@ fun MarkEventDialog(
                     )
                     IconButton(onClick = {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) listen()
-                        else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                        else micPermission?.launch(Manifest.permission.RECORD_AUDIO) ?: run { status = "Microphone permission needed" }
                     }) {
                         Icon(
                             if (listening) Icons.Default.Stop else Icons.Default.Mic,
@@ -241,7 +243,7 @@ fun MarkEventDialog(
                 else if (status.isNotBlank()) Text(status, color = MonitorColors.label, fontSize = 12.sp)
             }
         },
-        confirmButton = {
+        confirm = {
             TextButton(onClick = {
                 if (engine == VoiceSettings.Engine.Realtime && listening) stopRealtime { onSave(types, it) }
                 else if (engine == VoiceSettings.Engine.Android && listening) { recognizer.stop(); onSave(types, note) }
@@ -257,11 +259,41 @@ fun MarkEventDialog(
                 }
             }) { Text("Save") }
         },
-        dismissButton = {
+        dismiss = {
             Row {
                 if (onDelete != null) TextButton(onClick = onDelete) { Text("Delete", color = MonitorColors.alarm) }
                 TextButton(onClick = onDismiss) { Text("Cancel") }
             }
         }
     )
+}
+
+
+/** An AlertDialog in the app; a matching floating panel when shown as an overlay. */
+@Composable
+fun EventFrame(
+    inOverlay: Boolean,
+    onDismiss: () -> Unit,
+    title: @Composable () -> Unit,
+    text: @Composable () -> Unit,
+    confirm: @Composable () -> Unit,
+    dismiss: @Composable () -> Unit
+) {
+    if (!inOverlay) {
+        AlertDialog(onDismissRequest = onDismiss, containerColor = MonitorColors.panel, title = title, text = text, confirmButton = confirm, dismissButton = dismiss)
+        return
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(max = 720.dp)
+            .background(MonitorColors.panel, RoundedCornerShape(22.dp))
+            .border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(22.dp))
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        androidx.compose.material3.ProvideTextStyle(androidx.compose.material3.MaterialTheme.typography.headlineSmall) { title() }
+        Column(Modifier.weight(1f, fill = false)) { text() }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { dismiss(); confirm() }
+    }
 }

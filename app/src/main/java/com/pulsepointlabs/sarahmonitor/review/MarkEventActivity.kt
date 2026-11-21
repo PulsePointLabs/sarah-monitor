@@ -29,7 +29,7 @@ class MarkEventActivity : ComponentActivity() {
         val pressedAt = intent.getLongExtra(EXTRA_PRESSED_AT, System.currentTimeMillis())
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(background = MonitorColors.background, surface = MonitorColors.panel, primary = MonitorColors.pelvic)) {
-                MarkEventFlow(pressedAt, onToast = { Toast.makeText(this, it, Toast.LENGTH_SHORT).show() }, onDone = { finish() })
+                MarkEventFlow(pressedAt, inOverlay = false, onToast = { Toast.makeText(this, it, Toast.LENGTH_SHORT).show() }, onDone = { finish() })
             }
         }
     }
@@ -39,8 +39,9 @@ class MarkEventActivity : ComponentActivity() {
     }
 }
 
+/** Event entry flow (start a session first if none is running). [inOverlay]: drawn as a floating panel. */
 @Composable
-private fun MarkEventFlow(pressedAt: Long, onToast: (String) -> Unit, onDone: () -> Unit) {
+fun MarkEventFlow(pressedAt: Long, inOverlay: Boolean, onToast: (String) -> Unit, onDone: () -> Unit) {
     val session by MonitorHub.session.collectAsState()
     var starting by remember { mutableStateOf(false) }
     val current = session
@@ -56,21 +57,22 @@ private fun MarkEventFlow(pressedAt: Long, onToast: (String) -> Unit, onDone: ()
                     }
                 }
             },
-            onDismiss = onDone
+            onDismiss = onDone,
+            inOverlay = inOverlay
         )
-        starting -> AlertDialog(
-            onDismissRequest = onDone,
-            containerColor = MonitorColors.panel,
-            title = { Text("Starting session…", color = MonitorColors.text) },
-            confirmButton = { TextButton(onClick = onDone) { Text("Cancel") } }
+        starting -> EventFrame(
+            inOverlay, onDone,
+            title = { Text("Starting session…", color = MonitorColors.text, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
+            text = {},
+            confirm = {},
+            dismiss = { TextButton(onClick = onDone) { Text("Cancel") } }
         )
-        else -> AlertDialog(
-            onDismissRequest = onDone,
-            containerColor = MonitorColors.panel,
-            title = { Text("Not recording", color = MonitorColors.text) },
-            text = { Text("Events are saved into a session. Start recording now and mark this event?", color = MonitorColors.label) },
-            confirmButton = { TextButton(onClick = { starting = true; MonitorHub.startSession() }) { Text("● Start & mark") } },
-            dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } }
+        else -> EventFrame(
+            inOverlay, onDone,
+            title = { Text("Not recording", color = MonitorColors.text, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
+            text = { Text("Start recording and mark this event?", color = MonitorColors.label) },
+            confirm = { TextButton(onClick = { starting = true; MonitorHub.startSession() }) { Text("● Start & mark") } },
+            dismiss = { TextButton(onClick = onDone) { Text("Cancel") } }
         )
     }
 }

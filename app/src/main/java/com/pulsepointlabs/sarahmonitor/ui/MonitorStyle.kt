@@ -9,6 +9,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.text.drawText
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -107,6 +111,8 @@ fun MonitorPanel(
     val a = LocalPanelAlpha.current
     Box(
         modifier
+            // Solid base first, so 100% opacity is truly opaque; the identity tint sits on top.
+            .background(MonitorColors.background.copy(alpha = a), shape)
             .background(
                 androidx.compose.ui.graphics.Brush.verticalGradient(
                     listOf(
@@ -127,14 +133,21 @@ val LocalPanelAlpha = compositionLocalOf { 1f }
 fun CardTitle(label: String, color: Color, unit: String = "", modifier: Modifier = Modifier, trailing: @Composable () -> Unit = {}) {
     val s = LocalCardScale.current
     if (LocalOverlayMode.current) {
-        // Overlays: one slim label line (scales with the overlay), leaving room for the corner buttons.
-        Row(modifier.padding(end = 46.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-            Box(Modifier.size(width = 3.dp, height = s.dp(13f)).background(color, RoundedCornerShape(2.dp)))
+        // Overlays: one bold label in the reading's live colour (glowing slightly), unit as a small tag, room
+        // on the right for the close button.
+        val shown by androidx.compose.animation.animateColorAsState(color, androidx.compose.animation.core.tween(400), label = "title-color")
+        Row(modifier.padding(end = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.size(width = 4.dp, height = s.dp(16f)).background(shown, RoundedCornerShape(2.dp)))
             Text(
-                if (unit.isNotBlank()) "$label · $unit" else label,
-                color = color, fontSize = s.sp(13f), fontWeight = FontWeight.Bold, maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                label.uppercase(),
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                style = TextStyle(
+                    color = shown, fontSize = max(13f, 14f * s.factor).sp, fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 1.2.sp, shadow = Shadow(shown.copy(alpha = 0.55f), Offset.Zero, blurRadius = 10f)
+                )
             )
+            if (unit.isNotBlank()) UnitTag(unit, shown)
         }
         return
     }
@@ -215,6 +228,10 @@ fun BigReading(
     leading: (@Composable (sizeDp: Float) -> Unit)? = null,
     maxSizeDp: Float = 260f
 ) {
+    if (LocalOverlayMode.current && trend != null) {
+        OverlayReading(value, color, modifier, maxChars, trend, trendColor, trendStrength, leading, maxSizeDp)
+        return
+    }
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val chars = max(maxChars, value.length).coerceAtLeast(2)
         val leadingEm = if (leading != null) 0.8f else 0f
@@ -435,5 +452,104 @@ fun agoLabel(timestampMs: Long, nowMs: Long = System.currentTimeMillis()): Strin
         s < 3600 -> "${s / 60} min ago"
         s < 86_400 -> "${s / 3600} h ${(s % 3600) / 60} min ago"
         else -> "${s / 86_400} d ago"
+    }
+}
+
+
+/**
+ * Overlay version of [BigReading]: the number gets as much room as it can, and the trend becomes a small chart
+ * with a grid and axis numbers (value up the side, last 2 minutes along the bottom), set beside the number on
+ * wide overlays and underneath on tall ones — whichever lets the number be bigger.
+ */
+@Composable
+private fun OverlayReading(
+    value: String, color: Color, modifier: Modifier, maxChars: Int, trend: List<Double>, trendColor: Color,
+    trendStrength: Double?, leading: (@Composable (sizeDp: Float) -> Unit)?, maxSizeDp: Float
+) {
+    BoxWithConstraints(modifier) {
+        val chars = max(maxChars, value.length).coerceAtLeast(2)
+        val leadingEm = if (leading != null) 0.8f else 0f
+        val arrowEm = if (trendStrength != null) 0.42f else 0f
+        val textEm = chars * 0.6f + 0.1f
+        val numEm = textEm + leadingEm + arrowEm + 0.05f
+        val w = maxWidth.value
+        val h = maxHeight.value
+        // Beside: chart takes the right 42% (at least 110 dp). Below: chart takes the bottom 40%.
+        val sideChart = max(110f, w * 0.42f)
+        val besideSize = min((w - sideChart) / numEm, h * 0.88f)
+        val belowSize = min(w / numEm, h * 0.6f * 0.9f)
+        val canBeside = w - sideChart > 60f
+        val below = !canBeside || belowSize > besideSize * 1.1f
+        val sizeDp = min(if (below) belowSize else besideSize, maxSizeDp).coerceAtLeast(MinTextSp + 6f)
+        val shown by androidx.compose.animation.animateColorAsState(color, androidx.compose.animation.core.tween(400), label = "ov-reading")
+        val number: @Composable (Modifier) -> Unit = { m ->
+            Row(m, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                if (leading != null) Box(Modifier.size((sizeDp * leadingEm).dp, sizeDp.dp), contentAlignment = Alignment.Center) { leading(sizeDp * 0.62f) }
+                Text(
+                    value, color = shown, maxLines = 1, softWrap = false,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.width((sizeDp * textEm).dp),
+                    style = TextStyle(
+                        fontSize = with(LocalDensity.current) { sizeDp.dp.toSp() }, lineHeight = with(LocalDensity.current) { sizeDp.dp.toSp() },
+                        fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, shadow = Shadow(shown.copy(alpha = 0.7f), Offset.Zero, blurRadius = 26f)
+                    )
+                )
+                if (trendStrength != null) TrendArrows(trendStrength, Modifier.size((sizeDp * arrowEm).dp, (sizeDp * 0.82f).dp))
+            }
+        }
+        if (below) {
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+                number(Modifier.fillMaxWidth().weight(0.6f))
+                TrendAxesChart(trend, trendColor, Modifier.fillMaxWidth().weight(0.4f))
+            }
+        } else {
+            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                number(Modifier.weight(1f).fillMaxHeight())
+                TrendAxesChart(trend, trendColor, Modifier.width(sideChart.dp).fillMaxHeight().padding(vertical = 4.dp))
+            }
+        }
+    }
+}
+
+/** Trend with a light grid: value labels on the left (low / high), time along the bottom (−2m, −1m, now). */
+@Composable
+fun TrendAxesChart(values: List<Double>, color: Color, modifier: Modifier) {
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val labelStyle = TextStyle(color = MonitorColors.label, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+    androidx.compose.foundation.Canvas(modifier) {
+        val showLabels = size.width > 100.dp.toPx() && size.height > 46.dp.toPx()
+        val lo0 = values.minOrNull() ?: 0.0
+        val hi0 = values.maxOrNull() ?: 1.0
+        val pad = max(((hi0 - lo0) * 0.12).toFloat(), 0.5f).toDouble()
+        val lo = lo0 - pad
+        val hi = hi0 + pad
+        val decimals = if (hi - lo < 6) 1 else 0
+        val loText = "%.${decimals}f".format(lo0)
+        val hiText = "%.${decimals}f".format(hi0)
+        val left = if (showLabels) max(measurer.measure(loText, labelStyle).size.width, measurer.measure(hiText, labelStyle).size.width) + 6.dp.toPx() else 0f
+        val bottom = if (showLabels) measurer.measure("now", labelStyle).size.height + 3.dp.toPx() else 0f
+        val pw = size.width - left
+        val ph = size.height - bottom
+        val grid = MonitorColors.trendGrid
+        for (i in 0..2) { val y = ph * i / 2f; drawLine(grid, Offset(left, y), Offset(size.width, y), 1f) }
+        for (i in 0..2) { val x = left + pw * i / 2f; drawLine(grid, Offset(x, 0f), Offset(x, ph), 1f) }
+        fun yOf(v: Double) = (ph - ((v - lo) / (hi - lo)).toFloat() * ph)
+        if (showLabels) {
+            drawText(measurer, hiText, Offset(0f, (yOf(hi0) - 7.dp.toPx()).coerceIn(0f, ph - 14.dp.toPx())), labelStyle)
+            drawText(measurer, loText, Offset(0f, (yOf(lo0) - 7.dp.toPx()).coerceIn(0f, ph - 14.dp.toPx())), labelStyle)
+            listOf("-2m" to 0f, "-1m" to 0.5f, "now" to 1f).forEach { (t, f) ->
+                val tw = measurer.measure(t, labelStyle).size.width
+                drawText(measurer, t, Offset((left + pw * f - tw * f).coerceAtLeast(left), ph + 3.dp.toPx()), labelStyle)
+            }
+        }
+        if (values.size >= 3) {
+            val path = androidx.compose.ui.graphics.Path()
+            values.forEachIndexed { i, v ->
+                val x = left + i.toFloat() / (values.size - 1) * pw
+                if (i == 0) path.moveTo(x, yOf(v)) else path.lineTo(x, yOf(v))
+            }
+            drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.2f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+            drawCircle(color, 3f * density, Offset(left + pw, yOf(values.last())))
+        }
     }
 }

@@ -187,7 +187,7 @@ private fun HeartRateCard() {
     val beatMs = if (!fresh) null else heart.latestRrMs?.takeIf { it in 300..2_000 }?.toLong()
         ?: heart.heartRate?.takeIf { it in 30..220 }?.let { 60_000L / it }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        CardTitle("HR", MonitorColors.hr, "bpm") { Text(link, color = linkColor, fontSize = LocalCardScale.current.sp(11f), maxLines = 1) }
+        CardTitle("HR", if (LocalOverlayMode.current) tint else MonitorColors.hr, "bpm") { Text(link, color = linkColor, fontSize = LocalCardScale.current.sp(11f), maxLines = 1) }
         BigReading(
             value = if (fresh) heart.heartRate?.toString() ?: "--" else "--",
             color = tint,
@@ -244,12 +244,12 @@ private fun HrvValue(item: HrvItem, recent: RecentHistory, modifier: Modifier) {
     BoxWithConstraints(modifier) {
         if (maxWidth > maxHeight * 2.2f) {
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                Text(item.label, color = item.color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.3f))
+                Text(item.label, color = if (LocalOverlayMode.current) tint else item.color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.3f))
                 BigReading(item.value, tint, Modifier.weight(0.7f).fillMaxSize(), maxChars = item.maxChars, trend = values, trendStrength = recent.trend(item.metric))
             }
         } else {
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(item.label, color = item.color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold)
+                Text(item.label, color = if (LocalOverlayMode.current) tint else item.color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold)
                 BigReading(item.value, tint, Modifier.fillMaxWidth().weight(1f), maxChars = item.maxChars, trend = values, trendStrength = recent.trend(item.metric))
             }
         }
@@ -263,7 +263,7 @@ private fun LoadCard() {
     val load = heart.load
     val color = loadColor(load.score)
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        CardTitle("Load", MonitorColors.load, "0–100") { Text(loadStatus(load), color = if (load.score == null) MonitorColors.warn else color, fontSize = LocalCardScale.current.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1) }
+        CardTitle("Load", if (LocalOverlayMode.current) trendColor(recent.trend(Metric.Load)) else MonitorColors.load, "0–100") { Text(loadStatus(load), color = if (load.score == null) MonitorColors.warn else color, fontSize = LocalCardScale.current.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1) }
         BigReading(
             load.score?.toString() ?: "--", trendColor(recent.trend(Metric.Load)), Modifier.fillMaxWidth().weight(1f),
             maxChars = 3, trend = recent.values(Metric.Load), trendStrength = recent.trend(Metric.Load)
@@ -435,7 +435,7 @@ private fun PelvicCard() {
     val recent by MonitorHub.recent.collectAsState()
     val color = trendColor(recent.trend(Metric.Pelvic))
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        CardTitle("Pelvic pressure", MonitorColors.pelvic, "kPa") { Text(link, color = linkColor, fontSize = s.sp(11f), maxLines = 1) }
+        CardTitle("Pelvic pressure", if (LocalOverlayMode.current) color else MonitorColors.pelvic, "kPa") { Text(link, color = linkColor, fontSize = s.sp(11f), maxLines = 1) }
         BigReading(
             value = if (fresh) fmt(p.aboveRestKpa, 1) else "--",
             color = color,
@@ -467,7 +467,7 @@ private fun PelvicCard() {
             capture != null -> "${capture.message} ${"%.0f".format(kotlin.math.ceil(capture.remainingS))}s"
             error != null && !fresh -> error!!
             p.message != null -> p.message!!
-            p.restSource == RestSource.Auto -> "Rest: auto (capture a relaxed rest for best accuracy)"
+            p.restSource == RestSource.Auto -> "Auto rest"
             p.restSource == RestSource.Captured -> "Rest ${fmt(p.restKpa, 2)} kPa · threshold ${fmt(p.thresholdKpa, 2)}"
             else -> ""
         }
@@ -516,7 +516,7 @@ private fun BloodPressureCard() {
         else -> "Cuff idle"
     }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        CardTitle("Blood pressure", MonitorColors.bp, "mmHg") {
+        CardTitle("Blood pressure", if (LocalOverlayMode.current) latest?.let { bpColor(it.systolic, it.diastolic) } ?: MonitorColors.bp else MonitorColors.bp, "mmHg") {
             Text(latest?.let { agoLabel(it.timestampMs) } ?: "", color = MonitorColors.label, fontSize = s.sp(11f), maxLines = 1)
         }
         BigReading(

@@ -17,6 +17,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
@@ -365,9 +367,8 @@ class OverlayManager(private val base: Context) {
                             PlusButton(onTap = { openMarkEvent(displayId) })
                         } else {
                             MonitorCard(kind.card, Modifier.fillMaxSize())
-                            // Corner buttons: open the app, close this overlay.
-                            Row(Modifier.align(Alignment.TopEnd).padding(3.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(3.dp)) {
-                                CornerButton("⤢") { openApp(displayId) }
+                            // Close, with breathing room from the corner (the whole card drags, so no move button).
+                            Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp)) {
                                 CornerButton("×") { OverlaySettings.set(base, kind, false, profile) }
                             }
                             Canvas(
@@ -409,11 +410,63 @@ class OverlayManager(private val base: Context) {
         commit()
     }
 
+    private var markPanel: Shown? = null
+
+    /**
+     * Event entry as a floating panel over whatever is on screen (a real overlay, not an app window): dimmed
+     * backdrop, tap outside or Cancel to close. Focusable, so typing and voice work.
+     */
     private fun openMarkEvent(displayId: Int) {
-        val intent = Intent(base, com.pulsepointlabs.sarahmonitor.review.MarkEventActivity::class.java)
-            .putExtra(com.pulsepointlabs.sarahmonitor.review.MarkEventActivity.EXTRA_PRESSED_AT, System.currentTimeMillis())
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        OverlayDisplay.startActivityOnDisplay(base, intent, displayId)
+        if (markPanel != null) return
+        val pressedAt = System.currentTimeMillis()
+        val context = OverlayDisplay.overlayContext(base, displayId)
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val owner = OverlayOwner().also { it.start() }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply { softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE }
+        val view = ComposeView(context).apply {
+            setViewTreeLifecycleOwner(owner)
+            setViewTreeSavedStateRegistryOwner(owner)
+            setContent {
+                androidx.compose.material3.MaterialTheme(
+                    colorScheme = androidx.compose.material3.darkColorScheme(background = MonitorColors.background, surface = MonitorColors.panel, primary = MonitorColors.pelvic)
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f))
+                            .pointerInput(Unit) { detectTapGestures { closeMarkEvent() } },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(0.94f)
+                                .widthIn(max = 620.dp)
+                                .pointerInput(Unit) { detectTapGestures { } }
+                        ) {
+                            com.pulsepointlabs.sarahmonitor.review.MarkEventFlow(
+                                pressedAt, inOverlay = true,
+                                onToast = { android.widget.Toast.makeText(base, it, android.widget.Toast.LENGTH_SHORT).show() },
+                                onDone = { closeMarkEvent() }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (runCatching { wm.addView(view, params) }.isFailure) { owner.destroy(); return }
+        markPanel = Shown(view, owner, params, wm, displayId)
+    }
+
+    private fun closeMarkEvent() {
+        val p = markPanel ?: return
+        markPanel = null
+        runCatching { p.wm.removeView(p.view) }
+        p.owner.destroy()
     }
 
     private fun openApp(displayId: Int) {
@@ -461,9 +514,10 @@ private fun Modifier.plusDisc(color: androidx.compose.ui.graphics.Color): Modifi
 private fun CornerButton(symbol: String, onClick: () -> Unit) {
     Box(
         Modifier
-            .size(22.dp)
-            .background(MonitorColors.background.copy(alpha = 0.55f), androidx.compose.foundation.shape.CircleShape)
+            .size(32.dp)
+            .background(MonitorColors.background.copy(alpha = 0.75f), androidx.compose.foundation.shape.CircleShape)
+            .border(1.dp, MonitorColors.label.copy(alpha = 0.35f), androidx.compose.foundation.shape.CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
-    ) { Text(symbol, color = MonitorColors.label, fontSize = 13.sp) }
+    ) { Text(symbol, color = MonitorColors.text, fontSize = 20.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
 }
