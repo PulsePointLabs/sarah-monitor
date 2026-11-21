@@ -61,7 +61,7 @@ object SessionFlags {
                 flags += SessionFlag(
                     FlagKind.HighBp, bp.timestampMs, bp.timestampMs,
                     if (severe) FlagSeverity.High else FlagSeverity.Notable,
-                    "${bp.systolic}/${bp.diastolic} mmHg" + (if (severe) " (very high)" else "") + (bp.pulse?.let { ", pulse $it" } ?: "")
+                    "${bp.systolic}/${bp.diastolic} mmHg" + (if (severe) " (very high)" else "") + (bp.pulse?.let { ", pulse $it" } ?: "") + (bp.positionLabel?.let { ", $it" } ?: "")
                 )
             }
         }

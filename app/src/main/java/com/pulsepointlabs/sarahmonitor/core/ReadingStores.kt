@@ -13,9 +13,41 @@ data class BpEntry(
     val diastolic: Int,
     val pulse: Int?,
     val irregular: Boolean?,
-    val source: String
+    val source: String,
+    /** Cuff site: arm, wrist, thigh, calf (null = not recorded). */
+    val site: String? = null,
+    /** Body position: sitting, standing, supine, reclined (null = not recorded). */
+    val posture: String? = null
 ) {
     val meanArterial: Double get() = diastolic + (systolic - diastolic) / 3.0
+    /** "Arm · sitting", or null when neither is known. */
+    val positionLabel: String? get() = listOfNotNull(site?.let { BpPosition.siteLabel(it) }, posture?.let { BpPosition.postureLabel(it) }).joinToString(" · ").ifBlank { null }
+}
+
+/** Cuff site and body position for BP readings, plus the defaults applied to new cuff readings. */
+object BpPosition {
+    val sites = listOf("arm" to "Upper arm", "wrist" to "Wrist", "thigh" to "Thigh", "calf" to "Calf / ankle")
+    val postures = listOf("sitting" to "Sitting", "standing" to "Standing", "supine" to "Lying (supine)", "reclined" to "Reclined")
+    fun siteLabel(id: String) = sites.firstOrNull { it.first == id }?.second ?: id
+    fun postureLabel(id: String) = postures.firstOrNull { it.first == id }?.second ?: id
+
+    val defaultSite = MutableStateFlow("arm")
+    val defaultPosture = MutableStateFlow("sitting")
+    private var prefs: android.content.SharedPreferences? = null
+
+    @Synchronized
+    fun load(context: Context) {
+        if (prefs != null) return
+        val p = context.applicationContext.getSharedPreferences("sarahmonitor_bp_position", Context.MODE_PRIVATE)
+        prefs = p
+        defaultSite.value = p.getString("site", "arm") ?: "arm"
+        defaultPosture.value = p.getString("posture", "sitting") ?: "sitting"
+    }
+
+    fun setDefaults(site: String, posture: String) {
+        defaultSite.value = site; defaultPosture.value = posture
+        prefs?.edit()?.putString("site", site)?.putString("posture", posture)?.apply()
+    }
 }
 
 data class GlucoseEntry(
@@ -84,6 +116,7 @@ class BpStore(context: Context) : JsonListStore<BpEntry>(context, "bp_readings.j
     override fun toJson(item: BpEntry) = JSONObject()
         .put("t", item.timestampMs).put("sys", item.systolic).put("dia", item.diastolic)
         .put("pulse", item.pulse ?: JSONObject.NULL).put("irregular", item.irregular ?: JSONObject.NULL).put("source", item.source)
+        .put("site", item.site ?: JSONObject.NULL).put("posture", item.posture ?: JSONObject.NULL)
 
     override fun fromJson(json: JSONObject) = BpEntry(
         timestampMs = json.getLong("t"),
@@ -91,10 +124,18 @@ class BpStore(context: Context) : JsonListStore<BpEntry>(context, "bp_readings.j
         diastolic = json.getInt("dia"),
         pulse = if (json.isNull("pulse")) null else json.getInt("pulse"),
         irregular = if (json.isNull("irregular")) null else json.getBoolean("irregular"),
-        source = json.optString("source", "")
+        source = json.optString("source", ""),
+        site = if (json.isNull("site")) null else json.optString("site").ifBlank { null },
+        posture = if (json.isNull("posture")) null else json.optString("posture").ifBlank { null }
     )
 
     override fun timestampOf(item: BpEntry) = item.timestampMs
+
+    /** Sets where the cuff was and how you were positioned for one reading. */
+    fun setPosition(entry: BpEntry, site: String?, posture: String?) {
+        remove(entry)
+        addAll(listOf(entry.copy(site = site, posture = posture)))
+    }
 
     // The cuff re-sends stored readings; treat the same values within a minute as the same reading.
     override fun sameReading(a: BpEntry, b: BpEntry) =

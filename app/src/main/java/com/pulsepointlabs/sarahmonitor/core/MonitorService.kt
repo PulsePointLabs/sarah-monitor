@@ -83,6 +83,8 @@ class MonitorService : Service() {
                         MonitorHub.glucose.addAll(health.readGlucose(days = 2))
                         MonitorHub.bp.addAll(health.readBloodPressure(days = 2))
                     }
+                    MonitorHub.spo2.addAll(health.readSpO2(days = 2))
+                    MonitorHub.body.addAll(health.readBody(days = 7))
                 }
                 delay(120_000L)
             }

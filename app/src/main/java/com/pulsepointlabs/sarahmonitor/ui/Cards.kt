@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.pulsepointlabs.sarahmonitor.ble.ConnectionState
 import com.pulsepointlabs.sarahmonitor.core.CaptureKind
 import com.pulsepointlabs.sarahmonitor.core.Metric
@@ -60,6 +61,7 @@ private fun designSize(type: CardType): Pair<Float, Float> = when (type) {
     CardType.Pelvic -> 380f to 420f
     CardType.BloodPressure -> 380f to 260f
     CardType.Glucose -> 260f to 200f
+    CardType.SpO2, CardType.Body -> 260f to 200f
 }
 
 private fun identity(type: CardType): Color = when (type) {
@@ -70,6 +72,8 @@ private fun identity(type: CardType): Color = when (type) {
     CardType.Pelvic, CardType.PelvicTrend -> MonitorColors.pelvic
     CardType.BloodPressure -> MonitorColors.bp
     CardType.Glucose -> MonitorColors.glucose
+    CardType.SpO2 -> com.pulsepointlabs.sarahmonitor.vitals.SpO2Color
+    CardType.Body -> com.pulsepointlabs.sarahmonitor.vitals.BodyColor
 }
 
 /** One dashboard card (also used, compact, in the floating overlays). */
@@ -96,6 +100,8 @@ fun MonitorCard(type: CardType, modifier: Modifier = Modifier) {
                     CardType.PelvicTrend -> PelvicTrendCard()
                     CardType.BloodPressure -> BloodPressureCard()
                     CardType.Glucose -> GlucoseCard()
+                    CardType.SpO2 -> com.pulsepointlabs.sarahmonitor.vitals.SpO2Card()
+                    CardType.Body -> com.pulsepointlabs.sarahmonitor.vitals.BodyCard()
                 }
             }
         }
@@ -503,6 +509,7 @@ private fun BloodPressureCard() {
                 StatChip("Δ sys", "${if (d > 0) "+" else ""}$d")
             }
         }
+        BpPositionLine(latest)
         if (!s.compact && readings.size >= 2) {
             val recent = readings.takeLast(20)
             TrendChart(
@@ -555,4 +562,57 @@ private fun GlucoseCard() {
             }
         }
     }
+}
+
+
+/** "Upper arm · Sitting ✎" under the BP reading; tap to set the cuff site and posture. */
+@Composable
+private fun BpPositionLine(latest: com.pulsepointlabs.sarahmonitor.core.BpEntry?) {
+    val s = LocalCardScale.current
+    val defSite by com.pulsepointlabs.sarahmonitor.core.BpPosition.defaultSite.collectAsState()
+    val defPosture by com.pulsepointlabs.sarahmonitor.core.BpPosition.defaultPosture.collectAsState()
+    var open by remember { mutableStateOf(false) }
+    val label = latest?.positionLabel ?: "Next: ${com.pulsepointlabs.sarahmonitor.core.BpPosition.siteLabel(defSite)} · ${com.pulsepointlabs.sarahmonitor.core.BpPosition.postureLabel(defPosture)}"
+    Text(
+        "$label  ✎",
+        color = MonitorColors.bp, fontSize = s.sp(12f), maxLines = 1,
+        modifier = Modifier.clickable { open = true }.padding(vertical = 2.dp)
+    )
+    if (open) BpPositionDialog(latest) { open = false }
+}
+
+@Composable
+fun BpPositionDialog(entry: com.pulsepointlabs.sarahmonitor.core.BpEntry?, onDismiss: () -> Unit) {
+    val pos = com.pulsepointlabs.sarahmonitor.core.BpPosition
+    var site by remember { mutableStateOf(entry?.site ?: pos.defaultSite.value) }
+    var posture by remember { mutableStateOf(entry?.posture ?: pos.defaultPosture.value) }
+    var asDefault by remember { mutableStateOf(true) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MonitorColors.panel,
+        title = { Text(if (entry != null) "Cuff site & position · ${entry.systolic}/${entry.diastolic}" else "Cuff site & position for the next reading", color = MonitorColors.text, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Cuff site", color = MonitorColors.label, fontSize = 13.sp)
+                ChoiceRow { pos.sites.forEach { (id, l) -> ChoiceChip(l, id == site, MonitorColors.bp) { site = id } } }
+                Text("Position", color = MonitorColors.label, fontSize = 13.sp)
+                ChoiceRow { pos.postures.forEach { (id, l) -> ChoiceChip(l, id == posture, MonitorColors.bp) { posture = id } } }
+                if (site == "thigh" || site == "calf") {
+                    Text("Leg cuffs usually read higher systolic than the upper arm. Readings are labelled, not converted.", color = MonitorColors.warn, fontSize = 12.sp)
+                }
+                if (entry != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Checkbox(asDefault, { asDefault = it })
+                    Text("Also use for new readings", color = MonitorColors.text, fontSize = 14.sp)
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                if (entry != null) MonitorHub.bp.setPosition(entry, site, posture)
+                if (entry == null || asDefault) pos.setDefaults(site, posture)
+                onDismiss()
+            }) { Text("Save") }
+        },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }

@@ -43,6 +43,10 @@ object MonitorHub {
     lateinit var bp: BpStore; private set
     lateinit var glucose: GlucoseStore; private set
     lateinit var recorder: SessionRecorder; private set
+    lateinit var spo2: com.pulsepointlabs.sarahmonitor.vitals.SpO2Store; private set
+    lateinit var body: com.pulsepointlabs.sarahmonitor.vitals.BodyStore; private set
+    /** Etekcity ESF-551 direct reads. */
+    lateinit var scale: com.pulsepointlabs.sarahmonitor.vitals.ScaleClient; private set
     /** Heartbeat beep, alert tones and Sarah's spoken alerts. */
     lateinit var audio: AudioEngine; private set
 
@@ -89,10 +93,15 @@ object MonitorHub {
         omron = OmronBleClient(app)
         bp = BpStore(app)
         glucose = GlucoseStore(app)
+        spo2 = com.pulsepointlabs.sarahmonitor.vitals.SpO2Store(app)
+        body = com.pulsepointlabs.sarahmonitor.vitals.BodyStore(app)
+        com.pulsepointlabs.sarahmonitor.vitals.BodyProfile.load(app)
+        scale = com.pulsepointlabs.sarahmonitor.vitals.ScaleClient(app) { body.addAll(listOf(it)) }
         recorder = SessionRecorder(app, scope)
         val baselineStore = LoadBaselineStore(app)
         heartEngine = HeartEngine(baselineStore.load(), baselineStore::save)
         audio = AudioEngine(app) { recorder.active.value != null }
+        BpPosition.load(app)
         ResponseSettings.load(app)
         arousal.setProfile(ResponseSettings.profile.value)
         scope.launch { ResponseSettings.profile.collect { arousal.setProfile(it) } }
@@ -149,7 +158,9 @@ object MonitorHub {
                             diastolic = reading.diastolic,
                             pulse = reading.pulse,
                             irregular = reading.irregular,
-                            source = reading.deviceName
+                            source = reading.deviceName,
+                            site = BpPosition.defaultSite.value,
+                            posture = BpPosition.defaultPosture.value
                         )
                     )
                 )
@@ -161,7 +172,7 @@ object MonitorHub {
             var seen = bp.items.value.maxOfOrNull { it.timestampMs } ?: 0L
             bp.items.collect { list ->
                 list.filter { it.timestampMs > seen && System.currentTimeMillis() - it.timestampMs < 15 * 60_000L }
-                    .forEach { audio.onBp(it.timestampMs, it.systolic, it.diastolic) }
+                    .forEach { audio.onBp(it.timestampMs, it.systolic, it.diastolic, it.positionLabel?.lowercase()) }
                 seen = maxOf(seen, list.maxOfOrNull { it.timestampMs } ?: 0L)
             }
         }

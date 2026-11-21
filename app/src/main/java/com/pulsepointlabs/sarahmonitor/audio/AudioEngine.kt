@@ -124,7 +124,7 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
 
     fun onPelvic(t: Long, p: PelvicSnapshot) = dispatch(alerts.onPelvic(t, p.holding, p.holdSeconds, p.pulseCount, p.lastPulse))
 
-    fun onBp(t: Long, systolic: Int, diastolic: Int) = dispatch(alerts.onBp(t, systolic, diastolic))
+    fun onBp(t: Long, systolic: Int, diastolic: Int, where: String? = null) = dispatch(alerts.onBp(t, systolic, diastolic, where))
 
     fun onGlucose(t: Long, mgDl: Double) = dispatch(alerts.onGlucose(t, mgDl))
 

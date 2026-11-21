@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.SelfImprovement
+import androidx.compose.material.icons.filled.MonitorWeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -186,7 +187,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Pulse-ox CSVs (EMAY etc.) go to SpO2; everything else to the glucose importer. */
+    private fun importSpO2(text: String, source: String): Boolean {
+        if (com.pulsepointlabs.sarahmonitor.vitals.VitalCsv.classify(text, source) != "spo2") return false
+        val r = com.pulsepointlabs.sarahmonitor.vitals.VitalCsv.parseSpO2(text, source)
+        if (r.error != null) toast(r.error) else {
+            val added = MonitorHub.spo2.addAll(r.rows)
+            toast("Imported $added new SpO2 readings${if (r.skipped > 0) " (${r.skipped} rows skipped)" else ""}.")
+        }
+        return true
+    }
+
     private fun importText(text: String, source: String) {
+        if (importSpO2(text, source)) return
         val result = GlucoseCsv.parse(text, source)
         if (result.error != null) toast(result.error) else {
             val added = MonitorHub.glucose.addAll(result.rows)
@@ -258,15 +271,17 @@ class MainActivity : ComponentActivity() {
         kotlinx.coroutines.MainScope().launch {
             val glucose = runCatching { healthImporter.readGlucose() }.getOrDefault(emptyList())
             val bp = runCatching { healthImporter.readBloodPressure() }.getOrDefault(emptyList())
+            val o = MonitorHub.spo2.addAll(runCatching { healthImporter.readSpO2() }.getOrDefault(emptyList()))
+            val w = MonitorHub.body.addAll(runCatching { healthImporter.readBody() }.getOrDefault(emptyList()))
             val g = MonitorHub.glucose.addAll(glucose)
             val b = MonitorHub.bp.addAll(bp)
-            toast("Health Connect: $g new glucose, $b new BP readings.")
+            toast("Health Connect: $g glucose, $b BP, $o SpO2, $w weigh-ins new.")
         }
     }
 
     private fun importCsv(uri: Uri) {
         kotlinx.coroutines.MainScope().launch {
-            val result = withContext(Dispatchers.IO) {
+            val file = withContext(Dispatchers.IO) {
                 runCatching {
                     val bytes = contentResolver.openInputStream(uri)?.use { input ->
                         val out = java.io.ByteArrayOutputStream()
@@ -279,22 +294,22 @@ class MainActivity : ComponentActivity() {
                         }
                         out.toByteArray()
                     } ?: ByteArray(0)
-                    GlucoseCsv.parse(GlucoseCsv.decode(bytes), displayName(uri))
+                    GlucoseCsv.decode(bytes) to displayName(uri)
                 }.getOrNull()
             }
-            when {
-                result == null -> toast("Couldn't read that file.")
-                result.error != null -> toast(result.error)
-                else -> {
-                    val added = MonitorHub.glucose.addAll(result.rows)
-                    toast("Imported $added new glucose readings${if (result.skipped > 0) " (${result.skipped} rows skipped)" else ""}.")
-                }
+            if (file == null) { toast("Couldn't read that file."); return@launch }
+            val (text, name) = file
+            if (importSpO2(text, name)) return@launch
+            val result = GlucoseCsv.parse(text, name)
+            if (result.error != null) toast(result.error) else {
+                val added = MonitorHub.glucose.addAll(result.rows)
+                toast("Imported $added new glucose readings${if (result.skipped > 0) " (${result.skipped} rows skipped)" else ""}.")
             }
         }
     }
 }
 
-private enum class Screen(val label: String) { Monitor("Monitor"), Response("Response"), Kegel("Kegels"), Sessions("Sessions"), Sensors("Sensors"), Settings("Settings") }
+private enum class Screen(val label: String) { Monitor("Monitor"), Response("Response"), Kegel("Kegels"), Health("Health"), Sessions("Sessions"), Sensors("Sensors"), Settings("Settings") }
 
 @Composable
 private fun MonitorScreen(
@@ -374,6 +389,7 @@ private fun MonitorScreen(
                 )
                 screen == Screen.Response -> com.pulsepointlabs.sarahmonitor.response.ResponseScreen(Modifier.fillMaxSize())
                 screen == Screen.Kegel -> com.pulsepointlabs.sarahmonitor.kegel.KegelScreen(Modifier.fillMaxSize())
+                screen == Screen.Health -> com.pulsepointlabs.sarahmonitor.vitals.HealthScreen(onCsvImport, onHealthConnect, Modifier.fillMaxSize())
                 screen == Screen.Sessions -> SessionsScreen(onOpen = { reviewId = it }, modifier = Modifier.fillMaxSize())
                 screen == Screen.Sensors -> SensorsScreen(onHealthConnect, onCsvImport, onMessage, Modifier.fillMaxSize())
                 screen == Screen.Settings -> SettingsScreen(onMessage, Modifier.fillMaxSize())
@@ -546,6 +562,7 @@ private fun Tabs(screen: Screen, compact: Boolean, onScreen: (Screen) -> Unit) {
                             Screen.Sessions -> Icons.Default.History
                             Screen.Response -> Icons.Default.Favorite
                             Screen.Kegel -> Icons.Default.SelfImprovement
+                            Screen.Health -> Icons.Default.MonitorWeight
                             Screen.Sensors -> Icons.Default.Bluetooth
                             Screen.Settings -> Icons.Default.Settings
                         },

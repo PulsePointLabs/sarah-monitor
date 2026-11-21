@@ -14,7 +14,9 @@ enum class CardType(val title: String, val minW: Int, val minH: Int) {
     Pelvic("Pelvic pressure", 4, 4),
     PelvicTrend("Pressure trend", 5, 3),
     BloodPressure("Blood pressure", 4, 3),
-    Glucose("Glucose", 3, 3)
+    Glucose("Glucose", 3, 3),
+    SpO2("SpO2", 3, 3),
+    Body("Body (scale)", 3, 3)
 }
 
 data class CardSlot(val type: CardType, val x: Int, val y: Int, val w: Int, val h: Int, val visible: Boolean = true) {
@@ -42,7 +44,9 @@ object GridLayoutEngine {
         CardSlot(CardType.HrvTrend, 5, 9, 11, 3),
         CardSlot(CardType.PelvicTrend, 5, 12, 11, 4),
         CardSlot(CardType.Pelvic, 16, 0, 8, 10),
-        CardSlot(CardType.BloodPressure, 16, 10, 8, 6)
+        CardSlot(CardType.BloodPressure, 16, 10, 8, 6),
+        CardSlot(CardType.SpO2, 0, 16, 5, 4, visible = false),
+        CardSlot(CardType.Body, 5, 16, 5, 4, visible = false)
     )
 
     fun clampSlot(slot: CardSlot): CardSlot {
@@ -107,10 +111,10 @@ object GridLayoutEngine {
                 clampSlot(CardSlot(type, o.getInt("x"), o.getInt("y"), o.getInt("w"), o.getInt("h"), o.optBoolean("visible", true)))
             }
         }.getOrNull() ?: return defaultLayout
-        // Cards added in a newer version appear at the bottom.
+        // Cards added in a newer version start hidden (turn them on from Cards) so a saved layout doesn't shift.
         val missing = CardType.entries.filter { t -> parsed.none { it.type == t } }
         val bottom = parsed.filter { it.visible }.maxOfOrNull { it.bottom } ?: 0
-        return compact(parsed + missing.mapIndexed { i, t -> defaultLayout.first { it.type == t }.copy(x = 0, y = bottom + i * 4) })
+        return compact(parsed + missing.mapIndexed { i, t -> defaultLayout.first { it.type == t }.copy(x = 0, y = bottom + i * 4, visible = false) })
     }
 }
 

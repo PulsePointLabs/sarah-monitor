@@ -17,7 +17,7 @@ class GridLayoutEngineTest {
     @Test
     fun defaultLayoutFillsOneScreenWithoutOverlaps() {
         noOverlaps(GridLayoutEngine.defaultLayout)
-        assertEquals(GridLayoutEngine.SCREEN_ROWS, GridLayoutEngine.defaultLayout.maxOf { it.bottom })
+        assertEquals(GridLayoutEngine.SCREEN_ROWS, GridLayoutEngine.defaultLayout.filter { it.visible }.maxOf { it.bottom })
         assertEquals(CardType.entries.size, GridLayoutEngine.defaultLayout.size)
     }
 

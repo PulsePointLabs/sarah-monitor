@@ -233,12 +233,12 @@ class LiveAlertEngine(private val limits: () -> AlertLimits = { AlertLimits() })
     }
 
     @Synchronized
-    fun onBp(t: Long, systolic: Int, diastolic: Int): List<LiveAlert> {
+    fun onBp(t: Long, systolic: Int, diastolic: Int, where: String? = null): List<LiveAlert> {
         val out = mutableListOf<LiveAlert>()
         if (systolic >= 140 || diastolic >= 90) {
             val severe = systolic >= 180 || diastolic >= 120
             fire(out, AlertKind.HighBp, t, if (severe) FlagSeverity.High else FlagSeverity.Notable,
-                "Blood pressure $systolic over $diastolic${if (severe) ", very high" else ""}.", "BP $systolic/$diastolic")
+                "Blood pressure $systolic over $diastolic${if (severe) ", very high" else ""}${where?.let { ", $it" } ?: ""}.", "BP $systolic/$diastolic")
         }
         return out
     }

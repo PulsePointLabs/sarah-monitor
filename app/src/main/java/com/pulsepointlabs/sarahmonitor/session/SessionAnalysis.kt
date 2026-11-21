@@ -188,7 +188,7 @@ object SessionAnalysis {
             } else "Pelvic pressure was recorded but no rest level was set."
         }
         if (data.bp.isNotEmpty()) {
-            lines += "Blood pressure: " + data.bp.joinToString(" → ") { "${it.systolic}/${it.diastolic}" } + "."
+            lines += "Blood pressure: " + data.bp.joinToString(" → ") { "${it.systolic}/${it.diastolic}" + (it.positionLabel?.let { p -> " ($p)" } ?: "") } + "."
         }
         if (data.glucose.isNotEmpty()) {
             lines += "Glucose: " + data.glucose.joinToString(" → ") { "${"%.0f".format(it.mgDl)}" } + " mg/dL."
