@@ -15,12 +15,14 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -56,7 +58,7 @@ enum class OverlayKind(
     val minWidthDp: Int = 150,
     val minHeightDp: Int = 100
 ) {
-    MarkEvent("＋ Mark event button", null, 76, 76, 44, 44),
+    MarkEvent("＋ Mark event button", null, 64, 64, 40, 40),
     HeartRate("Heart rate", CardType.HeartRate, 250, 180),
     Hrv("HRV (RMSSD · SDNN · pNN50)", CardType.Hrv, 300, 200),
     Load("Physiological load", CardType.Load, 230, 160),
@@ -76,9 +78,50 @@ object OverlaySettings {
 
     fun setAppInFront(inFront: Boolean) { _appInFront.value = inFront }
 
+    /** While the Overlays panel is open, overlays stay visible even with the app in front, as a live preview. */
+    private val _previewing = MutableStateFlow(false)
+    val previewing: StateFlow<Boolean> = _previewing
+    fun setPreviewing(on: Boolean) { _previewing.value = on }
+
+    private val _opacity = MutableStateFlow(1f)
+    /** Opacity for all overlays, 0.2–1. */
+    val opacity: StateFlow<Float> = _opacity
+
+    private val _fadeReadings = MutableStateFlow(false)
+    /** false: only the card background fades (readings stay solid); true: the whole overlay fades. */
+    val fadeReadings: StateFlow<Boolean> = _fadeReadings
+
+    private val _plusSizeDp = MutableStateFlow(64)
+    /** Diameter of the floating ＋ button (set in Settings, not by dragging). */
+    val plusSizeDp: StateFlow<Int> = _plusSizeDp
+
+    fun setOpacity(context: Context, value: Float) {
+        val v = value.coerceIn(MIN_OPACITY, 1f)
+        _opacity.value = v
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putFloat("alpha", v).apply()
+    }
+
+    fun setFadeReadings(context: Context, on: Boolean) {
+        _fadeReadings.value = on
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("fade_readings", on).apply()
+    }
+
+    fun setPlusSize(context: Context, dp: Int) {
+        val v = dp.coerceIn(MIN_PLUS_DP, MAX_PLUS_DP)
+        _plusSizeDp.value = v
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt("plus_dp", v).apply()
+    }
+
+    const val MIN_OPACITY = 0.2f
+    const val MIN_PLUS_DP = 40
+    const val MAX_PLUS_DP = 140
+
     fun load(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         _enabled.value = OverlayKind.entries.filter { prefs.getBoolean("on_${it.name}", false) }.toSet()
+        _opacity.value = prefs.getFloat("alpha", 1f).coerceIn(MIN_OPACITY, 1f)
+        _fadeReadings.value = prefs.getBoolean("fade_readings", false)
+        _plusSizeDp.value = prefs.getInt("plus_dp", 64).coerceIn(MIN_PLUS_DP, MAX_PLUS_DP)
     }
 
     fun set(context: Context, kind: OverlayKind, on: Boolean) {
@@ -126,8 +169,9 @@ private class OverlayOwner : LifecycleOwner, SavedStateRegistryOwner {
 }
 
 /**
- * Shows the enabled overlays as floating windows on the display the app was last on (phone or DeX). Each is
- * dragged by its body and resized from the corner grip; the card inside rescales its text to the new size.
+ * Shows the enabled overlays as floating windows on the display the app was last on (phone or DeX). Cards are
+ * dragged by their body and resized from the corner grip; the card inside rescales to the new size. The ＋
+ * button is dragged to move; its size is set in Settings.
  */
 class OverlayManager(private val base: Context) {
     private class Shown(val view: ComposeView, val owner: OverlayOwner, val params: WindowManager.LayoutParams, val wm: WindowManager, val displayId: Int)
@@ -135,7 +179,7 @@ class OverlayManager(private val base: Context) {
     private val shown = mutableMapOf<OverlayKind, Shown>()
 
     fun sync(requested: Set<OverlayKind>) {
-        val enabled = if (OverlaySettings.appInFront.value) emptySet() else requested
+        val enabled = if (OverlaySettings.appInFront.value && !OverlaySettings.previewing.value) emptySet() else requested
         val canDraw = OverlaySettings.canDraw(base)
         val display = OverlayDisplay.targetDisplayId(base)
         // Hide removed ones and ones that are on the wrong display.
@@ -170,8 +214,8 @@ class OverlayManager(private val base: Context) {
             this.y = y
         }
         val owner = OverlayOwner().also { it.start() }
-        val minW = (kind.minWidthDp * density).roundToInt()
-        val minH = (kind.minHeightDp * density).roundToInt()
+        val minW = ((if (kind.card == null) OverlaySettings.MIN_PLUS_DP else kind.minWidthDp) * density).roundToInt()
+        val minH = ((if (kind.card == null) OverlaySettings.MIN_PLUS_DP else kind.minHeightDp) * density).roundToInt()
 
         fun bounds(): android.graphics.Rect = OverlayDisplay.displayBounds(context, wm)
         fun commit() {
@@ -187,81 +231,73 @@ class OverlayManager(private val base: Context) {
             setViewTreeLifecycleOwner(owner)
             setViewTreeSavedStateRegistryOwner(owner)
             setContent {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_GRAB))
-                        .pointerInput(Unit) {
-                            detectDragGestures(
-                                onDrag = { change, amount ->
-                                    change.consume()
-                                    params.x += amount.x.roundToInt()
-                                    params.y += amount.y.roundToInt()
-                                    commit()
-                                },
-                                onDragEnd = { OverlaySettings.saveBounds(base, kind, params.x, params.y, params.width, params.height) }
-                            )
-                        }
+                val alpha by OverlaySettings.opacity.collectAsState()
+                val fadeAll by OverlaySettings.fadeReadings.collectAsState()
+                val plusDp by OverlaySettings.plusSizeDp.collectAsState()
+                if (kind.card == null) {
+                    // The ＋ window is exactly the button: no invisible margin that swallows taps.
+                    androidx.compose.runtime.LaunchedEffect(plusDp) {
+                        val px = (plusDp * density).roundToInt()
+                        params.width = px
+                        params.height = px
+                        commit()
+                    }
+                }
+                androidx.compose.runtime.CompositionLocalProvider(
+                    com.pulsepointlabs.sarahmonitor.ui.LocalPanelAlpha provides if (fadeAll) 1f else alpha,
+                    com.pulsepointlabs.sarahmonitor.ui.LocalOverlayMode provides true
                 ) {
-                    if (kind.card == null) {
-                        // The floating ＋: tap to mark an event, drag to move, corner to resize.
-                        PlusButton(onTap = { openMarkEvent(displayId) })
-                    } else {
-                    MonitorCard(kind.card, Modifier.fillMaxSize())
-                    Text(
-                        "×",
-                        color = MonitorColors.label,
-                        fontSize = 16.sp,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .clickable { OverlaySettings.set(base, kind, false) }
-                            .padding(horizontal = 8.dp, vertical = 0.dp)
-                    )
-                    val recording by MonitorHub.session.collectAsState()
-                    if (recording != null) {
-                        Text(
-                            "＋",
-                            color = MonitorColors.warn,
-                            fontSize = 18.sp,
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .clickable { quickMark() }
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                        )
-                    }
-                    Text(
-                        "⤢",
-                        color = MonitorColors.label,
-                        fontSize = 13.sp,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .clickable { openApp(displayId) }
-                            .padding(horizontal = 4.dp)
-                    )
-                    }
-                    Canvas(
+                    Box(
                         Modifier
-                            .align(Alignment.BottomEnd)
-                            .size(24.dp)
-                            .pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW))
+                            .fillMaxSize()
+                            .graphicsLayer { this.alpha = if (fadeAll) alpha else 1f }
+                            .pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_GRAB))
                             .pointerInput(Unit) {
                                 detectDragGestures(
                                     onDrag = { change, amount ->
                                         change.consume()
-                                        params.width += amount.x.roundToInt()
-                                        params.height += amount.y.roundToInt()
+                                        params.x += amount.x.roundToInt()
+                                        params.y += amount.y.roundToInt()
                                         commit()
                                     },
                                     onDragEnd = { OverlaySettings.saveBounds(base, kind, params.x, params.y, params.width, params.height) }
                                 )
                             }
-                            .padding(6.dp)
                     ) {
-                        val c = MonitorColors.label.copy(alpha = 0.75f)
-                        val s = size.width
-                        for (i in 1..3) {
-                            val o = s * i / 3.2f
-                            drawLine(c, Offset(s - o, s), Offset(s, s - o), strokeWidth = 1.6f)
+                        if (kind.card == null) {
+                            PlusButton(onTap = { openMarkEvent(displayId) })
+                        } else {
+                            MonitorCard(kind.card, Modifier.fillMaxSize())
+                            // Corner buttons: open the app, close this overlay.
+                            Row(Modifier.align(Alignment.TopEnd).padding(3.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(3.dp)) {
+                                CornerButton("⤢") { openApp(displayId) }
+                                CornerButton("×") { OverlaySettings.set(base, kind, false) }
+                            }
+                            Canvas(
+                                Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .size(22.dp)
+                                    .pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW))
+                                    .pointerInput(Unit) {
+                                        detectDragGestures(
+                                            onDrag = { change, amount ->
+                                                change.consume()
+                                                params.width += amount.x.roundToInt()
+                                                params.height += amount.y.roundToInt()
+                                                commit()
+                                            },
+                                            onDragEnd = { OverlaySettings.saveBounds(base, kind, params.x, params.y, params.width, params.height) }
+                                        )
+                                    }
+                                    .padding(5.dp)
+                            ) {
+                                val c = MonitorColors.label.copy(alpha = 0.7f)
+                                val sz = size.width
+                                for (i in 1..3) {
+                                    val o = sz * i / 3.2f
+                                    drawLine(c, Offset(sz - o, sz), Offset(sz, sz - o), strokeWidth = 1.5f)
+                                }
+                            }
                         }
                     }
                 }
@@ -274,14 +310,6 @@ class OverlayManager(private val base: Context) {
         }
         shown[kind] = Shown(view, owner, params, wm, displayId)
         commit()
-    }
-
-    private fun quickMark() {
-        MonitorHub.markEvent(System.currentTimeMillis(), setOf("event"), "") { ok ->
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                android.widget.Toast.makeText(base, if (ok) "Event marked — add details in review" else "Not recording", android.widget.Toast.LENGTH_SHORT).show()
-            }
-        }
     }
 
     private fun openMarkEvent(displayId: Int) {
@@ -303,11 +331,11 @@ class OverlayManager(private val base: Context) {
 @androidx.compose.runtime.Composable
 private fun PlusButton(onTap: () -> Unit) {
     val recording by MonitorHub.session.collectAsState()
-    val color = if (recording != null) MonitorColors.warn else MonitorColors.label
+    val panelAlpha = com.pulsepointlabs.sarahmonitor.ui.LocalPanelAlpha.current
+    val color = (if (recording != null) MonitorColors.warn else MonitorColors.label).let { it.copy(alpha = it.alpha * panelAlpha) }
     androidx.compose.foundation.layout.BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .padding(4.dp)
             .pointerInput(Unit) { detectTapGestures { onTap() } },
         contentAlignment = Alignment.Center
     ) {
@@ -330,3 +358,15 @@ private fun Modifier.plusDisc(color: androidx.compose.ui.graphics.Color): Modifi
     this
         .then(Modifier.background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(color, color.copy(alpha = 0.75f))), androidx.compose.foundation.shape.CircleShape))
         .then(Modifier.border(2.dp, androidx.compose.ui.graphics.Color.White.copy(alpha = 0.35f), androidx.compose.foundation.shape.CircleShape))
+
+
+@androidx.compose.runtime.Composable
+private fun CornerButton(symbol: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(22.dp)
+            .background(MonitorColors.background.copy(alpha = 0.55f), androidx.compose.foundation.shape.CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { Text(symbol, color = MonitorColors.label, fontSize = 13.sp) }
+}

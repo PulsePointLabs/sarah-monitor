@@ -83,7 +83,8 @@ fun MonitorCard(type: CardType, modifier: Modifier = Modifier) {
     MonitorPanel(identity(type), modifier, alarm = flash && (now / 500) % 2 == 0L) {
         ScaledCard(dw, dh, Modifier.fillMaxSize()) {
             val s = LocalCardScale.current
-            Box(Modifier.fillMaxSize().padding(horizontal = s.dp(9f), vertical = s.dp(6f))) {
+            val overlay = LocalOverlayMode.current
+            Box(Modifier.fillMaxSize().padding(horizontal = if (overlay) 6.dp else s.dp(9f), vertical = if (overlay) 4.dp else s.dp(6f))) {
                 when (type) {
                     CardType.HeartRate -> HeartRateCard()
                     CardType.Hrv -> HrvCard()
@@ -104,6 +105,21 @@ fun MonitorCard(type: CardType, modifier: Modifier = Modifier) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun Chips(content: @Composable () -> Unit) {
+    if (LocalOverlayMode.current) {
+        // In overlays the chips grow with the overlay's width so labels never stay tiny on a big overlay.
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val base = LocalCardScale.current
+            val f = (maxWidth.value / 260f).coerceIn(0.85f, 2.4f)
+            androidx.compose.runtime.CompositionLocalProvider(LocalCardScale provides base.copy(factor = maxOf(base.factor, f))) {
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) { content() }
+            }
+        }
+        return
+    }
     FlowRow(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
@@ -113,6 +129,7 @@ private fun Chips(content: @Composable () -> Unit) {
 
 @Composable
 private fun StatusLine(text: String, color: Color = MonitorColors.label) {
+    if (LocalOverlayMode.current) return
     val s = LocalCardScale.current
     Text(text, color = color, fontSize = s.sp(11f), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
 }
@@ -144,6 +161,7 @@ private fun HeartRateCard() {
             color = tint,
             maxChars = 3,
             trend = recent.values(Metric.Hr),
+            trendStrength = recent.trend(Metric.Hr),
             leading = { size -> BeatingHeart(beatMs, Color(0xFFFB7185), size) },
             modifier = Modifier.fillMaxWidth().weight(1f)
         )
@@ -195,12 +213,12 @@ private fun HrvValue(item: HrvItem, recent: RecentHistory, modifier: Modifier) {
         if (maxWidth > maxHeight * 2.2f) {
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                 Text(item.label, color = item.color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.3f))
-                BigReading(item.value, tint, Modifier.weight(0.7f).fillMaxSize(), maxChars = item.maxChars, trend = values)
+                BigReading(item.value, tint, Modifier.weight(0.7f).fillMaxSize(), maxChars = item.maxChars, trend = values, trendStrength = recent.trend(item.metric))
             }
         } else {
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(item.label, color = item.color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold)
-                BigReading(item.value, tint, Modifier.fillMaxWidth().weight(1f), maxChars = item.maxChars, trend = values)
+                BigReading(item.value, tint, Modifier.fillMaxWidth().weight(1f), maxChars = item.maxChars, trend = values, trendStrength = recent.trend(item.metric))
             }
         }
     }
@@ -216,7 +234,7 @@ private fun LoadCard() {
         CardTitle("Load", MonitorColors.load, "0–100") { Text(loadStatus(load), color = if (load.score == null) MonitorColors.warn else color, fontSize = LocalCardScale.current.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1) }
         BigReading(
             load.score?.toString() ?: "--", trendColor(recent.trend(Metric.Load)), Modifier.fillMaxWidth().weight(1f),
-            maxChars = 3, trend = recent.values(Metric.Load)
+            maxChars = 3, trend = recent.values(Metric.Load), trendStrength = recent.trend(Metric.Load)
         )
         Chips {
             StatChip("HR load", load.hrLoadPercent?.let { "$it%" } ?: "--")
@@ -391,6 +409,7 @@ private fun PelvicCard() {
             color = color,
             maxChars = 4,
             trend = recent.values(Metric.Pelvic),
+            trendStrength = recent.trend(Metric.Pelvic),
             modifier = Modifier.fillMaxWidth().weight(if (s.compact) 1f else 0.9f)
         )
         Chips {

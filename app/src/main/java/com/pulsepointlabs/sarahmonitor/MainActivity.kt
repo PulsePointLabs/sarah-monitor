@@ -98,6 +98,8 @@ import com.pulsepointlabs.sarahmonitor.ui.CardActions
 import com.pulsepointlabs.sarahmonitor.ui.CardType
 import com.pulsepointlabs.sarahmonitor.ui.Dashboard
 import com.pulsepointlabs.sarahmonitor.ui.SensorsScreen
+import com.pulsepointlabs.sarahmonitor.ui.SettingsScreen
+import androidx.compose.material.icons.filled.Settings
 import com.pulsepointlabs.sarahmonitor.ui.GridLayoutEngine
 import com.pulsepointlabs.sarahmonitor.ui.LayoutStore
 import com.pulsepointlabs.sarahmonitor.ui.LocalCardActions
@@ -289,7 +291,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen(val label: String) { Monitor("Monitor"), Sessions("Sessions"), Sensors("Sensors") }
+private enum class Screen(val label: String) { Monitor("Monitor"), Sessions("Sessions"), Sensors("Sensors"), Settings("Settings") }
 
 @Composable
 private fun MonitorScreen(
@@ -304,7 +306,6 @@ private fun MonitorScreen(
     var screen by rememberSaveable { mutableStateOf(Screen.Monitor) }
     var reviewId by rememberSaveable { mutableStateOf<String?>(null) }
     var showCards by remember { mutableStateOf(false) }
-    var showOverlays by remember { mutableStateOf(false) }
     var showAddGlucose by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
     var confirmStop by remember { mutableStateOf(false) }
@@ -354,7 +355,7 @@ private fun MonitorScreen(
                 onMark = ::mark,
                 onDevices = { screen = Screen.Sensors; reviewId = null },
                 onCards = { showCards = true },
-                onOverlays = { showOverlays = true },
+                onOverlays = { screen = Screen.Settings; reviewId = null },
                 onArrange = { arranging = !arranging },
                 onReset = { confirmReset = true }
             )
@@ -370,6 +371,7 @@ private fun MonitorScreen(
                 )
                 screen == Screen.Sessions -> SessionsScreen(onOpen = { reviewId = it }, modifier = Modifier.fillMaxSize())
                 screen == Screen.Sensors -> SensorsScreen(onHealthConnect, onCsvImport, onMessage, Modifier.fillMaxSize())
+                screen == Screen.Settings -> SettingsScreen(onMessage, Modifier.fillMaxSize())
                 else -> Dashboard(
                     slots = slots,
                     arranging = arranging,
@@ -413,7 +415,6 @@ private fun MonitorScreen(
             onDismiss = { showCards = false }
         )
     }
-    if (showOverlays) OverlaysDialog(onDismiss = { showOverlays = false })
     if (showAddGlucose) AddGlucoseDialog(onDismiss = { showAddGlucose = false }, onMessage = onMessage)
     if (confirmReset) {
         AlertDialog(
@@ -468,7 +469,6 @@ private fun TopBar(
                 DevicePill("BP", omron, onDevices)
                 if (screen == Screen.Monitor) {
                     BarIcon(Icons.Default.Dashboard, "Cards", onCards)
-                    BarIcon(Icons.Default.Layers, "Overlays", onOverlays)
                     BarIcon(Icons.Default.OpenWith, if (arranging) "Done arranging" else "Arrange cards", onArrange, highlighted = arranging)
                     BarIcon(Icons.Default.RestartAlt, "Start fresh", onReset)
                 }
@@ -478,7 +478,6 @@ private fun TopBar(
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MonitorColors.panel) {
                         DropdownMenuItem(text = { Text("Cards") }, onClick = { menu = false; onScreen(Screen.Monitor); onCards() })
                         if (!narrow) DropdownMenuItem(text = { Text(if (arranging) "Done arranging" else "Arrange cards") }, onClick = { menu = false; onScreen(Screen.Monitor); onArrange() })
-                        DropdownMenuItem(text = { Text("Overlays") }, onClick = { menu = false; onOverlays() })
                         DropdownMenuItem(text = { Text("Start fresh") }, onClick = { menu = false; onReset() })
                     }
                 }
@@ -523,6 +522,7 @@ private fun Tabs(screen: Screen, compact: Boolean, onScreen: (Screen) -> Unit) {
                             Screen.Monitor -> Icons.Default.MonitorHeart
                             Screen.Sessions -> Icons.Default.History
                             Screen.Sensors -> Icons.Default.Bluetooth
+                            Screen.Settings -> Icons.Default.Settings
                         },
                         contentDescription = s.label, tint = tint, modifier = Modifier.size(20.dp)
                     )
@@ -626,38 +626,6 @@ private fun CardsDialog(
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
         dismissButton = { TextButton(onClick = onResetLayout) { Text("Default layout") } }
-    )
-}
-
-@Composable
-private fun OverlaysDialog(onDismiss: () -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val enabled by OverlaySettings.enabled.collectAsState()
-    val canDraw = OverlaySettings.canDraw(context)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = MonitorColors.panel,
-        title = { Text("Floating overlays", color = MonitorColors.text) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("Each overlay floats over other apps on its own: drag to move, drag the corner to resize, × to close. They hide while Sarah Monitor is the active window and come back when you switch away. The ＋ button opens event entry.", color = MonitorColors.label, fontSize = 13.sp)
-                if (!canDraw) {
-                    TextButton(onClick = { context.startActivity(OverlaySettings.permissionIntent(context)) }) {
-                        Text("Allow \"display over other apps\"", color = MonitorColors.warn)
-                    }
-                }
-                OverlayKind.entries.forEach { kind ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = kind in enabled, onCheckedChange = {
-                            OverlaySettings.set(context, kind, it)
-                            MonitorService.start(context)
-                        })
-                        Text(kind.label, color = MonitorColors.text)
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
     )
 }
 

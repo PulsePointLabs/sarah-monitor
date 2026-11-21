@@ -62,7 +62,6 @@ fun SensorsScreen(
                     PanelButton("Health Connect", onHealthConnectImport)
                 }
             }
-            VoiceSection(onMessage)
         }
     }
 }
@@ -228,7 +227,7 @@ private fun OmronSection() {
 
 
 @Composable
-private fun VoiceSection(onMessage: (String) -> Unit) {
+fun VoiceSection(onMessage: (String) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var engine by remember { mutableStateOf(VoiceSettings.engine(context)) }
     var saved by remember { mutableStateOf(VoiceSettings.apiKey(context)) }

@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.togetherWith
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -102,21 +103,41 @@ fun MonitorPanel(
     content: @Composable () -> Unit
 ) {
     val shape = RoundedCornerShape(10.dp)
+    // Overlays can make the card background see-through while the readings stay solid.
+    val a = LocalPanelAlpha.current
     Box(
         modifier
             .background(
                 androidx.compose.ui.graphics.Brush.verticalGradient(
-                    listOf(if (alarm) MonitorColors.alarm.copy(alpha = 0.28f) else identity.copy(alpha = 0.10f), MonitorColors.panel)
+                    listOf(
+                        if (alarm) MonitorColors.alarm.copy(alpha = 0.28f * a) else identity.copy(alpha = 0.10f * a),
+                        MonitorColors.panel.copy(alpha = a)
+                    )
                 ),
                 shape
             )
-            .border(if (alarm) 2.dp else 1.dp, if (alarm) MonitorColors.alarm else identity.copy(alpha = 0.35f), shape)
+            .border(if (alarm) 2.dp else 1.dp, if (alarm) MonitorColors.alarm else identity.copy(alpha = 0.35f * maxOf(a, 0.4f)), shape)
     ) { content() }
 }
+
+/** Card background opacity (1 = solid). Set by overlays. */
+val LocalPanelAlpha = compositionLocalOf { 1f }
 
 @Composable
 fun CardTitle(label: String, color: Color, unit: String = "", modifier: Modifier = Modifier, trailing: @Composable () -> Unit = {}) {
     val s = LocalCardScale.current
+    if (LocalOverlayMode.current) {
+        // Overlays: one slim label line (scales with the overlay), leaving room for the corner buttons.
+        Row(modifier.padding(end = 46.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Box(Modifier.size(width = 3.dp, height = s.dp(13f)).background(color, RoundedCornerShape(2.dp)))
+            Text(
+                if (unit.isNotBlank()) "$label · $unit" else label,
+                color = color, fontSize = s.sp(13f), fontWeight = FontWeight.Bold, maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+        }
+        return
+    }
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.size(width = 4.dp, height = s.dp(15f)).background(color, RoundedCornerShape(2.dp)))
         Text(label, color = color, fontSize = s.sp(14f), fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.weight(1f))
@@ -189,40 +210,59 @@ fun BigReading(
     maxChars: Int = value.length,
     trend: List<Double>? = null,
     trendColor: Color = color,
+    /** -1…+1 trend strength for the arrow stack (null = no arrows, no slot). */
+    trendStrength: Double? = null,
     leading: (@Composable (sizeDp: Float) -> Unit)? = null,
     maxSizeDp: Float = 260f
 ) {
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val chars = max(maxChars, value.length).coerceAtLeast(2)
         val leadingEm = if (leading != null) 0.8f else 0f
+        val arrowEm = if (trendStrength != null) 0.42f else 0f
         val textEm = chars * 0.6f + 0.1f
         // Two ways to place the trend line: beside the number, or underneath it. Use whichever lets the
         // number be bigger. The choice depends only on the box size, so it doesn't flip as values change.
-        val besideSize = min(maxWidth.value / (textEm + leadingEm + (if (trend != null) 1.7f else 0f) + 0.05f), maxHeight.value * 0.9f)
-        val belowSize = if (trend == null) 0f else min(maxWidth.value / (textEm + leadingEm + 0.05f), maxHeight.value * 0.9f / 1.4f)
+        val besideSize = min(maxWidth.value / (textEm + leadingEm + arrowEm + (if (trend != null) 1.7f else 0f) + 0.05f), maxHeight.value * 0.9f)
+        val belowSize = if (trend == null) 0f else min(maxWidth.value / (textEm + leadingEm + arrowEm + 0.05f), maxHeight.value * 0.9f / 1.4f)
         val below = trend != null && belowSize > besideSize * 1.15f
         val sizeDp = min(if (below) belowSize else besideSize, maxSizeDp).coerceAtLeast(MinTextSp + 6f)
         val fontSize = with(LocalDensity.current) { sizeDp.dp.toSp() }
+        val shown by androidx.compose.animation.animateColorAsState(color, androidx.compose.animation.core.tween(400), label = "reading-color")
         val number: @Composable () -> Unit = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (leading != null) {
                     Box(Modifier.size((sizeDp * leadingEm).dp, sizeDp.dp), contentAlignment = Alignment.Center) { leading(sizeDp * 0.62f) }
                 }
-                Text(
-                    value,
-                    color = color,
-                    maxLines = 1,
-                    softWrap = false,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                // Fixed-width slot; new values cross-fade in place so nothing jumps.
+                androidx.compose.animation.AnimatedContent(
+                    targetState = value,
+                    transitionSpec = {
+                        androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(180)) togetherWith
+                            androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(180))
+                    },
                     modifier = Modifier.width((sizeDp * textEm).dp),
-                    style = TextStyle(
-                        fontSize = fontSize,
-                        lineHeight = fontSize,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        shadow = Shadow(color.copy(alpha = 0.7f), Offset.Zero, blurRadius = 26f)
+                    contentAlignment = Alignment.Center,
+                    label = "reading"
+                ) { v ->
+                    Text(
+                        v,
+                        color = shown,
+                        maxLines = 1,
+                        softWrap = false,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.width((sizeDp * textEm).dp),
+                        style = TextStyle(
+                            fontSize = fontSize,
+                            lineHeight = fontSize,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            shadow = Shadow(shown.copy(alpha = 0.7f), Offset.Zero, blurRadius = 26f)
+                        )
                     )
-                )
+                }
+                if (trendStrength != null) {
+                    TrendArrows(trendStrength, Modifier.size((sizeDp * arrowEm).dp, (sizeDp * 0.82f).dp))
+                }
                 if (trend != null && !below) {
                     TrendLine(trend, trendColor, Modifier.size((sizeDp * 1.7f).dp, (sizeDp * 0.62f).dp).padding(start = (sizeDp * 0.12f).dp))
                 }
@@ -231,13 +271,48 @@ fun BigReading(
         if (below) {
             androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 number()
-                TrendLine(trend!!, trendColor, Modifier.size((sizeDp * textEm).dp, (sizeDp * 0.36f).dp).padding(top = (sizeDp * 0.04f).dp))
+                TrendLine(trend!!, trendColor, Modifier.size((sizeDp * (textEm + arrowEm)).dp, (sizeDp * 0.36f).dp).padding(top = (sizeDp * 0.04f).dp))
             }
         } else {
             number()
         }
     }
 }
+
+/**
+ * Up to three stacked chevrons: more appear (fading in one by one) the stronger and more sustained the
+ * rise or fall, coloured on the same blue→red spectrum. Always occupies its slot, so nothing shifts.
+ */
+@Composable
+fun TrendArrows(strength: Double, modifier: Modifier) {
+    val s by androidx.compose.animation.core.animateFloatAsState(strength.toFloat().coerceIn(-1f, 1f), androidx.compose.animation.core.tween(600), label = "trend")
+    val color = trendColor(s.toDouble())
+    androidx.compose.foundation.Canvas(modifier) {
+        val mag = kotlin.math.abs(s)
+        val up = s > 0
+        val w = size.width
+        val h = size.height
+        val step = h / 3.6f
+        val stroke = (w * 0.16f).coerceAtLeast(2f)
+        val thresholds = floatArrayOf(0.12f, 0.4f, 0.7f)
+        for (i in 0 until 3) {
+            val a = ((mag - thresholds[i]) / 0.15f).coerceIn(0f, 1f)
+            if (a <= 0f) continue
+            // Rising chevrons stack upward from the middle, falling ones downward.
+            val cy = if (up) h * 0.62f - i * step else h * 0.38f + i * step
+            val dy = step * 0.42f * (if (up) -1f else 1f)
+            val path = androidx.compose.ui.graphics.Path().apply {
+                moveTo(w * 0.1f, cy - dy / 2)
+                lineTo(w * 0.5f, cy + dy / 2)
+                lineTo(w * 0.9f, cy - dy / 2)
+            }
+            drawPath(path, color.copy(alpha = a), style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+        }
+    }
+}
+
+/** True inside floating overlays: cards drop chrome and padding so the readings use all the space. */
+val LocalOverlayMode = compositionLocalOf { false }
 
 /** Small trend line (last ~2 minutes). Draws nothing until there are a few points, but always keeps its space. */
 @Composable
