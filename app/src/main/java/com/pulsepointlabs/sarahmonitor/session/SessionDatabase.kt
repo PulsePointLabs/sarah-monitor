@@ -53,7 +53,11 @@ data class HrSampleEntity(
     val sdnnMs: Double?,
     val pnn50Percent: Double?,
     val load: Int?,
-    val contact: Boolean?
+    val contact: Boolean?,
+    /** Estimated stress 0–100 (see StressEstimator); null before v4 or when unavailable. */
+    val stress: Int? = null,
+    /** Breathing rate from the RR intervals (breaths/min). */
+    val breathsPerMin: Double? = null
 )
 
 @Entity(tableName = "rr_samples", indices = [Index("sessionId", "timestampMs")])
@@ -110,7 +114,11 @@ data class MarkerEntity(
     /** Comma-separated types, e.g. "event,symptom". */
     val types: String,
     val label: String,
-    val note: String = ""
+    val note: String = "",
+    /** Self-reported check-in: how you feel, 1 (awful) – 5 (great). */
+    val wellbeing: Int? = null,
+    /** Self-reported stress, 0 (none) – 10 (extreme). */
+    val selfStress: Int? = null
 )
 
 @Dao
@@ -154,7 +162,7 @@ interface SessionDao {
 
 @Database(
     entities = [SessionEntity::class, HrSampleEntity::class, RrEntity::class, PelvicSampleEntity::class, EcgChunkEntity::class, MarkerEntity::class, EmgSampleEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class SessionDatabase : RoomDatabase() {
@@ -162,6 +170,16 @@ abstract class SessionDatabase : RoomDatabase() {
 
     companion object {
         @Volatile private var instance: SessionDatabase? = null
+
+        /** 0.14.0: estimated stress + breathing per sample; check-in ratings on events. */
+        val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `hr_samples` ADD COLUMN `stress` INTEGER")
+                db.execSQL("ALTER TABLE `hr_samples` ADD COLUMN `breathsPerMin` REAL")
+                db.execSQL("ALTER TABLE `markers` ADD COLUMN `wellbeing` INTEGER")
+                db.execSQL("ALTER TABLE `markers` ADD COLUMN `selfStress` INTEGER")
+            }
+        }
 
         /** 0.13.0: session category (general / sexual types / hybrid). */
         val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
@@ -179,7 +197,7 @@ abstract class SessionDatabase : RoomDatabase() {
         }
         fun get(context: Context): SessionDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, SessionDatabase::class.java, "sarah_monitor_sessions.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build().also { instance = it }
         }
     }

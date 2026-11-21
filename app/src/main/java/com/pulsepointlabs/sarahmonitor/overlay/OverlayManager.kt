@@ -65,7 +65,8 @@ enum class OverlayKind(
     Hrv("HRV (RMSSD · SDNN · pNN50)", CardType.Hrv, 300, 200),
     Load("Physiological load", CardType.Load, 230, 160),
     BloodPressure("Blood pressure", CardType.BloodPressure, 280, 230),
-    Pelvic("Pelvic pressure", CardType.Pelvic, 320, 340)
+    Pelvic("Pelvic pressure", CardType.Pelvic, 320, 340),
+    Stress("Stress", CardType.Stress, 260, 170)
 }
 
 /** Overlays are set up separately for the phone screen and for DeX (or any external display). */

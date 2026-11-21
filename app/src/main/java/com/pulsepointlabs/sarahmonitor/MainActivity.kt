@@ -421,8 +421,8 @@ private fun MonitorScreen(
     markAt?.let { t ->
         MarkEventDialog(
             pressedAtMs = t,
-            onSave = { types, note ->
-                MonitorHub.markEvent(t, types, note) { ok -> if (!ok) onMessage("Not recording; event not saved.") }
+            onSave = { types, note, checkIn ->
+                MonitorHub.markEvent(t, types, note, checkIn) { ok -> if (!ok) onMessage("Not recording; event not saved.") }
                 markAt = null
             },
             onDismiss = { markAt = null }

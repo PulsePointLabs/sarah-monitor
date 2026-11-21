@@ -79,6 +79,12 @@ object MonitorHub {
     /** Tonight's epochs so far (staged on the fly). */
     val sleepLive: StateFlow<List<com.pulsepointlabs.sarahmonitor.sleep.SleepEpoch>> = _sleepLive
 
+    private val stressTracker = StressTracker()
+    private val _stress = MutableStateFlow(StressReading())
+    /** Estimated overall stress (HRV, unexplained HR, breathing, tension, restlessness vs your resting baseline). */
+    val stress: StateFlow<StressReading> = _stress
+    @Volatile private var restingBaseline: com.pulsepointlabs.sarahmonitor.hrv.PhysiologicalStressBaseline? = null
+
     private val _heart = MutableStateFlow(HeartSnapshot())
     val heart: StateFlow<HeartSnapshot> = _heart
 
@@ -114,7 +120,8 @@ object MonitorHub {
         scale = com.pulsepointlabs.sarahmonitor.vitals.ScaleClient(app) { body.addAll(listOf(it)) }
         recorder = SessionRecorder(app, scope)
         val baselineStore = LoadBaselineStore(app)
-        heartEngine = HeartEngine(baselineStore.load(), baselineStore::save)
+        restingBaseline = baselineStore.load()
+        heartEngine = HeartEngine(restingBaseline) { b -> restingBaseline = b; baselineStore.save(b) }
         audio = AudioEngine(app) { recorder.active.value != null }
         BpPosition.load(app)
         com.pulsepointlabs.sarahmonitor.sleep.PositionCalibration.load(app)
@@ -163,17 +170,30 @@ object MonitorHub {
                 val snapshot = heartEngine.add(reading)
                 trendRecorder.addHeart(reading.timestampMs, snapshot)
                 _heart.value = snapshot
-                recorder.onHeart(snapshot, heartEngine.lastRr)
                 audio.onHeart(snapshot, heartEngine.lastRr)
                 sleepEngine.onHeart(reading.timestampMs, snapshot.heartRate, heartEngine.lastRr.filter { it.accepted }.mapNotNull { it.cleanIntervalMs })
                 arousal.onRr(heartEngine.lastRr.filter { it.accepted }.mapNotNull { it.cleanIntervalMs })
                 _response.value = arousal.onHeart(reading.timestampMs, snapshot.heartRate, snapshot.rmssdMs, snapshot.load.score)
+                val resp = _response.value
+                // Arousal and pelvic/EMG tension go together in sexual sessions; don't count them as stress there.
+                val category = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(recorder.active.value?.category)
+                val sexual = category != null && category.sexual && category != com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid
+                val st = stressTracker.update(reading.timestampMs, StressInputs(
+                    hr = snapshot.heartRate, rmssd = snapshot.rmssdMs,
+                    restingHr = restingBaseline?.hr, restingRmssd = restingBaseline?.rmssdMs,
+                    breathsPerMin = resp.breathsPerMin, motionMg = resp.motionMg,
+                    pelvicKpa = if (sexual) null else _pelvic.value.average30s,
+                    emgPct = if (sexual) null else _emg.value.peakPct.takeIf { _emg.value.fresh }
+                ))
+                _stress.value = st
+                recorder.onHeart(snapshot, heartEngine.lastRr, st.score, st.breathsPerMin)
                 val t = reading.timestampMs
                 recentRecorder.add(Metric.Hr, t, snapshot.heartRate?.toDouble())
                 recentRecorder.add(Metric.Rmssd, t, snapshot.rmssdMs)
                 recentRecorder.add(Metric.Sdnn, t, snapshot.sdnnMs)
                 recentRecorder.add(Metric.Pnn50, t, snapshot.pnn50Percent)
                 recentRecorder.add(Metric.Load, t, snapshot.load.score?.toDouble())
+                recentRecorder.add(Metric.Stress, t, st.score?.toDouble())
                 _recent.value = recentRecorder.snapshot()
             }
         }
@@ -293,13 +313,13 @@ object MonitorHub {
     }
 
     /** Marks an event at [timestampMs] (the moment the button was pressed). Returns false if not recording. */
-    fun markEvent(timestampMs: Long, types: Set<String>, note: String, onDone: (Boolean) -> Unit = {}) {
+    fun markEvent(timestampMs: Long, types: Set<String>, note: String, checkIn: com.pulsepointlabs.sarahmonitor.session.CheckIn = com.pulsepointlabs.sarahmonitor.session.CheckIn(), onDone: (Boolean) -> Unit = {}) {
         // Marked climaxes teach the arousal engine this person's climax HR rise.
         if (recorder.active.value != null && ("orgasm" in types || "ejaculation" in types)) arousal.climaxSample()?.let { ResponseSettings.addClimax(it) }
         arousal.onMarker(timestampMs, types)
         _response.value = arousal.current()
         scope.launch {
-            val marker = recorder.addMarker(timestampMs, types, note)
+            val marker = recorder.addMarker(timestampMs, types, note, checkIn)
             if (marker != null) MarkerPreferences.remember(appContext, types, note)
             onDone(marker != null)
         }
@@ -340,7 +360,7 @@ object MonitorHub {
     /** The user confirms a detected climax: marks it at the moment it was detected. */
     fun confirmClimax(onDone: (Boolean) -> Unit = {}) {
         val c = _response.value.candidate ?: return
-        markEvent(c.timestampMs, setOf("orgasm"), "Climax signature confirmed: ${c.reason}", onDone)
+        markEvent(c.timestampMs, setOf("orgasm"), "Climax signature confirmed: ${c.reason}", onDone = onDone)
     }
 
     fun dismissClimax() {
@@ -353,6 +373,8 @@ object MonitorHub {
         heartEngine.reset()
         audio.resetSession()
         arousal.reset()
+        stressTracker.reset()
+        _stress.value = StressReading()
         _response.value = ResponseState()
         pelvicProcessor.resetStats()
         trendRecorder.clear()

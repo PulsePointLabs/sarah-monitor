@@ -18,6 +18,7 @@ enum class CardType(val title: String, val minW: Int, val minH: Int) {
     SpO2("SpO2", 3, 3),
     Body("Body (scale)", 3, 3),
     Emg("EMG", 4, 3),
+    Stress("Stress", 3, 2),
     // Response board
     Phase("Phase", 4, 3),
     NearClimax("Near-climax watch", 4, 3),
@@ -49,14 +50,15 @@ object GridLayoutEngine {
         CardSlot(CardType.HeartRate, 0, 0, 5, 5),
         CardSlot(CardType.Hrv, 0, 5, 5, 5),
         CardSlot(CardType.Load, 0, 10, 5, 3),
-        CardSlot(CardType.Glucose, 0, 13, 5, 3),
+        CardSlot(CardType.Stress, 0, 13, 5, 3),
         CardSlot(CardType.Ecg, 5, 0, 11, 5),
         CardSlot(CardType.HrTrend, 5, 5, 11, 4),
         CardSlot(CardType.HrvTrend, 5, 9, 11, 3),
         CardSlot(CardType.PelvicTrend, 5, 12, 11, 4),
         CardSlot(CardType.Pelvic, 16, 0, 8, 10),
         CardSlot(CardType.BloodPressure, 16, 10, 8, 6),
-        CardSlot(CardType.SpO2, 0, 16, 5, 4, visible = false),
+        CardSlot(CardType.Glucose, 0, 16, 5, 3, visible = false),
+        CardSlot(CardType.SpO2, 6, 16, 5, 4, visible = false),
         CardSlot(CardType.Body, 5, 16, 5, 4, visible = false),
         CardSlot(CardType.Emg, 10, 16, 8, 5, visible = false)
     )
@@ -150,7 +152,8 @@ object GridLayoutEngine {
         // Cards added in a newer version start hidden (turn them on from Cards) so a saved layout doesn't shift.
         val missing = defaults.map { it.type }.filter { t -> parsed.none { it.type == t } }
         val bottom = parsed.filter { it.visible }.maxOfOrNull { it.bottom } ?: 0
-        return compact(parsed + missing.mapIndexed { i, t -> defaults.first { it.type == t }.copy(x = 0, y = bottom + i * 4, visible = false) })
+        // (Stress was asked for on the main screen, so it arrives visible.)
+        return compact(parsed + missing.mapIndexed { i, t -> defaults.first { it.type == t }.copy(x = 0, y = bottom + i * 4, visible = t == CardType.Stress && defaults.first { it.type == t }.visible) })
     }
 }
 

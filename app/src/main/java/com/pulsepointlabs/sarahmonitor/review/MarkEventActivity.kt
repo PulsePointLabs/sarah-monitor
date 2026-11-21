@@ -49,8 +49,8 @@ fun MarkEventFlow(pressedAt: Long, inOverlay: Boolean, onToast: (String) -> Unit
         current != null -> MarkEventDialog(
             // If the session was started from this window, the event can't be earlier than the session.
             pressedAtMs = maxOf(pressedAt, current.startTimeMs),
-            onSave = { types, note ->
-                MonitorHub.markEvent(maxOf(pressedAt, current.startTimeMs), types, note) { ok ->
+            onSave = { types, note, checkIn ->
+                MonitorHub.markEvent(maxOf(pressedAt, current.startTimeMs), types, note, checkIn) { ok ->
                     android.os.Handler(android.os.Looper.getMainLooper()).post {
                         onToast(if (ok) "Event saved" else "Not recording; event not saved")
                         onDone()

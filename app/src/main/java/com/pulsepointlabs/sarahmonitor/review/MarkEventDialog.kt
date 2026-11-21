@@ -87,7 +87,7 @@ fun markerColor(types: String): Color = when (MarkerTypes.split(types).firstOrNu
 fun MarkEventDialog(
     pressedAtMs: Long,
     editing: MarkerEntity? = null,
-    onSave: (types: Set<String>, note: String) -> Unit,
+    onSave: (types: Set<String>, note: String, checkIn: com.pulsepointlabs.sarahmonitor.session.CheckIn) -> Unit,
     onDelete: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     /** Drawn as a floating overlay panel (no activity behind it). */
@@ -98,6 +98,7 @@ fun MarkEventDialog(
     val context = LocalContext.current
     val heart by MonitorHub.heart.collectAsState()
     val pelvic by MonitorHub.pelvic.collectAsState()
+    var checkIn by remember { mutableStateOf(editing?.let { com.pulsepointlabs.sarahmonitor.session.CheckIn.of(it) } ?: com.pulsepointlabs.sarahmonitor.session.CheckIn()) }
     val sessionNow by MonitorHub.session.collectAsState()
     val groups = (category ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(sessionNow?.category) ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid).groups
     val allowed = MarkerTypes.all.filter { it.group in groups }.map { it.id }.toSet()
@@ -208,7 +209,7 @@ fun MarkEventDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .border(1.dp, MonitorColors.pelvic.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                            .clickable { onSave(l.types, l.note) }
+                            .clickable { onSave(l.types, l.note, com.pulsepointlabs.sarahmonitor.session.CheckIn()) }
                             .padding(horizontal = 12.dp, vertical = 10.dp)
                     )
                 }
@@ -233,6 +234,7 @@ fun MarkEventDialog(
                         }
                     }
                 }
+                CheckInPicker(checkIn) { checkIn = it }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = note,
@@ -258,16 +260,16 @@ fun MarkEventDialog(
         },
         confirm = {
             TextButton(onClick = {
-                if (engine == VoiceSettings.Engine.Realtime && listening) stopRealtime { onSave(types, it) }
-                else if (engine == VoiceSettings.Engine.Android && listening) { recognizer.stop(); onSave(types, note) }
-                else if (!whisperRecording) onSave(types, note) else {
+                if (engine == VoiceSettings.Engine.Realtime && listening) stopRealtime { onSave(types, it, checkIn) }
+                else if (engine == VoiceSettings.Engine.Android && listening) { recognizer.stop(); onSave(types, note, checkIn) }
+                else if (!whisperRecording) onSave(types, note, checkIn) else {
                     // Saving mid-recording: finish the transcription first so the words aren't lost.
                     whisperRecording = false
                     status = "Transcribing with Whisper…"
                     scope.launch {
                         val text = runCatching { whisper.stopAndTranscribe(VoiceSettings.apiKey(context)) }.getOrNull()
                         val clean = text?.let { VoiceTextNormalizer.normalize(it) }.orEmpty()
-                        onSave(types, if (clean.isBlank()) note else if (note.isBlank()) clean else note.trimEnd() + " " + clean)
+                        onSave(types, if (clean.isBlank()) note else if (note.isBlank()) clean else note.trimEnd() + " " + clean, checkIn)
                     }
                 }
             }) { Text("Save") }
@@ -308,5 +310,44 @@ fun EventFrame(
         androidx.compose.material3.ProvideTextStyle(androidx.compose.material3.MaterialTheme.typography.headlineSmall) { title() }
         Column(Modifier.weight(1f, fill = false)) { text() }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { dismiss(); confirm() }
+    }
+}
+
+
+/** "How are you?" — feeling 1–5 and stress 0–10. Tap to pick, tap again to clear. Both optional. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CheckInPicker(value: com.pulsepointlabs.sarahmonitor.session.CheckIn, onChange: (com.pulsepointlabs.sarahmonitor.session.CheckIn) -> Unit) {
+    val spectrum = listOf(MonitorColors.alarm, MonitorColors.load, MonitorColors.rmssd, MonitorColors.good, Color(0xFF34D399))
+    Text("How are you?", color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf("Awful", "Low", "OK", "Good", "Great").forEachIndexed { i, l ->
+            val on = value.wellbeing == i + 1
+            val c = spectrum[i]
+            Text(
+                l, color = if (on) MonitorColors.background else c, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .background(if (on) c else c.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+                    .border(1.dp, c.copy(alpha = 0.7f), RoundedCornerShape(16.dp))
+                    .clickable { onChange(value.copy(wellbeing = if (on) null else i + 1)) }
+                    .padding(horizontal = 12.dp, vertical = 7.dp)
+            )
+        }
+    }
+    Text("Stress" + (value.selfStress?.let { " · $it/10" } ?: ""), color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        (0..10).forEach { n ->
+            val on = value.selfStress == n
+            val c = com.pulsepointlabs.sarahmonitor.ui.percentBandColor(n * 10) ?: MonitorColors.label
+            Text(
+                "$n", color = if (on) MonitorColors.background else c, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier
+                    .background(if (on) c else c.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                    .border(1.dp, c.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                    .clickable { onChange(value.copy(selfStress = if (on) null else n)) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            )
+        }
     }
 }

@@ -104,6 +104,10 @@ private class ReviewSeriesSet(data: SessionData) {
     val emg1 = ReviewSeries("EMG 1", com.pulsepointlabs.sarahmonitor.emg.EmgColor, emgTs, data.emg.map { (if (emgCalibrated) it.pct1 else it.ch1) ?: Double.NaN }.toDoubleArray(), SeriesStyle.Area, gapMs = 1_000L)
     val emg2 = ReviewSeries("EMG 2", com.pulsepointlabs.sarahmonitor.emg.Emg2Color, emgTs, data.emg.map { (if (emgCalibrated) it.pct2 else it.ch2) ?: Double.NaN }.toDoubleArray(), gapMs = 1_000L)
     val hasEmg2 = data.emg.any { it.ch2 != null }
+    val stress = ReviewSeries("Stress", com.pulsepointlabs.sarahmonitor.ui.StressColor, hrTs, data.hr.map { it.stress?.toDouble() ?: Double.NaN }.toDoubleArray())
+    val hasStress = data.hr.any { it.stress != null }
+    val breaths = ReviewSeries("Breathing", MonitorColors.pelvic, hrTs, data.hr.map { it.breathsPerMin ?: Double.NaN }.toDoubleArray())
+    val hasBreaths = data.hr.any { it.breathsPerMin != null }
     val hasHrv = data.hr.any { it.rmssdMs != null }
     val hasLoad = data.hr.any { it.load != null }
 }
@@ -203,6 +207,8 @@ fun ReviewScreen(
                 refLines = listOf(avg to "avg ${"%.0f".format(avg)}"), bands = bands(FlagChart.Hr))
         }
         if (series.hasHrv) ReviewChart("HRV (rolling 2 min)", "ms", listOf(series.rmssd, series.sdnn), viewport, chartMarkers, cursor, setCursor, zoom, 140.dp, minSpan = 10.0, decimals = 1, bands = bands(FlagChart.Hrv))
+        if (series.hasStress) ReviewChart("Stress", "0–100", listOf(series.stress), viewport, chartMarkers, cursor, setCursor, zoom, 100.dp, fixedBounds = 0.0 to 100.0, refLines = listOf(50.0 to "elevated"))
+        if (series.hasBreaths) ReviewChart("Breathing", "/min", listOf(series.breaths), viewport, chartMarkers, cursor, setCursor, zoom, 90.dp, minSpan = 6.0)
         if (series.hasLoad) ReviewChart("Load", "0–100", listOf(series.load), viewport, chartMarkers, cursor, setCursor, zoom, 100.dp, fixedBounds = 0.0 to 100.0, refLines = listOf(58.0 to "elevated"), bands = bands(FlagChart.Load))
         if (d.emg.isNotEmpty()) ReviewChart("EMG", if (series.emgCalibrated) "% of hold" else "raw ENV", listOfNotNull(series.emg1, series.emg2.takeIf { series.hasEmg2 }), viewport, chartMarkers, cursor, setCursor, zoom, 150.dp, minSpan = 20.0)
         if (d.pelvic.isNotEmpty()) ReviewChart("Pelvic pressure", "kPa above rest", listOf(series.pelvic), viewport, chartMarkers, cursor, setCursor, zoom, 170.dp, minSpan = 2.0, decimals = 1, bands = bands(FlagChart.Pelvic))
@@ -263,7 +269,7 @@ fun ReviewScreen(
         MarkEventDialog(
             pressedAtMs = m.timestampMs,
             editing = m,
-            onSave = { types, note -> saveMarker(m.copy(types = MarkerTypes.join(types), label = MarkerTypes.label(types), note = note.trim())); editing = null },
+            onSave = { types, note, checkIn -> saveMarker(m.copy(types = MarkerTypes.join(types), label = MarkerTypes.label(types), note = note.trim(), wellbeing = checkIn.wellbeing, selfStress = checkIn.selfStress)); editing = null },
             onDelete = {
                 scope.launch {
                     withContext(Dispatchers.IO) {
@@ -282,8 +288,8 @@ fun ReviewScreen(
         MarkEventDialog(
             pressedAtMs = t,
             editing = MarkerEntity("", sessionId, t, "event", "Event"),
-            onSave = { types, note ->
-                saveMarker(MarkerEntity(UUID.randomUUID().toString(), sessionId, t, MarkerTypes.join(types), MarkerTypes.label(types), note.trim()))
+            onSave = { types, note, checkIn ->
+                saveMarker(MarkerEntity(UUID.randomUUID().toString(), sessionId, t, MarkerTypes.join(types), MarkerTypes.label(types), note.trim(), wellbeing = checkIn.wellbeing, selfStress = checkIn.selfStress))
                 addingAt = null
             },
             onDismiss = { addingAt = null },
@@ -509,7 +515,9 @@ private fun EventsCard(d: SessionData, selected: String?, onFocus: (MarkerEntity
                         Text("${clockLabel(m.timestampMs, seconds = true)} · +${SessionAnalysis.elapsed(m.timestampMs - d.session.startTimeMs)}", color = MonitorColors.label, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                     }
                     if (m.note.isNotBlank()) Text(m.note, color = MonitorColors.text, fontSize = 13.sp)
+                    com.pulsepointlabs.sarahmonitor.session.CheckIn.of(m).label?.let { Text("Check-in: $it", color = com.pulsepointlabs.sarahmonitor.ui.StressColor, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
                     val facts = listOfNotNull(
+                        d.hr.minByOrNull { kotlin.math.abs(it.timestampMs - m.timestampMs) }?.takeIf { kotlin.math.abs(it.timestampMs - m.timestampMs) < 5_000L }?.stress?.let { "est. stress $it" },
                         ctx.hrAt?.let { "HR $it" },
                         ctx.rmssdAt?.let { "RMSSD ${SessionAnalysis.num(it)}" },
                         ctx.pressureAt?.let { "pressure ${SessionAnalysis.num(it)} kPa" },

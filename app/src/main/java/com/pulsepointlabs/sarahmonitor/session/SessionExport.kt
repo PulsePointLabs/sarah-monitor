@@ -111,7 +111,9 @@ object SessionExport {
                         (c.pressureAt?.let { "; pressure ${f1(it)} kPa" } ?: "") +
                         (c.peakPressureNext30s?.let { "; peak pressure next 30 s ${f1(it)} kPa" } ?: "") +
                         (if (response.isNotEmpty()) "; $response" else "") +
-                        (m.note.takeIf { it.isNotBlank() }?.let { "; note: ${oneLine(it)}" } ?: "")
+                        (m.note.takeIf { it.isNotBlank() }?.let { "; note: ${oneLine(it)}" } ?: "") +
+                        (com.pulsepointlabs.sarahmonitor.session.CheckIn.of(m).label?.let { "; check-in: $it" } ?: "") +
+                        (data.hr.minByOrNull { kotlin.math.abs(it.timestampMs - m.timestampMs) }?.stress?.let { "; estimated stress $it/100" } ?: "")
                 )
             }
             appendLine()
@@ -167,7 +169,7 @@ object SessionExport {
     /** One row per second: HR, rolling HRV, Load, pressure mean/max, and any event in that second. */
     fun csv(data: SessionData): String = buildString {
         val start = data.session.startTimeMs
-        appendLine("local_time,elapsed_s,hr_bpm,rmssd_ms,sdnn_ms,pnn50_pct,load,pressure_kpa,above_rest_kpa_mean,above_rest_kpa_max,holding,event,event_note,bp,glucose_mg_dl,auto_flags")
+        appendLine("local_time,elapsed_s,hr_bpm,rmssd_ms,sdnn_ms,pnn50_pct,load,stress_est,breaths_per_min,pressure_kpa,above_rest_kpa_mean,above_rest_kpa_max,holding,event,event_note,feeling_1_5,self_stress_0_10,bp,glucose_mg_dl,auto_flags")
         val flags = SessionFlags.detect(data)
         val hrBySecond = data.hr.groupBy { (it.timestampMs - start) / 1000 }
         val pBySecond = data.pelvic.groupBy { (it.timestampMs - start) / 1000 }
@@ -185,12 +187,15 @@ object SessionExport {
             append(hr?.bpm ?: "").append(',').append(hr?.rmssdMs?.let { "%.1f".format(Locale.US, it) } ?: "").append(',')
             append(hr?.sdnnMs?.let { "%.1f".format(Locale.US, it) } ?: "").append(',').append(hr?.pnn50Percent?.let { "%.1f".format(Locale.US, it) } ?: "").append(',')
             append(hr?.load ?: "").append(',')
+            append(hr?.stress ?: "").append(',').append(hr?.breathsPerMin?.let { "%.1f".format(Locale.US, it) } ?: "").append(',')
             append(p.lastOrNull()?.pressureKpa?.let { "%.2f".format(Locale.US, it) } ?: "").append(',')
             append(above.takeIf { it.isNotEmpty() }?.average()?.let { "%.2f".format(Locale.US, it) } ?: "").append(',')
             append(above.maxOrNull()?.let { "%.2f".format(Locale.US, it) } ?: "").append(',')
             append(if (p.isEmpty()) "" else if (p.any { it.holding }) "1" else "0").append(',')
             append(q(markers.joinToString(" | ") { it.label })).append(',')
             append(q(markers.joinToString(" | ") { it.note })).append(',')
+            append(markers.mapNotNull { it.wellbeing }.joinToString(" | ")).append(',')
+            append(markers.mapNotNull { it.selfStress }.joinToString(" | ")).append(',')
             append(bpBySecond[sec]?.joinToString(" | ") { "${it.systolic}/${it.diastolic}" } ?: "").append(',')
             append(gBySecond[sec]?.joinToString(" | ") { "%.0f".format(Locale.US, it.mgDl) } ?: "").append(',')
             val t = start + sec * 1000

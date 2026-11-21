@@ -76,14 +76,15 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    fun onHeart(snapshot: HeartSnapshot, rrRows: List<RrSampleEntity>) {
+    fun onHeart(snapshot: HeartSnapshot, rrRows: List<RrSampleEntity>, stress: Int? = null, breathsPerMin: Double? = null) {
         val session = _active.value ?: return
         val t = snapshot.updatedAtMs ?: return
         val bpm = snapshot.heartRate ?: return
         synchronized(lock) {
             hr += HrSampleEntity(
                 sessionId = session.id, timestampMs = t, bpm = bpm, rmssdMs = snapshot.rmssdMs, sdnnMs = snapshot.sdnnMs,
-                pnn50Percent = snapshot.pnn50Percent, load = snapshot.load.score, contact = snapshot.contact
+                pnn50Percent = snapshot.pnn50Percent, load = snapshot.load.score, contact = snapshot.contact,
+                stress = stress, breathsPerMin = breathsPerMin
             )
             rrRows.forEach {
                 rr += RrEntity(
@@ -146,9 +147,12 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    suspend fun addMarker(timestampMs: Long, types: Set<String>, note: String): MarkerEntity? {
+    suspend fun addMarker(timestampMs: Long, types: Set<String>, note: String, checkIn: CheckIn = CheckIn()): MarkerEntity? {
         val session = _active.value ?: return null
-        val marker = MarkerEntity(UUID.randomUUID().toString(), session.id, timestampMs, MarkerTypes.join(types), MarkerTypes.label(types), note.trim())
+        val marker = MarkerEntity(
+            UUID.randomUUID().toString(), session.id, timestampMs, MarkerTypes.join(types), MarkerTypes.label(types), note.trim(),
+            wellbeing = checkIn.wellbeing, selfStress = checkIn.selfStress
+        )
         withContext(Dispatchers.IO) { dao.upsertMarker(marker) }
         return marker
     }
@@ -157,6 +161,18 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         private const val ECG_CHUNK_SAMPLES = 1_300 // about 10 s at 130 Hz
         private val titleFormat = DateTimeFormatter.ofPattern("EEE MMM d, h:mm a")
         fun defaultTitle(ms: Long): String = "Session · " + Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(titleFormat)
+    }
+}
+
+/** Optional self-report attached to an event: how you feel (1–5) and how stressed (0–10). */
+data class CheckIn(val wellbeing: Int? = null, val selfStress: Int? = null) {
+    val empty: Boolean get() = wellbeing == null && selfStress == null
+    val label: String?
+        get() = listOfNotNull(wellbeing?.let { "feeling ${FEELINGS.getOrNull(it - 1) ?: it}" }, selfStress?.let { "stress $it/10" }).joinToString(" · ").ifBlank { null }
+
+    companion object {
+        val FEELINGS = listOf("awful", "low", "OK", "good", "great")
+        fun of(m: MarkerEntity) = CheckIn(m.wellbeing, m.selfStress)
     }
 }
 

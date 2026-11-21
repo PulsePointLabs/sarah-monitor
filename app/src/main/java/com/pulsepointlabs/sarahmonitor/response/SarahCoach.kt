@@ -251,6 +251,7 @@ class SarahCoach(
             .put("hr_below_recent_peak_bpm", (s.dropFromPeak * 10).roundToInt() / 10.0)
             .put("breaths_per_min", s.breathsPerMin?.let { (it * 10).roundToInt() / 10.0 })
             .put("emg_pct_of_hold", s.emgPct?.roundToInt())
+            .put("stress_estimate_0_100", com.pulsepointlabs.sarahmonitor.core.MonitorHub.stress.value.score)
             .put("climaxes_this_session", s.climaxes)
             .put("climax_signature_detected", s.candidate?.reason)
             .put("recent_things_you_said", JSONArray(recent.toList()))

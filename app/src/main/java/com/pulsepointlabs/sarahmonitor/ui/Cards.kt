@@ -63,6 +63,7 @@ private fun designSize(type: CardType): Pair<Float, Float> = when (type) {
     CardType.BloodPressure -> 380f to 260f
     CardType.Glucose -> 260f to 200f
     CardType.SpO2, CardType.Body -> 260f to 200f
+    CardType.Stress -> 300f to 210f
     CardType.Emg -> 380f to 260f
     CardType.Phase -> 380f to 220f
     CardType.NearClimax -> 360f to 240f
@@ -84,6 +85,7 @@ private fun identity(type: CardType): Color = when (type) {
     CardType.SpO2 -> com.pulsepointlabs.sarahmonitor.vitals.SpO2Color
     CardType.Body -> com.pulsepointlabs.sarahmonitor.vitals.BodyColor
     CardType.Emg -> com.pulsepointlabs.sarahmonitor.emg.EmgColor
+    CardType.Stress -> StressColor
     CardType.Phase, CardType.Matrix, CardType.ResponseTimeline, CardType.QuickMarks -> MonitorColors.label
     CardType.NearClimax, CardType.SarahLive -> com.pulsepointlabs.sarahmonitor.response.ClimaxPink
     CardType.Cardiac -> MonitorColors.hr
@@ -119,6 +121,7 @@ fun MonitorCard(type: CardType, modifier: Modifier = Modifier) {
                     CardType.SpO2 -> com.pulsepointlabs.sarahmonitor.vitals.SpO2Card()
                     CardType.Body -> com.pulsepointlabs.sarahmonitor.vitals.BodyCard()
                     CardType.Emg -> com.pulsepointlabs.sarahmonitor.emg.EmgCard()
+                    CardType.Stress -> StressCard()
                     CardType.Phase -> com.pulsepointlabs.sarahmonitor.response.PhaseCard()
                     CardType.NearClimax -> com.pulsepointlabs.sarahmonitor.response.NearClimaxCard()
                     CardType.Matrix -> com.pulsepointlabs.sarahmonitor.response.MatrixCard()
@@ -641,4 +644,33 @@ fun BpPositionDialog(entry: com.pulsepointlabs.sarahmonitor.core.BpEntry?, onDis
         },
         dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
+}
+
+
+val StressColor = Color(0xFFF59E0B)
+
+/** Overall stress (0–100) with what's driving it; separate from Load (cardiovascular strain). */
+@Composable
+fun StressCard() {
+    val st by MonitorHub.stress.collectAsState()
+    val recent by MonitorHub.recent.collectAsState()
+    val s = LocalCardScale.current
+    val color = st.score?.let { percentBandColor(it) } ?: MonitorColors.dim
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        CardTitle("Stress", if (LocalOverlayMode.current) color else StressColor, "0–100") {
+            Text(
+                if (st.moving) "Moving" else st.level?.label ?: "Learning",
+                color = if (st.moving) MonitorColors.label else color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1
+            )
+        }
+        BigReading(
+            st.score?.toString() ?: "--", color, Modifier.fillMaxWidth().weight(1f),
+            maxChars = 3, trend = recent.values(Metric.Stress), trendStrength = recent.trend(Metric.Stress)
+        )
+        Chips {
+            st.components.filter { it.score != null }.forEach { c ->
+                StatChip(c.label, if (c.key == "breath") st.breathsPerMin?.let { "%.0f/min".format(it) } ?: "${c.score}" else "${c.score}", tint = percentBandColor(c.score))
+            }
+        }
+    }
 }
