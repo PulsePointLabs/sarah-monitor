@@ -166,6 +166,7 @@ object MonitorHub {
                 recorder.onHeart(snapshot, heartEngine.lastRr)
                 audio.onHeart(snapshot, heartEngine.lastRr)
                 sleepEngine.onHeart(reading.timestampMs, snapshot.heartRate, heartEngine.lastRr.filter { it.accepted }.mapNotNull { it.cleanIntervalMs })
+                arousal.onRr(heartEngine.lastRr.filter { it.accepted }.mapNotNull { it.cleanIntervalMs })
                 _response.value = arousal.onHeart(reading.timestampMs, snapshot.heartRate, snapshot.rmssdMs, snapshot.load.score)
                 val t = reading.timestampMs
                 recentRecorder.add(Metric.Hr, t, snapshot.heartRate?.toDouble())
@@ -179,7 +180,10 @@ object MonitorHub {
         scope.launch {
             h10.accelerometerBatches.collect { batch ->
                 heartEngine.addAccelerometer(batch)
-                batch.forEach { sleepEngine.onAcc(it.timestampMs, it.xMilliG, it.yMilliG, it.zMilliG) }
+                batch.forEach {
+                    sleepEngine.onAcc(it.timestampMs, it.xMilliG, it.yMilliG, it.zMilliG)
+                    arousal.onMotion(it.timestampMs, kotlin.math.abs(kotlin.math.sqrt(it.xMilliG.toDouble() * it.xMilliG + it.yMilliG.toDouble() * it.yMilliG + it.zMilliG.toDouble() * it.zMilliG) - 1000.0))
+                }
             }
         }
         scope.launch {

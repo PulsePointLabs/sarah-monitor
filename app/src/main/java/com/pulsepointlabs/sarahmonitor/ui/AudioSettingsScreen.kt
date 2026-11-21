@@ -125,7 +125,6 @@ fun AlertsSection() {
         SettingSlider("High heart rate limit", if (highHr == 0) "Auto" else "$highHr bpm", highHr.toFloat(), 0f..200f) {
             AudioSettings.setHighHrLimit(if (it < 90f) 0 else it.toInt())
         }
-        Text("Auto = this session's median + 25 (at least 100). Slide left for Auto.", color = MonitorColors.label, fontSize = 12.sp)
         SettingSlider("Low heart rate limit", "$lowHr bpm", lowHr.toFloat(), 35f..60f) { AudioSettings.setLowHrLimit(it.toInt()) }
         SettingSlider("Long pelvic hold", "$hold s", hold.toFloat(), 5f..30f) { AudioSettings.setLongHoldSeconds(it.toInt()) }
     }

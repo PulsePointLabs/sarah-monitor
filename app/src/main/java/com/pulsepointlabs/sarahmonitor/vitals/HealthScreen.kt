@@ -149,7 +149,7 @@ private fun BodyPage(onHealthConnect: () -> Unit, modifier: Modifier) {
             }) {
                 val m = metrics.first { it.label == selected }
                 val pts = items.mapNotNull { e -> m.value(e)?.let { e.timestampMs to it } }
-                if (pts.size < 2) Text("Not enough ${m.label.lowercase()} readings in this range yet.", color = MonitorColors.label, fontSize = 13.sp)
+                if (pts.size < 2) Text("--", color = MonitorColors.label, fontSize = 13.sp)
                 else TrendChart(
                     listOf(Series(m.label, BodyColor, pts.map { it.first to it.second as Double? })),
                     pts.first().first, maxOf(pts.last().first, pts.first().first + 86_400_000L),
@@ -207,7 +207,7 @@ private fun MetricTile(m: BodyMetric, series: List<Pair<Long, Double>>, selected
 @Composable
 private fun Composition(e: BodyEntry?) {
     if (e?.bodyFatPct == null) {
-        Text("A full ESF-551 reading (barefoot, profile filled in) or a scale app writing body fat to Health Connect fills this in.", color = MonitorColors.label, fontSize = 13.sp)
+        Text("--", color = MonitorColors.label, fontSize = 13.sp)
         return
     }
     val fatKg = e.weightKg * e.bodyFatPct / 100
@@ -239,7 +239,6 @@ private fun Composition(e: BodyEntry?) {
         listOfNotNull(e.bodyWaterPct?.let { "water %.1f%%".format(it) }, e.visceralFat?.let { "visceral $it" }, e.bmrKcal?.let { "BMR $it kcal" }, e.metabolicAge?.let { "metabolic age $it" }).joinToString(" · "),
         color = MonitorColors.label, fontSize = 12.sp
     )
-    Text("Bioimpedance estimates — trends are more meaningful than any single number.", color = MonitorColors.dim, fontSize = 11.sp)
 }
 
 @Composable
@@ -293,7 +292,6 @@ private fun SpO2Page(onCsvImport: () -> Unit, onHealthConnect: () -> Unit, modif
                         ChoiceChip("Import CSV (EMAY etc.)", false, SpO2Color) { onCsvImport() }
                         ChoiceChip("Health Connect", false, SpO2Color) { onHealthConnect() }
                     }
-                    Text("You can also share the oximeter app's export straight to Sarah Monitor.", color = MonitorColors.label, fontSize = 12.sp)
                 }
                 if (wide) Panel("Time in range", SpO2Color, Modifier.weight(1f)) { Bands(items) }
             }

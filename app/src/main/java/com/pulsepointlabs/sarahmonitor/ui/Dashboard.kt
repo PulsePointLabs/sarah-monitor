@@ -109,7 +109,7 @@ private fun ArrangeBanner(onDone: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            "Arranging · drag a card (mouse, finger or two-finger swipe) to move it · drag ◢ to resize",
+            "Arranging",
             color = MonitorColors.text, fontSize = 13.sp, modifier = Modifier.weight(1f)
         )
         Text(

@@ -87,7 +87,6 @@ private fun Section(title: String, color: Color, subtitle: String? = null, conte
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(title, color = color, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        if (subtitle != null) Text(subtitle, color = MonitorColors.label, fontSize = 13.sp)
         content()
     }
 }
@@ -180,7 +179,6 @@ private fun CivetSection(onMessage: (String) -> Unit) {
                 Text(if (showAll) "Hide other nearby devices" else "Show all nearby devices (${nearby.size})", fontSize = 13.sp)
             }
             if (showAll) {
-                Text("If the sensor shows up under a different name, pick it here. Strongest signal (closest) first.", color = MonitorColors.label, fontSize = 12.sp)
                 nearby.take(25).forEach { d ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {

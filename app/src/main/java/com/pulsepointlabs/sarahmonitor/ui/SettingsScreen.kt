@@ -75,7 +75,6 @@ fun SettingsSection(title: String, color: Color, subtitle: String? = null, conte
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(title, color = color, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        if (subtitle != null) Text(subtitle, color = MonitorColors.label, fontSize = 13.sp)
         content()
     }
 }
@@ -134,9 +133,8 @@ private fun OverlaySettingsSection() {
             }
         }
         if (profile != current) {
-            Text("Editing the ${profile.label} setup — it shows when Sarah Monitor is on the ${profile.label} screen.", color = MonitorColors.label, fontSize = 12.sp)
         }
-        SettingRow("Overlays on ${profile.label}", "Quick switch — also on the top bar, the notification and a Quick Settings tile") {
+        SettingRow("Overlays on ${profile.label}") {
             SettingSwitch(st.on) {
                 OverlaySettings.setOn(context, it, profile)
                 MonitorService.start(context)

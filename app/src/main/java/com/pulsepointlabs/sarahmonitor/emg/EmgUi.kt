@@ -85,7 +85,7 @@ private fun ChannelMeter(c: EmgChannel, color: Color) {
                 (c.rest?.let { " · rest %.0f".format(it) } ?: "") + (c.hold?.let { " · hold %.0f".format(it) } ?: ""),
             color = MonitorColors.label, fontSize = 11.sp, fontFamily = FontFamily.Monospace
         )
-        if (c.nearLimit) Text("Near the ADC limit — check gain, snap contact and the analog cable (power down before changing wiring).", color = MonitorColors.warn, fontSize = 12.sp)
+        if (c.nearLimit) Text("Near ADC limit", color = MonitorColors.warn, fontSize = 12.sp)
     }
 }
 
@@ -122,7 +122,6 @@ fun EmgSection() {
         }
         snap.channels.forEachIndexed { i, c -> ChannelMeter(c, if (i == 0) EmgColor else Emg2Color) }
         if (snap.channels.isNotEmpty()) EmgTrace(snap, Modifier.fillMaxWidth().height(110.dp))
-        Text("Guided calibration: relax for rest, then a comfortable firm hold on each sensor. 3 s to get ready, 5 s measured.", color = MonitorColors.text, fontSize = 13.sp)
         snap.capture?.let { cap ->
             Text("${cap.phase}: ${cap.message} · ${"%.0f".format(kotlin.math.ceil(cap.remainingS))} s", color = MonitorColors.warn, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         }
@@ -134,7 +133,6 @@ fun EmgSection() {
             if (snap.channels.size > 1) ChoiceChip("3 · Hold ${names[1]}", false, Emg2Color) { MonitorHub.emgProcessor.startCapture(EmgStep.Hold2, now()) }
             if (snap.capture != null) ChoiceChip("Cancel", false, MonitorColors.alarm) { MonitorHub.emgProcessor.cancelCapture() }
         }
-        Text("100% = your calibrated comfortable hold. Engineering quality checks only — not muscle-specific norms.", color = MonitorColors.dim, fontSize = 11.sp)
     }
 }
 
@@ -146,14 +144,13 @@ fun EmgCardContent(compactNote: Boolean = false) {
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (snap.channels.isEmpty() || !snap.fresh) {
             Text(
-                if (link == EmgLink.NoDevice) "No EMG Arduino on USB. Plug it into the phone or DeX dock (Sensors → EMG)." else "${link.label}…",
+                if (link == EmgLink.NoDevice) "No EMG signal" else "${link.label}…",
                 color = MonitorColors.label, fontSize = 13.sp
             )
             return@Column
         }
         snap.channels.forEachIndexed { i, c -> ChannelMeter(c, if (i == 0) EmgColor else Emg2Color) }
         EmgTrace(snap, Modifier.fillMaxWidth().weight(1f))
-        if (!compactNote && snap.channels.none { it.calibrated }) Text("Uncalibrated: showing raw ENV. Calibrate in Sensors → EMG for % of hold.", color = MonitorColors.warn, fontSize = 12.sp)
     }
 }
 

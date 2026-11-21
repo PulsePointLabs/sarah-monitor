@@ -17,7 +17,17 @@ enum class CardType(val title: String, val minW: Int, val minH: Int) {
     Glucose("Glucose", 3, 3),
     SpO2("SpO2", 3, 3),
     Body("Body (scale)", 3, 3),
-    Emg("EMG", 4, 3)
+    Emg("EMG", 4, 3),
+    // Response board
+    Phase("Phase", 4, 3),
+    NearClimax("Near-climax watch", 4, 3),
+    Matrix("Threshold matrix", 4, 3),
+    ResponseTimeline("Phase timeline", 6, 3),
+    Cardiac("Cardiac timeline", 6, 3),
+    Recovery("Recovery", 3, 2),
+    Respiration("Respiration & motion", 3, 2),
+    SarahLive("Sarah, live", 4, 3),
+    QuickMarks("Quick marks", 4, 2)
 }
 
 data class CardSlot(val type: CardType, val x: Int, val y: Int, val w: Int, val h: Int, val visible: Boolean = true) {
@@ -51,6 +61,28 @@ object GridLayoutEngine {
         CardSlot(CardType.Emg, 10, 16, 8, 5, visible = false)
     )
 
+    /** The Response board: phase and near-climax up top, pelvic floor / HRV / EMG, timelines underneath. */
+    val responseLayout: List<CardSlot> = listOf(
+        CardSlot(CardType.Phase, 0, 0, 6, 4),
+        CardSlot(CardType.NearClimax, 6, 0, 6, 4),
+        CardSlot(CardType.Pelvic, 12, 0, 6, 8),
+        CardSlot(CardType.SarahLive, 18, 0, 6, 4),
+        CardSlot(CardType.Matrix, 0, 4, 6, 4),
+        CardSlot(CardType.Hrv, 6, 4, 6, 4),
+        CardSlot(CardType.QuickMarks, 18, 4, 6, 4),
+        CardSlot(CardType.ResponseTimeline, 0, 8, 12, 4),
+        CardSlot(CardType.Emg, 12, 8, 6, 4),
+        CardSlot(CardType.Recovery, 18, 8, 3, 4),
+        CardSlot(CardType.Respiration, 21, 8, 3, 4),
+        CardSlot(CardType.Cardiac, 0, 12, 12, 4),
+        CardSlot(CardType.HeartRate, 12, 12, 6, 4),
+        CardSlot(CardType.Load, 18, 12, 6, 4),
+        CardSlot(CardType.Ecg, 0, 16, 12, 4, visible = false),
+        CardSlot(CardType.BloodPressure, 12, 16, 6, 4, visible = false),
+        CardSlot(CardType.PelvicTrend, 0, 20, 12, 4, visible = false),
+        CardSlot(CardType.HrTrend, 12, 20, 12, 4, visible = false)
+    )
+
     fun clampSlot(slot: CardSlot): CardSlot {
         val w = slot.w.coerceIn(slot.type.minW, COLUMNS)
         val h = slot.h.coerceAtLeast(slot.type.minH)
@@ -77,6 +109,7 @@ object GridLayoutEngine {
 
     /** Floats every visible card up as far as it can go without overlapping. [keep] stays put. */
     fun compact(slots: List<CardSlot>, keep: CardType? = null): List<CardSlot> {
+        if (slots.isEmpty()) return slots
         val result = mutableListOf<CardSlot>()
         slots.filter { !it.visible }.forEach { result += it }
         val kept = slots.firstOrNull { it.type == keep && it.visible }
@@ -104,29 +137,26 @@ object GridLayoutEngine {
         slots.forEach { put(JSONObject().put("type", it.type.name).put("x", it.x).put("y", it.y).put("w", it.w).put("h", it.h).put("visible", it.visible)) }
     }.toString()
 
-    fun fromJson(json: String?): List<CardSlot> {
+    fun fromJson(json: String?, defaults: List<CardSlot> = defaultLayout): List<CardSlot> {
+        val allowed = defaults.map { it.type }.toSet()
         val parsed = runCatching {
-            val array = JSONArray(json ?: return defaultLayout)
+            val array = JSONArray(json ?: return defaults)
             (0 until array.length()).mapNotNull { i ->
                 val o = array.getJSONObject(i)
-                val type = runCatching { CardType.valueOf(o.getString("type")) }.getOrNull() ?: return@mapNotNull null
+                val type = runCatching { CardType.valueOf(o.getString("type")) }.getOrNull()?.takeIf { it in allowed } ?: return@mapNotNull null
                 clampSlot(CardSlot(type, o.getInt("x"), o.getInt("y"), o.getInt("w"), o.getInt("h"), o.optBoolean("visible", true)))
             }
-        }.getOrNull() ?: return defaultLayout
+        }.getOrNull() ?: return defaults
         // Cards added in a newer version start hidden (turn them on from Cards) so a saved layout doesn't shift.
-        val missing = CardType.entries.filter { t -> parsed.none { it.type == t } }
+        val missing = defaults.map { it.type }.filter { t -> parsed.none { it.type == t } }
         val bottom = parsed.filter { it.visible }.maxOfOrNull { it.bottom } ?: 0
-        return compact(parsed + missing.mapIndexed { i, t -> defaultLayout.first { it.type == t }.copy(x = 0, y = bottom + i * 4, visible = false) })
+        return compact(parsed + missing.mapIndexed { i, t -> defaults.first { it.type == t }.copy(x = 0, y = bottom + i * 4, visible = false) })
     }
 }
 
-class LayoutStore(context: Context) {
+class LayoutStore(context: Context, private val key: String = "grid_v1", val defaults: List<CardSlot> = GridLayoutEngine.defaultLayout) {
     private val prefs = context.getSharedPreferences("sarahmonitor_layout", Context.MODE_PRIVATE)
 
-    fun load(): List<CardSlot> = GridLayoutEngine.fromJson(prefs.getString(KEY, null))
-    fun save(slots: List<CardSlot>) = prefs.edit().putString(KEY, GridLayoutEngine.toJson(slots)).apply()
-
-    companion object {
-        private const val KEY = "grid_v1"
-    }
+    fun load(): List<CardSlot> = GridLayoutEngine.fromJson(prefs.getString(key, null), defaults)
+    fun save(slots: List<CardSlot>) = prefs.edit().putString(key, GridLayoutEngine.toJson(slots)).apply()
 }

@@ -92,7 +92,7 @@ class PelvicProcessor {
 
     @Synchronized
     fun clearCalibration() {
-        capturedRest = null; restNoise = null; reference = null; message = "Using auto rest."
+        capturedRest = null; restNoise = null; reference = null; message = null
     }
 
     @Synchronized

@@ -446,7 +446,6 @@ private fun RangeBar(viewport: Viewport, fullStart: Long, fullEnd: Long, cursor:
             }
         }
         OverviewStrip(series.hr.takeIf { it.timestamps.isNotEmpty() } ?: series.pelvic, fullStart, fullEnd, viewport, markers, onViewport)
-        Text("Tap or drag on a graph to inspect a moment · drag the strip to move · mouse wheel zooms", color = MonitorColors.dim, fontSize = 11.sp)
     }
 }
 
@@ -487,7 +486,7 @@ private fun Value(label: String, value: String?, color: Color) {
 @Composable
 private fun EventsCard(d: SessionData, selected: String?, onFocus: (MarkerEntity) -> Unit, onEdit: (MarkerEntity) -> Unit, onAdd: () -> Unit) {
     Section("Events (${d.markers.size})", trailing = { TextButton(onClick = onAdd) { Text("+ Add at cursor", fontSize = 13.sp) } }) {
-        if (d.markers.isEmpty()) Text("No events marked. Use + to add one at the cursor position.", color = MonitorColors.label, fontSize = 13.sp)
+        if (d.markers.isEmpty()) Text("No events.", color = MonitorColors.label, fontSize = 13.sp)
         d.markers.forEach { m ->
             val ctx = remember(m, d) { SessionAnalysis.markerContext(m, d) }
             val color = markerColor(m.types)
@@ -551,7 +550,6 @@ private fun FlagsCard(
         if (flags.isEmpty()) {
             Text("Nothing stood out: no high HR or load periods, HR surges, HRV drops, unusual contractions, or out-of-range BP/glucose.", color = MonitorColors.label, fontSize = 13.sp)
         } else {
-            Text("Found automatically from the recording. Prompts for a second look, not diagnoses.", color = MonitorColors.dim, fontSize = 12.sp)
         }
         visible.forEach { f ->
             val color = flagColor(f.severity)

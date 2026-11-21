@@ -106,7 +106,7 @@ fun SleepScreen(modifier: Modifier = Modifier) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Panel(if (sleeping != null) "Sleep mode is on" else "Sleep mode", Modifier.weight(1f)) {
                     if (sleeping != null) LiveNight(sleeping!!, live) else {
-                        Text("Wear the H10 to bed. Heart rate, HRV, movement, position and breathing (from your heart rhythm) are scored in 30 s epochs; imported SpO2 for the night is added to the summary.", color = MonitorColors.text, fontSize = 13.sp)
+                        Unit
                     }
                     message?.let { Text(it, color = MonitorColors.warn, fontSize = 13.sp) }
                     ChoiceRow {
@@ -165,8 +165,8 @@ private fun CalibrationPanel(modifier: Modifier) {
     var note by remember { mutableStateOf<String?>(null) }
     Panel("Body position (one-time setup)", modifier) {
         Text(
-            if (back != null && right != null) "Calibrated ✓ — positions are tracked. Redo it if you wear the strap differently."
-            else "Lie on your back with the strap on and tap the first button, then roll onto your right side and tap the second. It's remembered for later nights.",
+            if (back != null && right != null) "Position calibrated ✓"
+            else "Position: back, then right side",
             color = MonitorColors.text, fontSize = 13.sp
         )
         note?.let { Text(it, color = MonitorColors.warn, fontSize = 12.sp) }
@@ -226,7 +226,6 @@ private fun NightDetail(n: NightSummary, epochs: List<SleepEpoch>, wide: Boolean
         }
         val pos = n.positionMin.filter { it.value > 0 }
         if (pos.isNotEmpty()) Text("Position: " + pos.entries.sortedByDescending { it.value }.joinToString(" · ") { "${it.key.label} ${hm(it.value)}" }, color = MonitorColors.label, fontSize = 12.sp)
-        Text("Stages are estimated from heart rate, HRV, movement and breathing — useful for trends, not a sleep-lab study.", color = MonitorColors.dim, fontSize = 11.sp)
     }
 }
 

@@ -171,9 +171,9 @@ fun KegelScreen(modifier: Modifier = Modifier) {
         Card("Calibration (CIVET)", relaxColor, Modifier.fillMaxWidth()) {
             Text(
                 when {
-                    pelvic.pressureKpa == null -> "CIVET not streaming — the timer still guides you, scoring needs the sensor."
-                    pelvic.referenceKpa == null -> "No reference hold yet: scoring uses the hold threshold. Take a reference (a comfortable firm 5 s squeeze) for % strength."
-                    else -> "Reference hold ${"%.1f".format(pelvic.referenceKpa)} kPa above rest — targets are % of this."
+                    pelvic.pressureKpa == null -> "CIVET not connected"
+                    pelvic.referenceKpa == null -> "No reference hold"
+                    else -> "Reference ${"%.1f".format(pelvic.referenceKpa)} kPa"
                 },
                 color = MonitorColors.text, fontSize = 13.sp
             )
@@ -303,7 +303,6 @@ private fun ResultCard(r: KegelResult) {
             Big("Strength", r.avgPctOfRef?.let { "$it%" } ?: "--", squeezeColor)
             Big("Relax", r.relaxQualityPct?.let { "$it%" } ?: "--", relaxColor)
         }
-        Text("Score = time on target during squeezes (80%) + clean relaxation between them (20%). Strength is % of your reference hold.", color = MonitorColors.label, fontSize = 12.sp)
     }
 }
 

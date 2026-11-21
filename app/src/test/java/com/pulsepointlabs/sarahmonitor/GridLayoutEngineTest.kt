@@ -18,7 +18,20 @@ class GridLayoutEngineTest {
     fun defaultLayoutFillsOneScreenWithoutOverlaps() {
         noOverlaps(GridLayoutEngine.defaultLayout)
         assertEquals(GridLayoutEngine.SCREEN_ROWS, GridLayoutEngine.defaultLayout.filter { it.visible }.maxOf { it.bottom })
-        assertEquals(CardType.entries.size, GridLayoutEngine.defaultLayout.size)
+        assertEquals(GridLayoutEngine.defaultLayout.map { it.type }.toSet().size, GridLayoutEngine.defaultLayout.size)
+    }
+
+    @Test
+    fun responseBoardIsItsOwnLayout() {
+        noOverlaps(GridLayoutEngine.responseLayout)
+        val types = GridLayoutEngine.responseLayout.map { it.type }.toSet()
+        assertTrue(CardType.NearClimax in types && CardType.Pelvic in types)
+        // A saved Monitor layout never picks up Response-only cards, and vice versa.
+        val monitor = GridLayoutEngine.fromJson(GridLayoutEngine.toJson(GridLayoutEngine.defaultLayout), GridLayoutEngine.defaultLayout)
+        assertTrue(monitor.none { it.type == CardType.NearClimax })
+        val response = GridLayoutEngine.fromJson(GridLayoutEngine.toJson(GridLayoutEngine.defaultLayout), GridLayoutEngine.responseLayout)
+        assertTrue(response.none { it.type == CardType.Glucose })
+        assertEquals(types, response.map { it.type }.toSet())
     }
 
     @Test

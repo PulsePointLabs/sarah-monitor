@@ -29,7 +29,10 @@ data class PersonalProfile(val samples: List<ClimaxSample> = emptyList()) {
     val learned: Boolean get() = samples.size >= 2
 }
 
-data class TimelinePoint(val timestampMs: Long, val phase: ResponsePhase, val approach: Int, val arousal: Int)
+data class TimelinePoint(
+    val timestampMs: Long, val phase: ResponsePhase, val approach: Int, val arousal: Int,
+    val plateau: Int = 0, val recovery: Int = 0, val hr: Double? = null, val baseline: Double? = null, val rmssd: Double? = null
+)
 
 /** A detected climax waiting for the user to confirm (confirming marks it and teaches the profile). */
 data class ClimaxCandidate(val timestampMs: Long, val confidence: String, val reason: String)
@@ -60,6 +63,21 @@ data class ResponseState(
     val edges: Int = 0,
     val climaxes: Int = 0,
     val signals: List<String> = emptyList(),
+    /** 0–100: elevated and holding (Sarah's plateau score). */
+    val plateau: Int = 0,
+    /** 0–100: settling after a peak. */
+    val recovery: Int = 0,
+    /** bpm below the HR peak of the last 2 minutes. */
+    val dropFromPeak: Double = 0.0,
+    val drop30: Double? = null,
+    val drop60: Double? = null,
+    val peakHr: Double? = null,
+    /** Independent signal families agreeing (0–7). */
+    val confirmations: Int = 0,
+    val breathsPerMin: Double? = null,
+    /** Chest movement, dynamic milli-g (90th percentile of the last 10 s). */
+    val motionMg: Double? = null,
+    val emgPct: Double? = null,
     val candidate: ClimaxCandidate? = null,
     val timeline: List<TimelinePoint> = emptyList(),
     val sessionStartMs: Long? = null,
@@ -117,6 +135,7 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
         buildStart = null; lastBuildEvidence = null; plateauStart = null
         phase = ResponsePhase.Baseline; phaseSince = null; peakApproachAt = null; peakApproach = 0; peakHr = 0.0
         climaxAt = null; edges = 0; climaxes = 0; candidate = null; lastCandidateAt = null
+        approachSmooth = null; arousalSmooth = null; rrRecent.clear(); motion.clear()
         timeline.clear(); state = ResponseState()
     }
 
@@ -125,6 +144,21 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
 
     private var emgPct: Double? = null
     private var emgAt = 0L
+    private var approachSmooth: Double? = null
+    private var arousalSmooth: Double? = null
+    private val rrRecent = ArrayDeque<Int>()
+    private val motion = ArrayDeque<Pair<Long, Double>>()
+
+    /** Clean RR intervals for the breathing-rate estimate. */
+    @Synchronized
+    fun onRr(rr: List<Int>) { rr.forEach { rrRecent.addLast(it) }; while (rrRecent.size > 120) rrRecent.removeFirst() }
+
+    /** Chest-strap accelerometer: dynamic acceleration in milli-g. */
+    @Synchronized
+    fun onMotion(t: Long, dynamicMg: Double) {
+        motion.addLast(t to dynamicMg)
+        while (motion.isNotEmpty() && t - motion.first().first > 10_000L) motion.removeFirst()
+    }
 
     /** Strongest calibrated EMG channel, % of its comfortable hold. */
     @Synchronized
@@ -257,7 +291,9 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
         if (pAvg != null) arousal += (pAvg / 2.0 * 12).coerceIn(0.0, 12.0)
         arousal += (ppm * 1.0).coerceIn(0.0, 8.0)
         if (hrvSignal == "compressed" || hrvSignal == "tightening") arousal += 10
-        val arousalI = arousal.roundToInt().coerceIn(0, 100)
+        // ~10 s smoothing so a single noisy packet can't spike the read.
+        arousalSmooth = arousalSmooth?.let { it + 0.12 * (arousal - it) } ?: arousal
+        val arousalI = arousalSmooth!!.roundToInt().coerceIn(0, 100)
 
         // Approach-to-climax 0–100.
         var approach = 0.0
@@ -279,7 +315,8 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
         val minutes = (t - (start ?: t)) / 60_000.0
         if (buildS < 45 && confirmations < 2) approach = min(approach, 45.0)
         if (minutes < 5 && confirmations < 3) approach = min(approach, 50.0)
-        val approachI = approach.roundToInt().coerceIn(0, 100)
+        approachSmooth = approachSmooth?.let { it + 0.12 * (approach.coerceIn(0.0, 100.0) - it) } ?: approach.coerceIn(0.0, 100.0)
+        val approachI = approachSmooth!!.roundToInt().coerceIn(0, 100)
         if (approachI > peakApproach || (peakApproachAt != null && t - peakApproachAt!! > 120_000L)) {
             peakApproach = approachI; peakApproachAt = t
         }
@@ -341,8 +378,28 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
         if (plateauS >= 30) signals += "Plateau for ${plateauS / 60}:${"%02d".format(plateauS % 60)}"
         if (!profile.learned) signals += "Approach uses a generic 30 bpm climax rise until you've marked a couple of climaxes"
 
+        // Plateau (Sarah-style): elevation + how long it's been built + tightening HRV + pelvic/EMG + steadiness.
+        var plateauScore = 0.0
+        if (delta != null) plateauScore += (delta * 1.7).coerceIn(0.0, 24.0)
+        plateauScore += (buildS / 6.0).coerceIn(0.0, 25.0)
+        if (hrvSignal == "compressed" || hrvSignal == "tightening") plateauScore += 15
+        if ((emg ?: 0.0) >= 18) plateauScore += (emg!! * 0.35).coerceAtMost(12.0)
+        if (abs(slope) <= 1.5 && (delta ?: 0.0) >= 12 && buildS >= 90) plateauScore += 8
+        if (ppm >= 3) plateauScore += 6
+        val plateauI = plateauScore.roundToInt().coerceIn(0, 100)
+        fun hrAgo(ms: Long) = smooth.lastOrNull { t - it.first >= ms }?.second
+        val drop30 = hrNow?.let { n -> hrAgo(30_000L)?.let { it - n } }
+        val drop60 = hrNow?.let { n -> hrAgo(60_000L)?.let { it - n } }
+        val recoveryScore = when {
+            phase == ResponsePhase.Recovery -> 75 + (dropFromPeak * 2).coerceAtMost(25.0)
+            peakApproach >= 60 && dropFromPeak >= 4 -> (dropFromPeak * 5 + if (hrvSignal == "opening") 20 else 0).coerceAtMost(90.0)
+            else -> 0.0
+        }.roundToInt().coerceIn(0, 100)
+        val breaths = com.pulsepointlabs.sarahmonitor.sleep.SleepMath.breathsFromRr(rrRecent.toList())
+        val motionMg = motion.map { it.second }.sorted().let { if (it.isEmpty()) null else it[(it.size * 0.9).toInt().coerceAtMost(it.size - 1)] }
+
         if (timeline.isEmpty() || t - timeline.last().timestampMs >= 5_000L) {
-            timeline += TimelinePoint(t, phase, approachI, arousalI)
+            timeline += TimelinePoint(t, phase, approachI, arousalI, plateauI, recoveryScore, hrNow, base, rNow)
             if (timeline.size > 10_000) timeline.subList(0, 1_000).clear()
         }
         return ResponseState(
@@ -351,7 +408,9 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
             rmssd = rNow, rmssdRatio = ratio, hrvSignal = hrvSignal,
             pelvicKpa = pNow, pelvicAvg30 = pAvg, pulsesPerMin = ppm, rhythmSpacingS = train?.second,
             load = lastLoad, buildSeconds = buildS, plateauSeconds = plateauS, edges = edges, climaxes = climaxes,
-            signals = signals, candidate = candidate, timeline = timeline.toList(), sessionStartMs = start, learned = profile.learned
+            signals = signals, plateau = plateauI, recovery = recoveryScore, dropFromPeak = dropFromPeak, drop30 = drop30, drop60 = drop60,
+            peakHr = recentPeak, confirmations = confirmations, breathsPerMin = breaths, motionMg = motionMg, emgPct = emg,
+            candidate = candidate, timeline = timeline.toList(), sessionStartMs = start, learned = profile.learned
         )
     }
 

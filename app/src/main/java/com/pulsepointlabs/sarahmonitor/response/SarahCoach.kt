@@ -23,8 +23,8 @@ import kotlin.math.roundToInt
 
 /** What kind of session this is — it changes what Sarah talks about. */
 enum class SessionContext(val label: String, val promptName: String) {
-    Arousal("Arousal", "arousal session"),
-    Edging("Edging", "edging session (deliberately approaching climax and backing off)"),
+    Masturbation("Masturbation", "solo masturbation session"),
+    Sexual("Sexual activity", "partnered sexual activity session"),
     Exploration("Body exploration", "body-exploration session (for example urethral catheter or enema), not aimed at climax")
 }
 
@@ -52,7 +52,7 @@ object ResponseSettings {
     private const val PREFS = "sarahmonitor_response"
     private var prefs: SharedPreferences? = null
 
-    val context = MutableStateFlow(SessionContext.Arousal)
+    val context = MutableStateFlow(SessionContext.Masturbation)
     val coachOn = MutableStateFlow(false)
     val mode = MutableStateFlow(CoachMode.Encourage)
     val model = MutableStateFlow(CoachModel.Opus)
@@ -66,7 +66,7 @@ object ResponseSettings {
         if (prefs != null) return
         val p = c.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs = p
-        context.value = runCatching { SessionContext.valueOf(p.getString("context", null)!!) }.getOrDefault(SessionContext.Arousal)
+        context.value = runCatching { SessionContext.valueOf(p.getString("context", null)!!) }.getOrDefault(SessionContext.Masturbation)
         coachOn.value = p.getBoolean("coach", false)
         mode.value = runCatching { CoachMode.valueOf(p.getString("mode", null)!!) }.getOrDefault(CoachMode.Encourage)
         model.value = runCatching { CoachModel.valueOf(p.getString("model", null)!!) }.getOrDefault(CoachModel.Opus)
@@ -245,7 +245,12 @@ class SarahCoach(
             .put("load_0_100", s.load)
             .put("build_seconds", s.buildSeconds)
             .put("plateau_seconds", s.plateauSeconds)
-            .put("edges_this_session", s.edges)
+            .put("edges_detected_this_session", s.edges)
+            .put("plateau_0_100", s.plateau)
+            .put("recovery_0_100", s.recovery)
+            .put("hr_below_recent_peak_bpm", (s.dropFromPeak * 10).roundToInt() / 10.0)
+            .put("breaths_per_min", s.breathsPerMin?.let { (it * 10).roundToInt() / 10.0 })
+            .put("emg_pct_of_hold", s.emgPct?.roundToInt())
             .put("climaxes_this_session", s.climaxes)
             .put("climax_signature_detected", s.candidate?.reason)
             .put("recent_things_you_said", JSONArray(recent.toList()))

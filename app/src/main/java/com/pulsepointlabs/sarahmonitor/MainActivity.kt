@@ -325,6 +325,9 @@ private fun MonitorScreen(
     onMessage: (String) -> Unit
 ) {
     var slots by remember { mutableStateOf(layoutStore.load()) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val responseStore = remember { LayoutStore(context, "response_v1", GridLayoutEngine.responseLayout) }
+    var responseSlots by remember { mutableStateOf(responseStore.load()) }
     var arranging by remember { mutableStateOf(false) }
     var screen by rememberSaveable { mutableStateOf(Screen.Monitor) }
     var reviewId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -392,7 +395,13 @@ private fun MonitorScreen(
                     onMessage = onMessage,
                     modifier = Modifier.fillMaxSize()
                 )
-                screen == Screen.Response -> com.pulsepointlabs.sarahmonitor.response.ResponseScreen(Modifier.fillMaxSize())
+                screen == Screen.Response -> com.pulsepointlabs.sarahmonitor.response.ResponseScreen(
+                    slots = responseSlots,
+                    arranging = arranging,
+                    onArrangingChange = { arranging = it },
+                    onChange = { responseSlots = it; responseStore.save(it) },
+                    modifier = Modifier.fillMaxSize()
+                )
                 screen == Screen.Kegel -> com.pulsepointlabs.sarahmonitor.kegel.KegelScreen(Modifier.fillMaxSize())
                 screen == Screen.Health -> com.pulsepointlabs.sarahmonitor.vitals.HealthScreen(onCsvImport, onHealthConnect, Modifier.fillMaxSize()) { m -> com.pulsepointlabs.sarahmonitor.sleep.SleepScreen(m) }
                 screen == Screen.Sessions -> SessionsScreen(onOpen = { reviewId = it }, modifier = Modifier.fillMaxSize())
@@ -434,8 +443,15 @@ private fun MonitorScreen(
         )
     }
     if (showCards) {
-        CardsDialog(
+        if (screen == Screen.Response) CardsDialog(
+            slots = responseSlots,
+            types = GridLayoutEngine.responseLayout.map { it.type },
+            onToggle = { type, on -> responseSlots = GridLayoutEngine.setVisible(responseSlots, type, on); responseStore.save(responseSlots) },
+            onResetLayout = { responseSlots = GridLayoutEngine.responseLayout; responseStore.save(responseSlots) },
+            onDismiss = { showCards = false }
+        ) else CardsDialog(
             slots = slots,
+            types = GridLayoutEngine.defaultLayout.map { it.type },
             onToggle = { type, on -> slots = GridLayoutEngine.setVisible(slots, type, on); layoutStore.save(slots) },
             onResetLayout = { slots = GridLayoutEngine.defaultLayout; layoutStore.save(slots) },
             onDismiss = { showCards = false }
@@ -494,7 +510,7 @@ private fun TopBar(
                 DevicePill("H10", h10, onDevices)
                 DevicePill("CIVET", civet, onDevices)
                 DevicePill("BP", omron, onDevices)
-                if (screen == Screen.Monitor) {
+                if (screen == Screen.Monitor || screen == Screen.Response) {
                     BarIcon(Icons.Default.Dashboard, "Cards", onCards)
                     BarIcon(Icons.Default.OpenWith, if (arranging) "Done arranging" else "Arrange cards", onArrange, highlighted = arranging)
                     BarIcon(Icons.Default.RestartAlt, "Start fresh", onReset)
@@ -503,8 +519,9 @@ private fun TopBar(
                 Box {
                     BarIcon(Icons.Default.MoreVert, "More", { menu = true })
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MonitorColors.panel) {
-                        DropdownMenuItem(text = { Text("Cards") }, onClick = { menu = false; onScreen(Screen.Monitor); onCards() })
-                        if (!narrow) DropdownMenuItem(text = { Text(if (arranging) "Done arranging" else "Arrange cards") }, onClick = { menu = false; onScreen(Screen.Monitor); onArrange() })
+                        val board = screen == Screen.Response
+                        DropdownMenuItem(text = { Text("Cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onCards() })
+                        if (!narrow) DropdownMenuItem(text = { Text(if (arranging) "Done arranging" else "Arrange cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onArrange() })
                         DropdownMenuItem(text = { Text("Start fresh") }, onClick = { menu = false; onReset() })
                     }
                 }
@@ -651,6 +668,7 @@ private fun DevicePill(label: String, state: ConnectionState, onClick: () -> Uni
 @Composable
 private fun CardsDialog(
     slots: List<com.pulsepointlabs.sarahmonitor.ui.CardSlot>,
+    types: List<CardType>,
     onToggle: (CardType, Boolean) -> Unit,
     onResetLayout: () -> Unit,
     onDismiss: () -> Unit
@@ -661,8 +679,7 @@ private fun CardsDialog(
         title = { Text("Cards", color = MonitorColors.text) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("Choose which cards show. On a big screen (DeX, tablet) use Arrange to move and resize them.", color = MonitorColors.label, fontSize = 13.sp)
-                CardType.entries.forEach { type ->
+                types.forEach { type ->
                     val on = slots.firstOrNull { it.type == type }?.visible ?: false
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = on, onCheckedChange = { onToggle(type, it) })

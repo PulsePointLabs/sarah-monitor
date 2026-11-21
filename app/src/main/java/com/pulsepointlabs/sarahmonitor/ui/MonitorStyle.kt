@@ -367,7 +367,7 @@ fun BeatingHeart(intervalMs: Long?, color: Color, sizeDp: Float) {
     )
 }
 
-fun fmt(value: Double?, decimals: Int = 0): String = value?.let { "%.${decimals}f".format(it) } ?: "--"
+fun fmt(value: Double?, decimals: Int = 0): String = value?.let { "%.${decimals}f".format(it).let { t -> if (t.trimStart('-').all { c -> c == '0' || c == '.' }) t.trimStart('-') else t } } ?: "--"
 
 fun loadColor(score: Int?): Color = when {
     score == null -> MonitorColors.dim

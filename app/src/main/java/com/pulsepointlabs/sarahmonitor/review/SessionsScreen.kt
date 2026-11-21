@@ -62,7 +62,7 @@ fun SessionsScreen(onOpen: (String) -> Unit, modifier: Modifier = Modifier) {
             list == null -> Unit
             list.isEmpty() -> Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Text("No sessions yet", color = MonitorColors.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text("Tap ● Record on the monitor to start one. Mark events while it runs, then review it here.", color = MonitorColors.label, fontSize = 14.sp, modifier = Modifier.padding(16.dp))
+                Text("No sessions yet.", color = MonitorColors.label, fontSize = 14.sp, modifier = Modifier.padding(16.dp))
             }
             else -> LazyVerticalGrid(
                 columns = GridCells.Fixed(columns),

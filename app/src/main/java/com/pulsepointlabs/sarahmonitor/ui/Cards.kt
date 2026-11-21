@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.pulsepointlabs.sarahmonitor.response.urgent
 import com.pulsepointlabs.sarahmonitor.ble.ConnectionState
 import com.pulsepointlabs.sarahmonitor.core.CaptureKind
 import com.pulsepointlabs.sarahmonitor.core.Metric
@@ -63,6 +64,13 @@ private fun designSize(type: CardType): Pair<Float, Float> = when (type) {
     CardType.Glucose -> 260f to 200f
     CardType.SpO2, CardType.Body -> 260f to 200f
     CardType.Emg -> 380f to 260f
+    CardType.Phase -> 380f to 220f
+    CardType.NearClimax -> 360f to 240f
+    CardType.Matrix -> 360f to 220f
+    CardType.ResponseTimeline, CardType.Cardiac -> 600f to 220f
+    CardType.Recovery, CardType.Respiration -> 220f to 200f
+    CardType.SarahLive -> 380f to 240f
+    CardType.QuickMarks -> 380f to 180f
 }
 
 private fun identity(type: CardType): Color = when (type) {
@@ -76,6 +84,10 @@ private fun identity(type: CardType): Color = when (type) {
     CardType.SpO2 -> com.pulsepointlabs.sarahmonitor.vitals.SpO2Color
     CardType.Body -> com.pulsepointlabs.sarahmonitor.vitals.BodyColor
     CardType.Emg -> com.pulsepointlabs.sarahmonitor.emg.EmgColor
+    CardType.Phase, CardType.Matrix, CardType.ResponseTimeline, CardType.QuickMarks -> MonitorColors.label
+    CardType.NearClimax, CardType.SarahLive -> com.pulsepointlabs.sarahmonitor.response.ClimaxPink
+    CardType.Cardiac -> MonitorColors.hr
+    CardType.Recovery, CardType.Respiration -> MonitorColors.pelvic
 }
 
 /** One dashboard card (also used, compact, in the floating overlays). */
@@ -85,7 +97,9 @@ fun MonitorCard(type: CardType, modifier: Modifier = Modifier) {
     val newBp by MonitorHub.lastLiveBpAt.collectAsState()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(1_000L); now = System.currentTimeMillis() } }
-    val flash = type == CardType.BloodPressure && newBp != null && now - newBp!! < 15_000L
+    val response by MonitorHub.response.collectAsState()
+    val flash = (type == CardType.BloodPressure && newBp != null && now - newBp!! < 15_000L) ||
+        ((type == CardType.NearClimax || type == CardType.Phase) && response.urgent())
     MonitorPanel(identity(type), modifier, alarm = flash && (now / 500) % 2 == 0L) {
         ScaledCard(dw, dh, Modifier.fillMaxSize()) {
             val s = LocalCardScale.current
@@ -105,6 +119,15 @@ fun MonitorCard(type: CardType, modifier: Modifier = Modifier) {
                     CardType.SpO2 -> com.pulsepointlabs.sarahmonitor.vitals.SpO2Card()
                     CardType.Body -> com.pulsepointlabs.sarahmonitor.vitals.BodyCard()
                     CardType.Emg -> com.pulsepointlabs.sarahmonitor.emg.EmgCard()
+                    CardType.Phase -> com.pulsepointlabs.sarahmonitor.response.PhaseCard()
+                    CardType.NearClimax -> com.pulsepointlabs.sarahmonitor.response.NearClimaxCard()
+                    CardType.Matrix -> com.pulsepointlabs.sarahmonitor.response.MatrixCard()
+                    CardType.ResponseTimeline -> com.pulsepointlabs.sarahmonitor.response.ResponseTimelineCard()
+                    CardType.Cardiac -> com.pulsepointlabs.sarahmonitor.response.CardiacCard()
+                    CardType.Recovery -> com.pulsepointlabs.sarahmonitor.response.RecoveryCard()
+                    CardType.Respiration -> com.pulsepointlabs.sarahmonitor.response.RespirationCard()
+                    CardType.SarahLive -> com.pulsepointlabs.sarahmonitor.response.SarahLiveCard()
+                    CardType.QuickMarks -> com.pulsepointlabs.sarahmonitor.response.QuickMarksCard()
                 }
             }
         }
@@ -446,7 +469,7 @@ private fun PelvicCard() {
             p.message != null -> p.message!!
             p.restSource == RestSource.Auto -> "Rest: auto (capture a relaxed rest for best accuracy)"
             p.restSource == RestSource.Captured -> "Rest ${fmt(p.restKpa, 2)} kPa · threshold ${fmt(p.thresholdKpa, 2)}"
-            else -> "Pressure above rest · mechanical, not muscle force"
+            else -> ""
         }
         StatusLine(status, if (capture != null) MonitorColors.warn else MonitorColors.label)
         if (actions != null && !s.compact) {
@@ -601,7 +624,6 @@ fun BpPositionDialog(entry: com.pulsepointlabs.sarahmonitor.core.BpEntry?, onDis
                 Text("Position", color = MonitorColors.label, fontSize = 13.sp)
                 ChoiceRow { pos.postures.forEach { (id, l) -> ChoiceChip(l, id == posture, MonitorColors.bp) { posture = id } } }
                 if (site == "thigh" || site == "calf") {
-                    Text("Leg cuffs usually read higher systolic than the upper arm. Readings are labelled, not converted.", color = MonitorColors.warn, fontSize = 12.sp)
                 }
                 if (entry != null) Row(verticalAlignment = Alignment.CenterVertically) {
                     androidx.compose.material3.Checkbox(asDefault, { asDefault = it })
