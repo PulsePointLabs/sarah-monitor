@@ -25,6 +25,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -35,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pulsepointlabs.sarahmonitor.core.MonitorService
 import com.pulsepointlabs.sarahmonitor.overlay.OverlayKind
+import com.pulsepointlabs.sarahmonitor.overlay.OverlayProfile
 import com.pulsepointlabs.sarahmonitor.overlay.OverlaySettings
 
 /** App settings: overlays, sound and voice. Overlays stay visible while this page is open, as a live preview. */
@@ -52,8 +56,10 @@ fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, e
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             OverlaySettingsSection()
-            extra()
+            HeartbeatSoundSection()
             VoiceSection(onMessage)
+            AlertsSection()
+            extra()
         }
     }
 }
@@ -107,48 +113,63 @@ fun SettingSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
 @Composable
 private fun OverlaySettingsSection() {
     val context = LocalContext.current
-    val enabled by OverlaySettings.enabled.collectAsState()
-    val opacity by OverlaySettings.opacity.collectAsState()
-    val fadeReadings by OverlaySettings.fadeReadings.collectAsState()
-    val plusDp by OverlaySettings.plusSizeDp.collectAsState()
+    val current by OverlaySettings.profile.collectAsState()
+    val states by OverlaySettings.states.collectAsState()
+    var editing by remember { mutableStateOf<OverlayProfile?>(null) }
+    val profile = editing ?: current
+    val st = states[profile] ?: return
     val canDraw = OverlaySettings.canDraw(context)
     SettingsSection(
         "Floating overlays", MonitorColors.pelvic,
-        "Float over other apps; drag to move, corner grip to resize. They hide while Sarah Monitor is the active window — except on this page, so you can see changes live."
+        "Float over other apps; drag to move, corner grip to resize. The phone and DeX each keep their own overlays, sizes and positions. They hide while Sarah Monitor is the active window — except on this page, so you can see changes live."
     ) {
         if (!canDraw) {
             TextButton(onClick = { context.startActivity(OverlaySettings.permissionIntent(context)) }) {
                 Text("Allow \"display over other apps\"", color = MonitorColors.warn)
             }
         }
+        ChoiceRow {
+            OverlayProfile.entries.forEach { p ->
+                ChoiceChip(p.label + if (p == current) " (this screen)" else "", p == profile) { editing = p }
+            }
+        }
+        if (profile != current) {
+            Text("Editing the ${profile.label} setup — it shows when Sarah Monitor is on the ${profile.label} screen.", color = MonitorColors.label, fontSize = 12.sp)
+        }
+        SettingRow("Overlays on ${profile.label}", "Quick switch — also on the top bar, the notification and a Quick Settings tile") {
+            SettingSwitch(st.on) {
+                OverlaySettings.setOn(context, it, profile)
+                MonitorService.start(context)
+            }
+        }
         OverlayKind.entries.forEach { kind ->
             SettingRow(kind.label) {
-                SettingSwitch(kind in enabled) {
-                    OverlaySettings.set(context, kind, it)
+                SettingSwitch(kind in st.enabled) {
+                    OverlaySettings.set(context, kind, it, profile)
                     MonitorService.start(context)
                 }
             }
         }
-        SettingSlider("Opacity (all overlays)", "${(opacity * 100).toInt()}%", opacity, OverlaySettings.MIN_OPACITY..1f) {
-            OverlaySettings.setOpacity(context, it)
+        SettingSlider("Opacity (all overlays)", "${(st.opacity * 100).toInt()}%", st.opacity, OverlaySettings.MIN_OPACITY..1f) {
+            OverlaySettings.setOpacity(context, it, profile)
         }
         SettingRow(
             "Fade readings too",
-            if (fadeReadings) "Opacity fades the whole overlay" else "Only the background fades; numbers stay solid"
-        ) { SettingSwitch(fadeReadings) { OverlaySettings.setFadeReadings(context, it) } }
-        SettingSlider("＋ button size", "$plusDp dp", plusDp.toFloat(), OverlaySettings.MIN_PLUS_DP.toFloat()..OverlaySettings.MAX_PLUS_DP.toFloat()) {
-            OverlaySettings.setPlusSize(context, it.toInt())
+            if (st.fadeReadings) "Opacity fades the whole overlay" else "Only the background fades; numbers stay solid"
+        ) { SettingSwitch(st.fadeReadings) { OverlaySettings.setFadeReadings(context, it, profile) } }
+        SettingSlider("＋ button size", "${st.plusSizeDp} dp", st.plusSizeDp.toFloat(), OverlaySettings.MIN_PLUS_DP.toFloat()..OverlaySettings.MAX_PLUS_DP.toFloat()) {
+            OverlaySettings.setPlusSize(context, it.toInt(), profile)
         }
         // In-page preview of the ＋ at its real size (the live one updates too while this page is open).
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
             Box(
                 Modifier
-                    .size(plusDp.dp)
-                    .background(MonitorColors.warn.copy(alpha = opacity), CircleShape)
+                    .size(st.plusSizeDp.dp)
+                    .background(MonitorColors.warn.copy(alpha = st.opacity), CircleShape)
                     .border(2.dp, Color.White.copy(alpha = 0.35f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text("+", color = MonitorColors.background, fontSize = (plusDp * 0.62f).sp, fontWeight = FontWeight.Bold)
+                Text("+", color = MonitorColors.background, fontSize = (st.plusSizeDp * 0.62f).sp, fontWeight = FontWeight.Bold)
             }
         }
     }

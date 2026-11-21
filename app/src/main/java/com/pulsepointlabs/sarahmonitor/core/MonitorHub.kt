@@ -2,7 +2,9 @@ package com.pulsepointlabs.sarahmonitor.core
 
 import android.content.Context
 import android.util.Log
+import com.pulsepointlabs.sarahmonitor.audio.AudioEngine
 import com.pulsepointlabs.sarahmonitor.ble.BluetoothHrClient
+import com.pulsepointlabs.sarahmonitor.ble.ConnectionState
 import com.pulsepointlabs.sarahmonitor.ble.CivetClient
 import com.pulsepointlabs.sarahmonitor.ble.OmronBleClient
 import com.pulsepointlabs.sarahmonitor.session.MarkerPreferences
@@ -37,6 +39,8 @@ object MonitorHub {
     lateinit var bp: BpStore; private set
     lateinit var glucose: GlucoseStore; private set
     lateinit var recorder: SessionRecorder; private set
+    /** Heartbeat beep, alert tones and Sarah's spoken alerts. */
+    lateinit var audio: AudioEngine; private set
 
     /** The session being recorded, or null. */
     val session: StateFlow<SessionEntity?> get() = recorder.active
@@ -77,6 +81,8 @@ object MonitorHub {
         recorder = SessionRecorder(app, scope)
         val baselineStore = LoadBaselineStore(app)
         heartEngine = HeartEngine(baselineStore.load(), baselineStore::save)
+        audio = AudioEngine(app) { recorder.active.value != null }
+        audio.h10Connected = { h10.state.value == ConnectionState.Connected || h10.state.value == ConnectionState.Stale }
 
         scope.launch {
             h10.readings.collect { reading ->
@@ -84,6 +90,7 @@ object MonitorHub {
                 trendRecorder.addHeart(reading.timestampMs, snapshot)
                 _heart.value = snapshot
                 recorder.onHeart(snapshot, heartEngine.lastRr)
+                audio.onHeart(snapshot, heartEngine.lastRr)
                 val t = reading.timestampMs
                 recentRecorder.add(Metric.Hr, t, snapshot.heartRate?.toDouble())
                 recentRecorder.add(Metric.Rmssd, t, snapshot.rmssdMs)
@@ -105,6 +112,7 @@ object MonitorHub {
                 val snapshot = pelvicProcessor.ingest(sample.timestampMs, sample.pressureKpa)
                 trendRecorder.addPelvic(sample.timestampMs, snapshot.aboveRestKpa)
                 recorder.onPelvic(sample.timestampMs, sample.pressureKpa, snapshot.aboveRestKpa, snapshot.holding)
+                audio.onPelvic(sample.timestampMs, snapshot)
                 // Pressure can arrive faster than the screen refreshes; publish at most every 33 ms.
                 if (sample.monotonicMs - lastPublish >= 33L || snapshot.capture != null) {
                     lastPublish = sample.monotonicMs
@@ -128,6 +136,33 @@ object MonitorHub {
                     )
                 )
                 if (added > 0) _lastLiveBpAt.value = System.currentTimeMillis()
+            }
+        }
+        // New BP and glucose readings (cuff, Health Connect, share-to-app, manual) go to the live alerts.
+        scope.launch {
+            var seen = bp.items.value.maxOfOrNull { it.timestampMs } ?: 0L
+            bp.items.collect { list ->
+                list.filter { it.timestampMs > seen && System.currentTimeMillis() - it.timestampMs < 15 * 60_000L }
+                    .forEach { audio.onBp(it.timestampMs, it.systolic, it.diastolic) }
+                seen = maxOf(seen, list.maxOfOrNull { it.timestampMs } ?: 0L)
+            }
+        }
+        scope.launch {
+            var seen = glucose.items.value.maxOfOrNull { it.timestampMs } ?: 0L
+            glucose.items.collect { list ->
+                list.filter { it.timestampMs > seen && System.currentTimeMillis() - it.timestampMs < 15 * 60_000L }
+                    .forEach { audio.onGlucose(it.timestampMs, it.mgDl) }
+                seen = maxOf(seen, list.maxOfOrNull { it.timestampMs } ?: 0L)
+            }
+        }
+        // A sensor that was connected and drops.
+        listOf("Heart strap" to h10.state, "CIVET" to civet.state).forEach { (name, state) ->
+            scope.launch {
+                var wasConnected = false
+                state.collect { st ->
+                    if (wasConnected && st in setOf(ConnectionState.Disconnected, ConnectionState.Reconnecting, ConnectionState.Error)) audio.onDisconnected(name)
+                    wasConnected = st == ConnectionState.Connected
+                }
             }
         }
         scope.launch {
@@ -176,6 +211,7 @@ object MonitorHub {
     /** Starts a fresh monitoring period: clears HR/HRV/Load stats, pelvic counts and the trend graphs. */
     fun resetSession() {
         heartEngine.reset()
+        audio.resetSession()
         pelvicProcessor.resetStats()
         trendRecorder.clear()
         recentRecorder.clear()

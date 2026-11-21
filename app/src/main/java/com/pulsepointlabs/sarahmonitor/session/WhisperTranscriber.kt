@@ -13,12 +13,16 @@ import java.util.UUID
 
 /** Which speech-to-text engine event notes use, and the OpenAI key for Whisper. */
 object VoiceSettings {
-    enum class Engine(val label: String) { Android("Android (on device)"), Whisper("OpenAI Whisper") }
+    enum class Engine(val label: String) {
+        Realtime("OpenAI live (words as you speak)"),
+        Android("Android live (on device)"),
+        Whisper("OpenAI Whisper (after you stop)")
+    }
 
     private const val PREFS = "sarahmonitor_voice"
 
     fun engine(context: Context): Engine =
-        runCatching { Engine.valueOf(prefs(context).getString("engine", Engine.Android.name)!!) }.getOrDefault(Engine.Android)
+        runCatching { Engine.valueOf(prefs(context).getString("engine", Engine.Realtime.name)!!) }.getOrDefault(Engine.Android)
 
     fun setEngine(context: Context, engine: Engine) = prefs(context).edit().putString("engine", engine.name).apply()
 
@@ -28,6 +32,9 @@ object VoiceSettings {
 
     /** Whisper is used only when chosen and a key is saved; otherwise Android's recognizer. */
     fun useWhisper(context: Context): Boolean = engine(context) == Engine.Whisper && apiKey(context).isNotBlank()
+
+    /** The engine that will actually run: the OpenAI ones need a saved key, otherwise Android's recognizer. */
+    fun effective(context: Context): Engine = engine(context).let { if (it != Engine.Android && apiKey(context).isBlank()) Engine.Android else it }
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 }

@@ -32,14 +32,21 @@ object OverlayDisplay {
             }
         }.getOrNull() ?: return
         lastActivityDisplayId = displayId
+        OverlaySettings.setProfile(OverlayProfile.forDisplay(displayId))
     }
 
     /** The display overlays should use: the app's last display if it still exists. */
     fun targetDisplayId(context: Context): Int {
         val id = lastActivityDisplayId
         if (id == Display.DEFAULT_DISPLAY) return id
-        val displayManager = context.getSystemService(DisplayManager::class.java)
-        return if (displayManager?.getDisplay(id) != null) id else Display.DEFAULT_DISPLAY
+        val displayManager = context.getSystemService(DisplayManager::class.java) ?: return Display.DEFAULT_DISPLAY
+        if (displayManager.getDisplay(id) != null) return id
+        // The app was last on DeX and that display went away. If DeX is back (it gets a new id after a replug),
+        // follow it; otherwise the phone.
+        val external = displayManager.displays.firstOrNull {
+            it.displayId != Display.DEFAULT_DISPLAY && (it.flags and Display.FLAG_PRIVATE) == 0 && it.state == Display.STATE_ON
+        }
+        return external?.displayId ?: Display.DEFAULT_DISPLAY
     }
 
     /**

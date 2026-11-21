@@ -54,6 +54,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.LayersClear
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.RestartAlt
@@ -463,6 +464,7 @@ private fun TopBar(
             Spacer(Modifier.weight(1f))
             RecordButton(recording, now, compact = narrow, onClick = onRecord)
             MarkButton(enabled = recording != null, compact = !full, onClick = onMark)
+            OverlayToggle()
             if (full) {
                 DevicePill("H10", h10, onDevices)
                 DevicePill("CIVET", civet, onDevices)
@@ -484,6 +486,23 @@ private fun TopBar(
             }
         }
     }
+}
+
+/** Quick on/off for the floating overlays on this screen (phone or DeX each remember their own). */
+@Composable
+private fun OverlayToggle() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val on by OverlaySettings.on.collectAsState()
+    val profile by OverlaySettings.profile.collectAsState()
+    BarIcon(
+        if (on) Icons.Default.Layers else Icons.Default.LayersClear,
+        "Overlays on ${profile.label}: ${if (on) "on" else "off"}",
+        {
+            OverlaySettings.toggle(context)
+            MonitorService.start(context)
+        },
+        highlighted = on
+    )
 }
 
 /** Elapsed session time shown beside the clock. */

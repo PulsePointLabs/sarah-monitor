@@ -233,9 +233,9 @@ fun VoiceSection(onMessage: (String) -> Unit) {
     var saved by remember { mutableStateOf(VoiceSettings.apiKey(context)) }
     var key by remember { mutableStateOf("") }
     Section(
-        "Voice notes",
+        "Voice notes & OpenAI key",
         MonitorColors.text,
-        "Speech-to-text for event notes. Whisper (OpenAI) is more accurate; it sends the short voice clip to OpenAI with your API key. Android's recognizer works without a key."
+        "Speech-to-text for event notes. OpenAI live shows punctuated words as you speak; Whisper transcribes after you stop; Android's recognizer works offline without a key. The key is also used for Sarah's voice."
     ) {
         Buttons {
             VoiceSettings.Engine.entries.forEach { e ->
@@ -253,9 +253,9 @@ fun VoiceSection(onMessage: (String) -> Unit) {
                 )
             }
         }
-        if (engine == VoiceSettings.Engine.Whisper) {
+        run {
             Text(
-                if (saved.isBlank()) "No API key saved yet; Android's recognizer is used until you add one."
+                if (saved.isBlank()) "No OpenAI key saved yet: voice notes use Android's recognizer and Sarah uses the Android voice until you add one."
                 else "Key saved: ${saved.take(3)}…${saved.takeLast(4)}",
                 color = if (saved.isBlank()) MonitorColors.warn else MonitorColors.good,
                 fontSize = 13.sp
@@ -271,7 +271,7 @@ fun VoiceSection(onMessage: (String) -> Unit) {
                 )
                 TextButton(enabled = key.isNotBlank(), onClick = {
                     VoiceSettings.setApiKey(context, key); saved = key; key = ""
-                    onMessage("Whisper key saved. Tap the mic in an event to record, tap again to transcribe.")
+                    onMessage("OpenAI key saved. Voice notes and Sarah's voice will use it.")
                 }) { Text("Save") }
                 if (saved.isNotBlank()) TextButton(onClick = { VoiceSettings.setApiKey(context, ""); saved = "" }) { Text("Remove", color = MonitorColors.alarm) }
             }

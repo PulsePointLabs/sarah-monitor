@@ -66,84 +66,177 @@ enum class OverlayKind(
     Pelvic("Pelvic pressure", CardType.Pelvic, 320, 340)
 }
 
-/** Which overlays are on, plus each one's remembered position and size. */
+/** Overlays are set up separately for the phone screen and for DeX (or any external display). */
+enum class OverlayProfile(val label: String, val key: String) {
+    Phone("Phone", "phone"),
+    Dex("DeX", "dex");
+
+    companion object {
+        fun forDisplay(displayId: Int) = if (displayId == android.view.Display.DEFAULT_DISPLAY) Phone else Dex
+    }
+}
+
+/** One screen's overlay setup. [on] is the quick master switch; [enabled] is which overlays it shows. */
+data class OverlayProfileState(
+    val on: Boolean = true,
+    val enabled: Set<OverlayKind> = emptySet(),
+    val opacity: Float = 1f,
+    val fadeReadings: Boolean = false,
+    val plusSizeDp: Int = 64
+)
+
+/**
+ * Which overlays are on, their look, and each one's remembered position and size — kept separately for the phone
+ * and for DeX, so unplugging the monitor doesn't dump the DeX layout onto the phone. The flows without a profile
+ * argument describe the screen the overlays are currently on.
+ */
 object OverlaySettings {
     private const val PREFS = "sarahmonitor_overlays"
+
+    private val _states = MutableStateFlow(OverlayProfile.entries.associateWith { OverlayProfileState() })
+    val states: StateFlow<Map<OverlayProfile, OverlayProfileState>> = _states
+
+    private val _profile = MutableStateFlow(OverlayProfile.Phone)
+    /** The screen overlays are showing on right now. */
+    val profile: StateFlow<OverlayProfile> = _profile
+
     private val _enabled = MutableStateFlow<Set<OverlayKind>>(emptySet())
+    /** Overlays switched on for the current screen (regardless of the master switch). */
     val enabled: StateFlow<Set<OverlayKind>> = _enabled
-
-    /** True while Sarah Monitor's own window is the focused one; overlays step aside then. */
-    private val _appInFront = MutableStateFlow(false)
-    val appInFront: StateFlow<Boolean> = _appInFront
-
-    fun setAppInFront(inFront: Boolean) { _appInFront.value = inFront }
-
-    /** While the Overlays panel is open, overlays stay visible even with the app in front, as a live preview. */
-    private val _previewing = MutableStateFlow(false)
-    val previewing: StateFlow<Boolean> = _previewing
-    fun setPreviewing(on: Boolean) { _previewing.value = on }
-
+    private val _showing = MutableStateFlow<Set<OverlayKind>>(emptySet())
+    /** What should be on screen now: the current screen's overlays, if its master switch is on. */
+    val showing: StateFlow<Set<OverlayKind>> = _showing
+    private val _on = MutableStateFlow(true)
+    val on: StateFlow<Boolean> = _on
     private val _opacity = MutableStateFlow(1f)
-    /** Opacity for all overlays, 0.2–1. */
+    /** Opacity for all overlays on the current screen, 0.2–1. */
     val opacity: StateFlow<Float> = _opacity
-
     private val _fadeReadings = MutableStateFlow(false)
     /** false: only the card background fades (readings stay solid); true: the whole overlay fades. */
     val fadeReadings: StateFlow<Boolean> = _fadeReadings
-
     private val _plusSizeDp = MutableStateFlow(64)
     /** Diameter of the floating ＋ button (set in Settings, not by dragging). */
     val plusSizeDp: StateFlow<Int> = _plusSizeDp
 
-    fun setOpacity(context: Context, value: Float) {
-        val v = value.coerceIn(MIN_OPACITY, 1f)
-        _opacity.value = v
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putFloat("alpha", v).apply()
-    }
+    /** True while Sarah Monitor's own window is the focused one; overlays step aside then. */
+    private val _appInFront = MutableStateFlow(false)
+    val appInFront: StateFlow<Boolean> = _appInFront
+    fun setAppInFront(inFront: Boolean) { _appInFront.value = inFront }
 
-    fun setFadeReadings(context: Context, on: Boolean) {
-        _fadeReadings.value = on
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("fade_readings", on).apply()
-    }
-
-    fun setPlusSize(context: Context, dp: Int) {
-        val v = dp.coerceIn(MIN_PLUS_DP, MAX_PLUS_DP)
-        _plusSizeDp.value = v
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt("plus_dp", v).apply()
-    }
+    /** While the Settings page is open, overlays stay visible even with the app in front, as a live preview. */
+    private val _previewing = MutableStateFlow(false)
+    val previewing: StateFlow<Boolean> = _previewing
+    fun setPreviewing(on: Boolean) { _previewing.value = on }
 
     const val MIN_OPACITY = 0.2f
     const val MIN_PLUS_DP = 40
     const val MAX_PLUS_DP = 140
 
+    private var loaded = false
+
+    private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    @Synchronized
     fun load(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        _enabled.value = OverlayKind.entries.filter { prefs.getBoolean("on_${it.name}", false) }.toSet()
-        _opacity.value = prefs.getFloat("alpha", 1f).coerceIn(MIN_OPACITY, 1f)
-        _fadeReadings.value = prefs.getBoolean("fade_readings", false)
-        _plusSizeDp.value = prefs.getInt("plus_dp", 64).coerceIn(MIN_PLUS_DP, MAX_PLUS_DP)
+        if (loaded) return
+        loaded = true
+        val p = prefs(context)
+        // Before 0.5.0 there was one setup, made on DeX: it becomes the DeX profile; the phone starts clean.
+        if (!p.getBoolean("profiles_v1", false)) {
+            val e = p.edit()
+            OverlayKind.entries.forEach { k ->
+                e.putBoolean("on_${k.name}_dex", p.getBoolean("on_${k.name}", false))
+                listOf("x", "y", "w", "h").forEach { c -> if (p.contains("${c}_${k.name}")) e.putInt("${c}_${k.name}_dex", p.getInt("${c}_${k.name}", 0)) }
+            }
+            e.putFloat("alpha_dex", p.getFloat("alpha", 1f))
+            e.putBoolean("fade_readings_dex", p.getBoolean("fade_readings", false))
+            e.putInt("plus_dp_dex", p.getInt("plus_dp", 64))
+            e.putBoolean("profiles_v1", true).apply()
+        }
+        _states.value = OverlayProfile.entries.associateWith { pr ->
+            OverlayProfileState(
+                on = p.getBoolean("master_${pr.key}", true),
+                enabled = OverlayKind.entries.filter { p.getBoolean("on_${it.name}_${pr.key}", false) }.toSet(),
+                opacity = p.getFloat("alpha_${pr.key}", 1f).coerceIn(MIN_OPACITY, 1f),
+                fadeReadings = p.getBoolean("fade_readings_${pr.key}", false),
+                plusSizeDp = p.getInt("plus_dp_${pr.key}", 64).coerceIn(MIN_PLUS_DP, MAX_PLUS_DP)
+            )
+        }
+        publish()
     }
 
-    fun set(context: Context, kind: OverlayKind, on: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("on_${kind.name}", on).apply()
-        _enabled.value = if (on) _enabled.value + kind else _enabled.value - kind
+    private fun publish() {
+        val s = _states.value[_profile.value] ?: OverlayProfileState()
+        _enabled.value = s.enabled
+        _on.value = s.on
+        _showing.value = if (s.on) s.enabled else emptySet()
+        _opacity.value = s.opacity
+        _fadeReadings.value = s.fadeReadings
+        _plusSizeDp.value = s.plusSizeDp
     }
 
-    fun bounds(context: Context, kind: OverlayKind, index: Int): IntArray {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val density = context.resources.displayMetrics.density
+    fun setProfile(profile: OverlayProfile) {
+        if (_profile.value == profile) return
+        _profile.value = profile
+        publish()
+    }
+
+    fun state(profile: OverlayProfile): OverlayProfileState = _states.value[profile] ?: OverlayProfileState()
+
+    private fun update(profile: OverlayProfile, change: (OverlayProfileState) -> OverlayProfileState) {
+        _states.value = _states.value + (profile to change(state(profile)))
+        publish()
+    }
+
+    fun setOn(context: Context, on: Boolean, profile: OverlayProfile = _profile.value) {
+        update(profile) { it.copy(on = on) }
+        prefs(context).edit().putBoolean("master_${profile.key}", on).apply()
+    }
+
+    /** The quick on/off for the screen overlays are on now. Returns the new state. */
+    fun toggle(context: Context): Boolean {
+        val next = !state(_profile.value).on
+        setOn(context, next)
+        return next
+    }
+
+    fun setOpacity(context: Context, value: Float, profile: OverlayProfile = _profile.value) {
+        val v = value.coerceIn(MIN_OPACITY, 1f)
+        update(profile) { it.copy(opacity = v) }
+        prefs(context).edit().putFloat("alpha_${profile.key}", v).apply()
+    }
+
+    fun setFadeReadings(context: Context, on: Boolean, profile: OverlayProfile = _profile.value) {
+        update(profile) { it.copy(fadeReadings = on) }
+        prefs(context).edit().putBoolean("fade_readings_${profile.key}", on).apply()
+    }
+
+    fun setPlusSize(context: Context, dp: Int, profile: OverlayProfile = _profile.value) {
+        val v = dp.coerceIn(MIN_PLUS_DP, MAX_PLUS_DP)
+        update(profile) { it.copy(plusSizeDp = v) }
+        prefs(context).edit().putInt("plus_dp_${profile.key}", v).apply()
+    }
+
+    fun set(context: Context, kind: OverlayKind, on: Boolean, profile: OverlayProfile = _profile.value) {
+        prefs(context).edit().putBoolean("on_${kind.name}_${profile.key}", on).apply()
+        update(profile) { it.copy(enabled = if (on) it.enabled + kind else it.enabled - kind) }
+    }
+
+    /** Saved x, y, width, height in pixels of that screen; defaults stack down the left edge. */
+    fun bounds(context: Context, kind: OverlayKind, index: Int, density: Float, profile: OverlayProfile): IntArray {
+        val p = prefs(context)
+        val k = "${kind.name}_${profile.key}"
         return intArrayOf(
-            prefs.getInt("x_${kind.name}", (16 * density).roundToInt()),
-            prefs.getInt("y_${kind.name}", ((96 + index * 210) * density).roundToInt()),
-            prefs.getInt("w_${kind.name}", (kind.defaultWidthDp * density).roundToInt()),
-            prefs.getInt("h_${kind.name}", (kind.defaultHeightDp * density).roundToInt())
+            p.getInt("x_$k", (16 * density).roundToInt()),
+            p.getInt("y_$k", ((96 + index * 210) * density).roundToInt()),
+            p.getInt("w_$k", (kind.defaultWidthDp * density).roundToInt()),
+            p.getInt("h_$k", (kind.defaultHeightDp * density).roundToInt())
         )
     }
 
-    fun saveBounds(context: Context, kind: OverlayKind, x: Int, y: Int, w: Int, h: Int) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putInt("x_${kind.name}", x).putInt("y_${kind.name}", y)
-            .putInt("w_${kind.name}", w).putInt("h_${kind.name}", h).apply()
+    fun saveBounds(context: Context, kind: OverlayKind, x: Int, y: Int, w: Int, h: Int, profile: OverlayProfile) {
+        val k = "${kind.name}_${profile.key}"
+        prefs(context).edit().putInt("x_$k", x).putInt("y_$k", y).putInt("w_$k", w).putInt("h_$k", h).apply()
     }
 
     fun canDraw(context: Context): Boolean = Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(context)
@@ -178,10 +271,13 @@ class OverlayManager(private val base: Context) {
 
     private val shown = mutableMapOf<OverlayKind, Shown>()
 
-    fun sync(requested: Set<OverlayKind>) {
+    /** Shows/hides overlays to match the settings for the screen the app is on (phone or DeX). */
+    fun sync() {
+        val display = OverlayDisplay.targetDisplayId(base)
+        OverlaySettings.setProfile(OverlayProfile.forDisplay(display))
+        val requested = OverlaySettings.showing.value
         val enabled = if (OverlaySettings.appInFront.value && !OverlaySettings.previewing.value) emptySet() else requested
         val canDraw = OverlaySettings.canDraw(base)
-        val display = OverlayDisplay.targetDisplayId(base)
         // Hide removed ones and ones that are on the wrong display.
         shown.keys.toList().forEach { kind ->
             if (!canDraw || kind !in enabled || shown[kind]?.displayId != display) hide(kind)
@@ -202,7 +298,8 @@ class OverlayManager(private val base: Context) {
         val context = OverlayDisplay.overlayContext(base, displayId)
         val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val density = context.resources.displayMetrics.density
-        val (x, y, w, h) = OverlaySettings.bounds(base, kind, index).let { listOf(it[0], it[1], it[2], it[3]) }
+        val profile = OverlayProfile.forDisplay(displayId)
+        val (x, y, w, h) = OverlaySettings.bounds(base, kind, index, density, profile).let { listOf(it[0], it[1], it[2], it[3]) }
         val params = WindowManager.LayoutParams(
             w, h,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -260,7 +357,7 @@ class OverlayManager(private val base: Context) {
                                         params.y += amount.y.roundToInt()
                                         commit()
                                     },
-                                    onDragEnd = { OverlaySettings.saveBounds(base, kind, params.x, params.y, params.width, params.height) }
+                                    onDragEnd = { OverlaySettings.saveBounds(base, kind, params.x, params.y, params.width, params.height, profile) }
                                 )
                             }
                     ) {
@@ -271,7 +368,7 @@ class OverlayManager(private val base: Context) {
                             // Corner buttons: open the app, close this overlay.
                             Row(Modifier.align(Alignment.TopEnd).padding(3.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(3.dp)) {
                                 CornerButton("⤢") { openApp(displayId) }
-                                CornerButton("×") { OverlaySettings.set(base, kind, false) }
+                                CornerButton("×") { OverlaySettings.set(base, kind, false, profile) }
                             }
                             Canvas(
                                 Modifier
@@ -286,7 +383,7 @@ class OverlayManager(private val base: Context) {
                                                 params.height += amount.y.roundToInt()
                                                 commit()
                                             },
-                                            onDragEnd = { OverlaySettings.saveBounds(base, kind, params.x, params.y, params.width, params.height) }
+                                            onDragEnd = { OverlaySettings.saveBounds(base, kind, params.x, params.y, params.width, params.height, profile) }
                                         )
                                     }
                                     .padding(5.dp)

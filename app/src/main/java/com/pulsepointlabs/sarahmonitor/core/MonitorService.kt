@@ -18,6 +18,7 @@ import com.pulsepointlabs.sarahmonitor.R
 import com.pulsepointlabs.sarahmonitor.glucose.HealthConnectImporter
 import com.pulsepointlabs.sarahmonitor.overlay.OverlayManager
 import com.pulsepointlabs.sarahmonitor.overlay.OverlaySettings
+import com.pulsepointlabs.sarahmonitor.overlay.OverlayTile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,6 +34,7 @@ import kotlinx.coroutines.launch
  */
 class MonitorService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var lastText = "Monitoring sensors"
     private lateinit var overlays: OverlayManager
 
     override fun onCreate() {
@@ -56,13 +58,19 @@ class MonitorService : Service() {
         }
         MonitorHub.connectRemembered()
         scope.launch {
-            combine(OverlaySettings.enabled, OverlaySettings.appInFront, OverlaySettings.previewing) { enabled, _, _ -> enabled }.collect { overlays.sync(it) }
+            combine(OverlaySettings.showing, OverlaySettings.appInFront, OverlaySettings.previewing) { _, _, _ -> Unit }.collect { overlays.sync() }
+        }
+        scope.launch {
+            OverlaySettings.on.collect {
+                OverlayTile.refresh(this@MonitorService)
+                getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, notification(lastText))
+            }
         }
         // Follow the app between the phone screen and DeX, and pick up a newly granted overlay permission.
         scope.launch {
             while (isActive) {
                 delay(1_500L)
-                overlays.sync(OverlaySettings.enabled.value)
+                overlays.sync()
             }
         }
         // Glucose meters such as the OneTouch Verio Reflect sync to their own app; when that app shares to
@@ -87,6 +95,7 @@ class MonitorService : Service() {
                     MonitorHub.bp.items.value.lastOrNull()?.let { "BP ${it.systolic}/${it.diastolic}" }
                 )
                 val text = parts.joinToString(" · ").ifBlank { "Monitoring sensors" }
+                lastText = text
                 getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, notification(text))
                 delay(5_000L)
             }
@@ -100,6 +109,12 @@ class MonitorService : Service() {
                     android.widget.Toast.makeText(this, if (ok) "Event marked — add details in review" else "Not recording", android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_TOGGLE_OVERLAYS) {
+            OverlaySettings.toggle(this)
+            OverlayTile.refresh(this)
+            getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, notification(lastText))
             return START_STICKY
         }
         if (intent?.action == ACTION_STOP) {
@@ -137,6 +152,9 @@ class MonitorService : Service() {
         val mark = PendingIntent.getService(
             this, 2, Intent(this, MonitorService::class.java).setAction(ACTION_MARK), PendingIntent.FLAG_IMMUTABLE
         )
+        val overlayToggle = PendingIntent.getService(
+            this, 3, Intent(this, MonitorService::class.java).setAction(ACTION_TOGGLE_OVERLAYS), PendingIntent.FLAG_IMMUTABLE
+        )
         val recording = MonitorHub.session.value
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_monitor)
@@ -147,6 +165,7 @@ class MonitorService : Service() {
             .setContentIntent(open)
             .apply { if (recording != null) addAction(0, "★ Mark event", mark) }
             .setSubText(if (recording != null) "● Recording" else null)
+            .addAction(0, if (OverlaySettings.on.value) "Hide overlays" else "Show overlays", overlayToggle)
             .addAction(0, "Stop", stop)
             .build()
     }
@@ -156,6 +175,7 @@ class MonitorService : Service() {
         private const val NOTIFICATION_ID = 7
         const val ACTION_STOP = "com.pulsepointlabs.sarahmonitor.STOP"
         const val ACTION_MARK = "com.pulsepointlabs.sarahmonitor.MARK"
+        const val ACTION_TOGGLE_OVERLAYS = "com.pulsepointlabs.sarahmonitor.TOGGLE_OVERLAYS"
 
         fun start(context: Context) {
             val bluetoothGranted = Build.VERSION.SDK_INT < 31 ||

@@ -19,8 +19,11 @@ class VoiceNoteRecognizer(private val context: Context) {
         existingText: String,
         onText: (String) -> Unit,
         onStatus: (String) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        onLevel: (Float) -> Unit = {},
+        onFinished: () -> Unit = {}
     ) {
+        this.onFinished = onFinished
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             onError("Speech recognition is not available")
             return
@@ -35,7 +38,8 @@ class VoiceNoteRecognizer(private val context: Context) {
             setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) = onStatus("Listening...")
                 override fun onBeginningOfSpeech() = Unit
-                override fun onRmsChanged(rmsdB: Float) = Unit
+                // Android reports roughly -2 dB (silence) to 10 dB (loud speech).
+                override fun onRmsChanged(rmsdB: Float) = onLevel(((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
                 override fun onBufferReceived(buffer: ByteArray?) = Unit
                 override fun onEndOfSpeech() = onStatus("Processing...")
                 override fun onError(error: Int) {
@@ -77,12 +81,16 @@ class VoiceNoteRecognizer(private val context: Context) {
         }
     }
 
+    private var onFinished: () -> Unit = {}
+
     fun stop() {
+        val wasRunning = recognizer != null
         recognizer?.let {
             runCatching { it.cancel() }
             runCatching { it.destroy() }
         }
         recognizer = null
+        if (wasRunning) onFinished()
     }
 
     private fun commit(recognized: String, onText: (String) -> Unit) {

@@ -26,6 +26,8 @@ import kotlinx.coroutines.launch
 import com.pulsepointlabs.sarahmonitor.session.VoiceSettings
 import com.pulsepointlabs.sarahmonitor.session.VoiceTextNormalizer
 import com.pulsepointlabs.sarahmonitor.session.WhisperTranscriber
+import com.pulsepointlabs.sarahmonitor.session.RealtimeTranscriber
+import com.pulsepointlabs.sarahmonitor.ui.MicLevelMeter
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -95,31 +97,68 @@ fun MarkEventDialog(
     val last = remember { if (editing == null) MarkerPreferences.last(context) else null }
     val recognizer = remember { VoiceNoteRecognizer(context) }
     val whisper = remember { WhisperTranscriber(context) }
-    val useWhisper = remember { VoiceSettings.useWhisper(context) }
+    val realtime = remember { RealtimeTranscriber() }
+    val engine = remember { VoiceSettings.effective(context) }
     var whisperRecording by remember { mutableStateOf(false) }
+    var listening by remember { mutableStateOf(false) }
+    var level by remember { mutableStateOf(0f) }
     val scope = rememberCoroutineScope()
-    DisposableEffect(Unit) { onDispose { recognizer.stop(); whisper.cancel() } }
-    fun listen() {
-        if (!useWhisper) {
-            recognizer.start(note, onText = { note = it }, onStatus = { status = it }, onError = { status = it })
-            return
+    val main = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    DisposableEffect(Unit) { onDispose { recognizer.stop(); whisper.cancel(); realtime.release() } }
+    fun ui(block: () -> Unit) = main.post(block)
+    fun stopRealtime(then: (String) -> Unit = {}) {
+        scope.launch {
+            val text = realtime.finish()
+            listening = false; level = 0f
+            if (text.isNotBlank()) note = text
+            status = "Transcribed ✓"
+            then(note)
         }
-        // Whisper: tap once to record, tap again to send it for transcription.
-        if (!whisperRecording) {
-            runCatching { whisper.start() }
-                .onSuccess { whisperRecording = true; status = "● Recording… tap the mic again when done" }
-                .onFailure { status = "Couldn't start recording (${it.message})" }
-        } else {
-            whisperRecording = false
-            status = "Transcribing with Whisper…"
-            scope.launch {
-                runCatching { whisper.stopAndTranscribe(VoiceSettings.apiKey(context)) }
-                    .onSuccess { text ->
-                        val clean = VoiceTextNormalizer.normalize(text)
-                        note = if (note.isBlank()) clean else note.trimEnd() + " " + clean
-                        status = "Whisper ✓"
+    }
+    fun listen() {
+        when (engine) {
+            VoiceSettings.Engine.Android -> {
+                if (listening) { recognizer.stop(); return }
+                listening = true
+                recognizer.start(
+                    note,
+                    onText = { note = it },
+                    onStatus = { status = it },
+                    onError = { status = it },
+                    onLevel = { level = it },
+                    onFinished = { listening = false; level = 0f }
+                )
+            }
+            VoiceSettings.Engine.Realtime -> {
+                if (listening) { stopRealtime(); return }
+                listening = true
+                realtime.start(
+                    VoiceSettings.apiKey(context), note,
+                    onText = { t -> ui { note = t } },
+                    onStatus = { t -> ui { status = t } },
+                    onLevel = { l -> ui { level = l } },
+                    onError = { t -> ui { status = t; listening = false; level = 0f } }
+                )
+            }
+            VoiceSettings.Engine.Whisper -> {
+                // Whisper: tap once to record, tap again to send it for transcription.
+                if (!whisperRecording) {
+                    runCatching { whisper.start() }
+                        .onSuccess { whisperRecording = true; listening = true; status = "● Recording… tap the mic again when done" }
+                        .onFailure { status = "Couldn't start recording (${it.message})" }
+                } else {
+                    whisperRecording = false; listening = false
+                    status = "Transcribing with Whisper…"
+                    scope.launch {
+                        runCatching { whisper.stopAndTranscribe(VoiceSettings.apiKey(context)) }
+                            .onSuccess { text ->
+                                val clean = VoiceTextNormalizer.normalize(text)
+                                note = if (note.isBlank()) clean else note.trimEnd() + " " + clean
+                                status = "Whisper ✓"
+                            }
+                            .onFailure { status = it.message ?: "Whisper failed" }
                     }
-                    .onFailure { status = it.message ?: "Whisper failed" }
+                }
             }
         }
     }
@@ -189,18 +228,21 @@ fun MarkEventDialog(
                         else micPermission.launch(Manifest.permission.RECORD_AUDIO)
                     }) {
                         Icon(
-                            if (whisperRecording) Icons.Default.Stop else Icons.Default.Mic,
-                            contentDescription = if (whisperRecording) "Stop and transcribe" else "Voice note",
-                            tint = if (whisperRecording) MonitorColors.alarm else MonitorColors.pelvic
+                            if (listening) Icons.Default.Stop else Icons.Default.Mic,
+                            contentDescription = if (listening) "Stop listening" else "Voice note",
+                            tint = if (listening) MonitorColors.alarm else MonitorColors.pelvic
                         )
                     }
                 }
-                if (status.isNotBlank()) Text(status, color = MonitorColors.label, fontSize = 12.sp)
+                if (listening) MicLevelMeter(level, if (engine == VoiceSettings.Engine.Whisper) "Recording" else status.ifBlank { "Listening…" })
+                else if (status.isNotBlank()) Text(status, color = MonitorColors.label, fontSize = 12.sp)
             }
         },
         confirmButton = {
             TextButton(onClick = {
-                if (!whisperRecording) onSave(types, note) else {
+                if (engine == VoiceSettings.Engine.Realtime && listening) stopRealtime { onSave(types, it) }
+                else if (engine == VoiceSettings.Engine.Android && listening) { recognizer.stop(); onSave(types, note) }
+                else if (!whisperRecording) onSave(types, note) else {
                     // Saving mid-recording: finish the transcription first so the words aren't lost.
                     whisperRecording = false
                     status = "Transcribing with Whisper…"
