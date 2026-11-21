@@ -64,6 +64,15 @@ object MonitorHub {
     /** Sarah's live spoken feedback (Claude brain, Sarah's voice). */
     lateinit var coach: SarahCoach; private set
 
+    private val sleepEngine = com.pulsepointlabs.sarahmonitor.sleep.SleepEngine()
+    lateinit var sleepStore: com.pulsepointlabs.sarahmonitor.sleep.SleepStore; private set
+    private val _sleeping = MutableStateFlow<Long?>(null)
+    /** When sleep mode started, or null. */
+    val sleeping: StateFlow<Long?> = _sleeping
+    private val _sleepLive = MutableStateFlow<List<com.pulsepointlabs.sarahmonitor.sleep.SleepEpoch>>(emptyList())
+    /** Tonight's epochs so far (staged on the fly). */
+    val sleepLive: StateFlow<List<com.pulsepointlabs.sarahmonitor.sleep.SleepEpoch>> = _sleepLive
+
     private val _heart = MutableStateFlow(HeartSnapshot())
     val heart: StateFlow<HeartSnapshot> = _heart
 
@@ -102,6 +111,8 @@ object MonitorHub {
         heartEngine = HeartEngine(baselineStore.load(), baselineStore::save)
         audio = AudioEngine(app) { recorder.active.value != null }
         BpPosition.load(app)
+        com.pulsepointlabs.sarahmonitor.sleep.PositionCalibration.load(app)
+        sleepStore = com.pulsepointlabs.sarahmonitor.sleep.SleepStore(app)
         ResponseSettings.load(app)
         arousal.setProfile(ResponseSettings.profile.value)
         scope.launch { ResponseSettings.profile.collect { arousal.setProfile(it) } }
@@ -116,6 +127,7 @@ object MonitorHub {
                 _heart.value = snapshot
                 recorder.onHeart(snapshot, heartEngine.lastRr)
                 audio.onHeart(snapshot, heartEngine.lastRr)
+                sleepEngine.onHeart(reading.timestampMs, snapshot.heartRate, heartEngine.lastRr.filter { it.accepted }.mapNotNull { it.cleanIntervalMs })
                 _response.value = arousal.onHeart(reading.timestampMs, snapshot.heartRate, snapshot.rmssdMs, snapshot.load.score)
                 val t = reading.timestampMs
                 recentRecorder.add(Metric.Hr, t, snapshot.heartRate?.toDouble())
@@ -127,7 +139,10 @@ object MonitorHub {
             }
         }
         scope.launch {
-            h10.accelerometerBatches.collect { heartEngine.addAccelerometer(it) }
+            h10.accelerometerBatches.collect { batch ->
+                heartEngine.addAccelerometer(batch)
+                batch.forEach { sleepEngine.onAcc(it.timestampMs, it.xMilliG, it.yMilliG, it.zMilliG) }
+            }
         }
         scope.launch {
             h10.ecgBatches.collect { recorder.onEcg(it) }
@@ -240,6 +255,36 @@ object MonitorHub {
     }
 
     private lateinit var appContext: Context
+
+    /** Sleep mode: overnight epochs from the H10 (no full recording needed). */
+    fun startSleep() {
+        if (_sleeping.value != null) return
+        val now = System.currentTimeMillis()
+        sleepEngine.start(now)
+        _sleeping.value = now
+        _sleepLive.value = emptyList()
+        scope.launch {
+            while (_sleeping.value == now) {
+                delay(30_000L)
+                if (_sleeping.value == now) _sleepLive.value = com.pulsepointlabs.sarahmonitor.sleep.SleepMath.stage(sleepEngine.epochs())
+            }
+        }
+    }
+
+    /** Ends sleep mode, stages the night and saves it. Returns the summary (null if too short to score). */
+    fun stopSleep(): com.pulsepointlabs.sarahmonitor.sleep.NightSummary? {
+        if (_sleeping.value == null) return null
+        val epochs = com.pulsepointlabs.sarahmonitor.sleep.SleepMath.stage(sleepEngine.stop())
+        _sleeping.value = null
+        _sleepLive.value = emptyList()
+        if (epochs.size < 20) return null
+        val summary = com.pulsepointlabs.sarahmonitor.sleep.SleepMath.summarize(epochs, System.currentTimeMillis(), spo2.items.value)
+        sleepStore.save(summary, epochs)
+        return summary
+    }
+
+    /** Latest strap orientation, for the position calibration taps. */
+    fun currentGravity(): DoubleArray? = sleepEngine.lastGravity
 
     /** The user confirms a detected climax: marks it at the moment it was detected. */
     fun confirmClimax(onDone: (Boolean) -> Unit = {}) {
