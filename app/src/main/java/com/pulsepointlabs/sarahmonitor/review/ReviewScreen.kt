@@ -274,7 +274,8 @@ fun ReviewScreen(
                 }
                 editing = null
             },
-            onDismiss = { editing = null }
+            onDismiss = { editing = null },
+            category = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(data?.session?.category) ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid
         )
     }
     addingAt?.let { t ->
@@ -285,7 +286,8 @@ fun ReviewScreen(
                 saveMarker(MarkerEntity(UUID.randomUUID().toString(), sessionId, t, MarkerTypes.join(types), MarkerTypes.label(types), note.trim()))
                 addingAt = null
             },
-            onDismiss = { addingAt = null }
+            onDismiss = { addingAt = null },
+            category = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(data?.session?.category) ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid
         )
     }
     if (renaming) {

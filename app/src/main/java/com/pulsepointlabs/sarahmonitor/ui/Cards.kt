@@ -141,7 +141,8 @@ private fun Chips(content: @Composable () -> Unit) {
         // In overlays the chips grow with the overlay's width so labels never stay tiny on a big overlay.
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val base = LocalCardScale.current
-            val f = (maxWidth.value / 260f).coerceIn(0.85f, 2.4f)
+            // Grow with the overlay, but stay in proportion to the reading.
+            val f = (maxWidth.value / 340f).coerceIn(0.8f, 1.6f)
             androidx.compose.runtime.CompositionLocalProvider(LocalCardScale provides base.copy(factor = maxOf(base.factor, f))) {
                 FlowRow(
                     Modifier.fillMaxWidth(),
@@ -198,10 +199,10 @@ private fun HeartRateCard() {
             modifier = Modifier.fillMaxWidth().weight(1f)
         )
         Chips {
-            StatChip("avg", fmt(heart.averageHr))
-            StatChip("min", heart.minHr?.toString() ?: "--")
-            StatChip("max", heart.maxHr?.toString() ?: "--")
-            StatChip("load", heart.load.score?.toString() ?: "--", loadColor(heart.load.score))
+            StatChip("avg", fmt(heart.averageHr), tint = hrBandColor(heart.averageHr))
+            StatChip("min", heart.minHr?.toString() ?: "--", tint = hrBandColor(heart.minHr?.toDouble()))
+            StatChip("max", heart.maxHr?.toString() ?: "--", tint = hrBandColor(heart.maxHr?.toDouble()))
+            StatChip("load", heart.load.score?.toString() ?: "--", loadColor(heart.load.score), tint = percentBandColor(heart.load.score))
         }
     }
 }
@@ -269,8 +270,8 @@ private fun LoadCard() {
             maxChars = 3, trend = recent.values(Metric.Load), trendStrength = recent.trend(Metric.Load)
         )
         Chips {
-            StatChip("HR load", load.hrLoadPercent?.let { "$it%" } ?: "--")
-            StatChip("HRV supp.", load.hrvSuppressionPercent?.let { "$it%" } ?: "--")
+            StatChip("HR load", load.hrLoadPercent?.let { "$it%" } ?: "--", tint = percentBandColor(load.hrLoadPercent))
+            StatChip("HRV supp.", load.hrvSuppressionPercent?.let { "$it%" } ?: "--", tint = percentBandColor(load.hrvSuppressionPercent))
             StatChip("conf.", load.confidencePercent?.let { "$it%" } ?: "--")
         }
         StatusLine(loadDetail(load), if (load.score == null) MonitorColors.warn else MonitorColors.label)

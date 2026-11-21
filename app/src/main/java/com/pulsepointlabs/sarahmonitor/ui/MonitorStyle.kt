@@ -143,7 +143,7 @@ fun CardTitle(label: String, color: Color, unit: String = "", modifier: Modifier
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 style = TextStyle(
-                    color = shown, fontSize = max(13f, 14f * s.factor).sp, fontWeight = FontWeight.ExtraBold,
+                    color = shown, fontSize = min(16f, max(12f, 11f * s.factor)).sp, fontWeight = FontWeight.ExtraBold,
                     letterSpacing = 1.2.sp, shadow = Shadow(shown.copy(alpha = 0.55f), Offset.Zero, blurRadius = 10f)
                 )
             )
@@ -175,18 +175,20 @@ fun UnitTag(unit: String, color: Color) {
 }
 
 @Composable
-fun StatChip(label: String, value: String, accent: Color = MonitorColors.text) {
+fun StatChip(label: String, value: String, accent: Color = MonitorColors.text, tint: Color? = null) {
     val s = LocalCardScale.current
+    // tint: the chip's background takes the value's colour (green low → red high).
+    val bg by androidx.compose.animation.animateColorAsState(tint?.copy(alpha = 0.26f) ?: Color(0x1FFFFFFF), androidx.compose.animation.core.tween(500), label = "chip-bg")
     Row(
         Modifier
-            .background(Color(0x1FFFFFFF), RoundedCornerShape(6.dp))
-            .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(6.dp))
+            .background(bg, RoundedCornerShape(6.dp))
+            .border(1.dp, tint?.copy(alpha = 0.6f) ?: Color(0x1AFFFFFF), RoundedCornerShape(6.dp))
             .padding(horizontal = s.dp(6f), vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Text(label, color = MonitorColors.label, fontSize = s.sp(11f), maxLines = 1)
-        Text(value, color = accent, fontSize = s.sp(13f), fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, maxLines = 1)
+        Text(label, color = if (tint != null) MonitorColors.text.copy(alpha = 0.75f) else MonitorColors.label, fontSize = s.sp(11f), maxLines = 1)
+        Text(value, color = if (tint != null) MonitorColors.text else accent, fontSize = s.sp(13f), fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, maxLines = 1)
     }
 }
 
@@ -254,8 +256,9 @@ fun BigReading(
                 androidx.compose.animation.AnimatedContent(
                     targetState = value,
                     transitionSpec = {
-                        androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(180)) togetherWith
-                            androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(180))
+                        (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(180)) togetherWith
+                            androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(180)))
+                            .using(androidx.compose.animation.SizeTransform(clip = false))
                     },
                     modifier = Modifier.width((sizeDp * textEm).dp),
                     contentAlignment = Alignment.Center,
@@ -266,6 +269,8 @@ fun BigReading(
                         color = shown,
                         maxLines = 1,
                         softWrap = false,
+                        // Let the glow spill past the glyph box instead of being cut off square.
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Visible,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         modifier = Modifier.width((sizeDp * textEm).dp),
                         style = TextStyle(
@@ -474,19 +479,20 @@ private fun OverlayReading(
         val numEm = textEm + leadingEm + arrowEm + 0.05f
         val w = maxWidth.value
         val h = maxHeight.value
-        // Beside: chart takes the right 42% (at least 110 dp). Below: chart takes the bottom 40%.
-        val sideChart = max(110f, w * 0.42f)
-        val besideSize = min((w - sideChart) / numEm, h * 0.88f)
+        // Beside: the number sits at the left using at most 56% of the width (less when the overlay is short);
+        // the chart takes everything to its right. Below: the chart takes the bottom 40%.
+        val besideSize = min(w * 0.56f / numEm, h * 0.88f)
+        val sideChart = w - besideSize * numEm - 8f
         val belowSize = min(w / numEm, h * 0.6f * 0.9f)
-        val canBeside = w - sideChart > 60f
+        val canBeside = sideChart >= 96f
         val below = !canBeside || belowSize > besideSize * 1.1f
         val sizeDp = min(if (below) belowSize else besideSize, maxSizeDp).coerceAtLeast(MinTextSp + 6f)
         val shown by androidx.compose.animation.animateColorAsState(color, androidx.compose.animation.core.tween(400), label = "ov-reading")
         val number: @Composable (Modifier) -> Unit = { m ->
-            Row(m, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            Row(m, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = if (below) Arrangement.Center else Arrangement.Start) {
                 if (leading != null) Box(Modifier.size((sizeDp * leadingEm).dp, sizeDp.dp), contentAlignment = Alignment.Center) { leading(sizeDp * 0.62f) }
                 Text(
-                    value, color = shown, maxLines = 1, softWrap = false,
+                    value, color = shown, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Visible,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     modifier = Modifier.width((sizeDp * textEm).dp),
                     style = TextStyle(
@@ -504,8 +510,8 @@ private fun OverlayReading(
             }
         } else {
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                number(Modifier.weight(1f).fillMaxHeight())
-                TrendAxesChart(trend, trendColor, Modifier.width(sideChart.dp).fillMaxHeight().padding(vertical = 4.dp))
+                number(Modifier.fillMaxHeight().padding(start = 2.dp, end = 6.dp))
+                TrendAxesChart(trend, trendColor, Modifier.weight(1f).fillMaxHeight().padding(vertical = 4.dp))
             }
         }
     }
@@ -552,4 +558,24 @@ fun TrendAxesChart(values: List<Double>, color: Color, modifier: Modifier) {
             drawCircle(color, 3f * density, Offset(left + pw, yOf(values.last())))
         }
     }
+}
+
+
+/** Colour band for a heart rate: blue (low) → green → yellow → orange → red (high). */
+fun hrBandColor(bpm: Double?): Color? = when {
+    bpm == null -> null
+    bpm < 55 -> MonitorColors.sdnn
+    bpm < 100 -> MonitorColors.good
+    bpm < 120 -> MonitorColors.rmssd
+    bpm < 140 -> MonitorColors.load
+    else -> MonitorColors.alarm
+}
+
+/** Colour for a 0–100 % strain-type value: green → yellow → orange → red. */
+fun percentBandColor(p: Int?): Color? = when {
+    p == null -> null
+    p < 35 -> MonitorColors.good
+    p < 55 -> MonitorColors.rmssd
+    p < 75 -> MonitorColors.load
+    else -> MonitorColors.alarm
 }

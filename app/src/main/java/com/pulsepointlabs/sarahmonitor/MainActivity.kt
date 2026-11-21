@@ -335,6 +335,7 @@ private fun MonitorScreen(
     var showAddGlucose by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
     var confirmStop by remember { mutableStateOf(false) }
+    var chooseCategory by remember { mutableStateOf(false) }
     var markAt by remember { mutableStateOf<Long?>(null) }
     val session by MonitorHub.session.collectAsState()
     val focus = remember { FocusRequester() }
@@ -377,7 +378,7 @@ private fun MonitorScreen(
                 recording = session,
                 arranging = arranging,
                 onScreen = { screen = it; reviewId = null },
-                onRecord = { if (session == null) MonitorHub.startSession() else confirmStop = true },
+                onRecord = { if (session == null) chooseCategory = true else confirmStop = true },
                 onMark = ::mark,
                 onDevices = { screen = Screen.Sensors; reviewId = null },
                 onCards = { showCards = true },
@@ -427,6 +428,7 @@ private fun MonitorScreen(
             onDismiss = { markAt = null }
         )
     }
+    if (chooseCategory) StartSessionDialog(onStart = { cat -> chooseCategory = false; MonitorHub.startSession(cat) }, onDismiss = { chooseCategory = false })
     if (confirmStop) {
         AlertDialog(
             onDismissRequest = { confirmStop = false },
@@ -729,6 +731,38 @@ private fun AddGlucoseDialog(onDismiss: () -> Unit, onMessage: (String) -> Unit)
                 }
             }) { Text("Save") }
         },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+
+/** Pick what this recording is; tap to start. The last choice is highlighted. */
+@Composable
+private fun StartSessionDialog(onStart: (com.pulsepointlabs.sarahmonitor.session.SessionCategory) -> Unit, onDismiss: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val last = remember { com.pulsepointlabs.sarahmonitor.session.SessionCategory.last(context) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MonitorColors.panel,
+        title = { Text("Start recording", color = MonitorColors.text, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.pulsepointlabs.sarahmonitor.session.SessionCategory.entries.forEach { c ->
+                    val on = c == last
+                    val color = if (c.sexual && c != com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid) Color(0xFFFF7AB6) else if (c == com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid) MonitorColors.pnn50 else MonitorColors.hr
+                    Text(
+                        "● " + c.label, color = if (on) MonitorColors.background else color, fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(if (on) color else color.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                            .border(1.dp, color.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
+                            .clickable { onStart(c) }
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }

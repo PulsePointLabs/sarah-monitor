@@ -272,10 +272,19 @@ object MonitorHub {
     fun clearPelvicCalibration() = pelvicProcessor.clearCalibration()
 
     /** Starts recording a session; live statistics and trends restart with it. */
-    fun startSession() {
+    /** Starts recording a [category] session; live statistics and trends restart with it. */
+    fun startSession(category: com.pulsepointlabs.sarahmonitor.session.SessionCategory = com.pulsepointlabs.sarahmonitor.session.SessionCategory.last(appContext)) {
+        com.pulsepointlabs.sarahmonitor.session.SessionCategory.remember(appContext, category)
+        // The Response board follows the session type.
+        when (category) {
+            com.pulsepointlabs.sarahmonitor.session.SessionCategory.Masturbation -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Masturbation)
+            com.pulsepointlabs.sarahmonitor.session.SessionCategory.Sexual -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Sexual)
+            com.pulsepointlabs.sarahmonitor.session.SessionCategory.Exploration -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Exploration)
+            else -> Unit
+        }
         scope.launch {
             if (recorder.active.value == null) resetSession()
-            recorder.start()
+            recorder.start(category)
         }
     }
 

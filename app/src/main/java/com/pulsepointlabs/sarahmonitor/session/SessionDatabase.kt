@@ -34,7 +34,9 @@ data class SessionEntity(
     val pelvicLongestHoldS: Double? = null,
     val markerCount: Int = 0,
     /** Up to 48 comma-separated HR values for the list sparkline. */
-    val hrSparkline: String = ""
+    val hrSparkline: String = "",
+    /** [SessionCategory] name; null for sessions recorded before categories existed. */
+    val category: String? = null
 ) {
     val durationMs: Long get() = (endTimeMs ?: System.currentTimeMillis()) - startTimeMs
     val active: Boolean get() = endTimeMs == null
@@ -152,7 +154,7 @@ interface SessionDao {
 
 @Database(
     entities = [SessionEntity::class, HrSampleEntity::class, RrEntity::class, PelvicSampleEntity::class, EcgChunkEntity::class, MarkerEntity::class, EmgSampleEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class SessionDatabase : RoomDatabase() {
@@ -160,6 +162,13 @@ abstract class SessionDatabase : RoomDatabase() {
 
     companion object {
         @Volatile private var instance: SessionDatabase? = null
+
+        /** 0.13.0: session category (general / sexual types / hybrid). */
+        val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `category` TEXT")
+            }
+        }
 
         /** 0.10.0: EMG samples. Existing sessions are kept. */
         val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
@@ -170,7 +179,7 @@ abstract class SessionDatabase : RoomDatabase() {
         }
         fun get(context: Context): SessionDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, SessionDatabase::class.java, "sarah_monitor_sessions.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build().also { instance = it }
         }
     }

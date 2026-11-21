@@ -50,10 +50,10 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    suspend fun start(): SessionEntity = mutex.withLock {
+    suspend fun start(category: SessionCategory = SessionCategory.General): SessionEntity = mutex.withLock {
         _active.value?.let { return it }
         val now = System.currentTimeMillis()
-        val session = SessionEntity(id = UUID.randomUUID().toString(), title = defaultTitle(now), startTimeMs = now)
+        val session = SessionEntity(id = UUID.randomUUID().toString(), title = defaultTitle(now), startTimeMs = now, category = category.name)
         withContext(Dispatchers.IO) { dao.upsertSession(session) }
         synchronized(lock) { hr.clear(); rr.clear(); pelvic.clear(); emg.clear(); ecgTs.clear(); ecgUv.clear(); ecgChunks.clear(); lastEcgTs = Long.MIN_VALUE }
         _active.value = session
@@ -157,6 +157,28 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         private const val ECG_CHUNK_SAMPLES = 1_300 // about 10 s at 130 Hz
         private val titleFormat = DateTimeFormatter.ofPattern("EEE MMM d, h:mm a")
         fun defaultTitle(ms: Long): String = "Session · " + Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(titleFormat)
+    }
+}
+
+/** What a recording is: everyday physiology, a kind of sexual session, or a mix (e.g. a 24 h recording). */
+enum class SessionCategory(val label: String, val groups: List<MarkerTypes.Group>) {
+    General("General", listOf(MarkerTypes.Group.General)),
+    Masturbation("Masturbation", listOf(MarkerTypes.Group.Sexual)),
+    Sexual("Sexual activity", listOf(MarkerTypes.Group.Sexual)),
+    Exploration("Body exploration", listOf(MarkerTypes.Group.Sexual)),
+    Hybrid("Hybrid (general + sexual)", listOf(MarkerTypes.Group.General, MarkerTypes.Group.Sexual));
+
+    val sexual: Boolean get() = MarkerTypes.Group.Sexual in groups
+
+    companion object {
+        fun of(id: String?): SessionCategory? = entries.firstOrNull { it.name == id }
+
+        private const val PREFS = "sarahmonitor_session_category"
+        /** The category picked last time (default for the next recording). */
+        fun last(c: android.content.Context): SessionCategory =
+            of(c.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).getString("last", null)) ?: General
+        fun remember(c: android.content.Context, cat: SessionCategory) =
+            c.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).edit().putString("last", cat.name).apply()
     }
 }
 

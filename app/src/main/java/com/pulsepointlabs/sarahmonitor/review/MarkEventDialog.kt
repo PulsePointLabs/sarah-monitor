@@ -91,12 +91,24 @@ fun MarkEventDialog(
     onDelete: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     /** Drawn as a floating overlay panel (no activity behind it). */
-    inOverlay: Boolean = false
+    inOverlay: Boolean = false,
+    /** Which event groups to offer (from the session's category); null = the live session's. */
+    category: com.pulsepointlabs.sarahmonitor.session.SessionCategory? = null
 ) {
     val context = LocalContext.current
     val heart by MonitorHub.heart.collectAsState()
     val pelvic by MonitorHub.pelvic.collectAsState()
-    var types by remember { mutableStateOf(editing?.let { MarkerTypes.split(it.types) } ?: setOf("event")) }
+    val sessionNow by MonitorHub.session.collectAsState()
+    val groups = (category ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(sessionNow?.category) ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid).groups
+    val allowed = MarkerTypes.all.filter { it.group in groups }.map { it.id }.toSet()
+    // A new event starts with the type(s) used last time (if they fit this session); editing keeps its own.
+    var types by remember {
+        mutableStateOf(
+            editing?.takeIf { it.id.isNotEmpty() }?.let { MarkerTypes.split(it.types) }
+                ?: MarkerPreferences.last(context)?.types?.filter { it in allowed }?.toSet()?.takeIf { it.isNotEmpty() }
+                ?: setOf(allowed.first())
+        )
+    }
     var note by remember { mutableStateOf(editing?.note ?: "") }
     var status by remember { mutableStateOf("") }
     val last = remember { if (editing == null) MarkerPreferences.last(context) else null }
@@ -199,8 +211,8 @@ fun MarkEventDialog(
                             .padding(horizontal = 12.dp, vertical = 10.dp)
                     )
                 }
-                MarkerTypes.Group.entries.forEach { group ->
-                    Text(group.title, color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                groups.forEach { group ->
+                    if (groups.size > 1) Text(group.title, color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         MarkerTypes.inGroup(group).forEach { type ->
                             val on = type.id in types
