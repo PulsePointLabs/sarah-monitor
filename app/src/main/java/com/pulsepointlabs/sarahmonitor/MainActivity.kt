@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.SelfImprovement
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -293,7 +294,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen(val label: String) { Monitor("Monitor"), Response("Response"), Sessions("Sessions"), Sensors("Sensors"), Settings("Settings") }
+private enum class Screen(val label: String) { Monitor("Monitor"), Response("Response"), Kegel("Kegels"), Sessions("Sessions"), Sensors("Sensors"), Settings("Settings") }
 
 @Composable
 private fun MonitorScreen(
@@ -372,6 +373,7 @@ private fun MonitorScreen(
                     modifier = Modifier.fillMaxSize()
                 )
                 screen == Screen.Response -> com.pulsepointlabs.sarahmonitor.response.ResponseScreen(Modifier.fillMaxSize())
+                screen == Screen.Kegel -> com.pulsepointlabs.sarahmonitor.kegel.KegelScreen(Modifier.fillMaxSize())
                 screen == Screen.Sessions -> SessionsScreen(onOpen = { reviewId = it }, modifier = Modifier.fillMaxSize())
                 screen == Screen.Sensors -> SensorsScreen(onHealthConnect, onCsvImport, onMessage, Modifier.fillMaxSize())
                 screen == Screen.Settings -> SettingsScreen(onMessage, Modifier.fillMaxSize())
@@ -462,7 +464,7 @@ private fun TopBar(
                 Text(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(clockFormat), color = MonitorColors.label, fontSize = 14.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
                 if (full) recording?.let { SessionClock(it.startTimeMs, now) }
             }
-            Tabs(screen, compact = narrow, onScreen = onScreen)
+            Tabs(screen, compact = !full, onScreen = onScreen)
             Spacer(Modifier.weight(1f))
             RecordButton(recording, now, compact = narrow, onClick = onRecord)
             MarkButton(enabled = recording != null, compact = !full, onClick = onMark)
@@ -543,6 +545,7 @@ private fun Tabs(screen: Screen, compact: Boolean, onScreen: (Screen) -> Unit) {
                             Screen.Monitor -> Icons.Default.MonitorHeart
                             Screen.Sessions -> Icons.Default.History
                             Screen.Response -> Icons.Default.Favorite
+                            Screen.Kegel -> Icons.Default.SelfImprovement
                             Screen.Sensors -> Icons.Default.Bluetooth
                             Screen.Settings -> Icons.Default.Settings
                         },
