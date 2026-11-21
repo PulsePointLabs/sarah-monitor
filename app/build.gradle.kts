@@ -13,8 +13,8 @@ android {
         applicationId = "com.pulsepointlabs.sarahmonitor"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "0.9.0"
+        versionCode = 15
+        versionName = "0.10.0"
     }
 
     // One signing key for every build (this machine, CI, anyone's PC), kept in the repo, so each
@@ -70,6 +70,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.anthropic:anthropic-java:3.3.0")
+    implementation("com.github.mik3y:usb-serial-for-android:3.8.1")
     implementation("androidx.room:room-ktx:$roomVersion")
     implementation("androidx.room:room-runtime:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")

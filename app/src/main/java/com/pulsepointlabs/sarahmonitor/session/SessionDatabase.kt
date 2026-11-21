@@ -77,6 +77,18 @@ data class PelvicSampleEntity(
     val holding: Boolean
 )
 
+/** EMG envelope from the Arduino/MyoWare (25 Hz averages). pct = % of the calibrated hold. */
+@Entity(tableName = "emg_samples", indices = [Index("sessionId", "timestampMs")])
+data class EmgSampleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: String,
+    val timestampMs: Long,
+    val ch1: Double,
+    val ch2: Double?,
+    val pct1: Double?,
+    val pct2: Double?
+)
+
 /** A block of H10 ECG: [timestamps] as int32 offsets from [startMs], [microvolts] as int32, little-endian. */
 @Entity(tableName = "ecg_chunks", indices = [Index("sessionId", "startMs")])
 data class EcgChunkEntity(
@@ -112,6 +124,9 @@ interface SessionDao {
     @Insert suspend fun insertRr(rows: List<RrEntity>)
     @Insert suspend fun insertPelvic(rows: List<PelvicSampleEntity>)
     @Insert suspend fun insertEcg(rows: List<EcgChunkEntity>)
+    @Insert suspend fun insertEmg(rows: List<EmgSampleEntity>)
+    @Query("SELECT * FROM emg_samples WHERE sessionId = :id ORDER BY timestampMs") suspend fun getEmg(id: String): List<EmgSampleEntity>
+    @Query("DELETE FROM emg_samples WHERE sessionId = :id") suspend fun deleteEmg(id: String)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertMarker(marker: MarkerEntity)
     @Query("DELETE FROM markers WHERE id = :id") suspend fun deleteMarker(id: String)
 
@@ -131,13 +146,13 @@ interface SessionDao {
     @Query("DELETE FROM markers WHERE sessionId = :id") suspend fun deleteMarkers(id: String)
 
     suspend fun deleteEverything(id: String) {
-        deleteHr(id); deleteRr(id); deletePelvic(id); deleteEcg(id); deleteMarkers(id); deleteSession(id)
+        deleteHr(id); deleteRr(id); deletePelvic(id); deleteEcg(id); deleteEmg(id); deleteMarkers(id); deleteSession(id)
     }
 }
 
 @Database(
-    entities = [SessionEntity::class, HrSampleEntity::class, RrEntity::class, PelvicSampleEntity::class, EcgChunkEntity::class, MarkerEntity::class],
-    version = 1,
+    entities = [SessionEntity::class, HrSampleEntity::class, RrEntity::class, PelvicSampleEntity::class, EcgChunkEntity::class, MarkerEntity::class, EmgSampleEntity::class],
+    version = 2,
     exportSchema = false
 )
 abstract class SessionDatabase : RoomDatabase() {
@@ -145,8 +160,17 @@ abstract class SessionDatabase : RoomDatabase() {
 
     companion object {
         @Volatile private var instance: SessionDatabase? = null
+
+        /** 0.10.0: EMG samples. Existing sessions are kept. */
+        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `emg_samples` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` TEXT NOT NULL, `timestampMs` INTEGER NOT NULL, `ch1` REAL NOT NULL, `ch2` REAL, `pct1` REAL, `pct2` REAL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_emg_samples_sessionId_timestampMs` ON `emg_samples` (`sessionId`, `timestampMs`)")
+            }
+        }
         fun get(context: Context): SessionDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, SessionDatabase::class.java, "sarah_monitor_sessions.db")
+                .addMigrations(MIGRATION_1_2)
                 .build().also { instance = it }
         }
     }

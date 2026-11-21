@@ -64,6 +64,12 @@ object MonitorHub {
     /** Sarah's live spoken feedback (Claude brain, Sarah's voice). */
     lateinit var coach: SarahCoach; private set
 
+    val emgProcessor = com.pulsepointlabs.sarahmonitor.emg.EmgProcessor()
+    /** Arduino + MyoWare EMG over USB. */
+    lateinit var emgClient: com.pulsepointlabs.sarahmonitor.emg.EmgClient; private set
+    private val _emg = MutableStateFlow(com.pulsepointlabs.sarahmonitor.emg.EmgSnapshot())
+    val emg: StateFlow<com.pulsepointlabs.sarahmonitor.emg.EmgSnapshot> = _emg
+
     private val sleepEngine = com.pulsepointlabs.sarahmonitor.sleep.SleepEngine()
     lateinit var sleepStore: com.pulsepointlabs.sarahmonitor.sleep.SleepStore; private set
     private val _sleeping = MutableStateFlow<Long?>(null)
@@ -113,6 +119,38 @@ object MonitorHub {
         BpPosition.load(app)
         com.pulsepointlabs.sarahmonitor.sleep.PositionCalibration.load(app)
         sleepStore = com.pulsepointlabs.sarahmonitor.sleep.SleepStore(app)
+        com.pulsepointlabs.sarahmonitor.emg.EmgSettings.load(app, emgProcessor)
+        var emgAccN = 0; var emgAcc1 = 0.0; var emgAcc2 = 0.0; var emgLastPublish = 0L
+        emgClient = com.pulsepointlabs.sarahmonitor.emg.EmgClient(app) { now, rows ->
+            rows.forEachIndexed { i, v ->
+                // Lines in one USB read arrived 10 ms apart (100 Hz sketch).
+                val t = now - (rows.size - 1 - i) * 10L
+                emgProcessor.add(t, v)
+                emgAcc1 += v[0]; emgAcc2 += v.getOrElse(1) { 0 }; emgAccN++
+                if (emgAccN == 4) { // 25 Hz averages into the recording
+                    val snap = emgProcessor.snapshot(t)
+                    recorder.onEmg(com.pulsepointlabs.sarahmonitor.session.EmgSampleEntity(
+                        sessionId = "", timestampMs = t, ch1 = emgAcc1 / 4, ch2 = if (v.size > 1) emgAcc2 / 4 else null,
+                        pct1 = snap.channels.getOrNull(0)?.pct, pct2 = snap.channels.getOrNull(1)?.pct
+                    ))
+                    emgAcc1 = 0.0; emgAcc2 = 0.0; emgAccN = 0
+                }
+            }
+            if (now - emgLastPublish >= 50L) {
+                emgLastPublish = now
+                val snap = emgProcessor.snapshot(now)
+                _emg.value = snap
+                arousal.onEmg(now, snap.peakPct)
+            }
+        }
+        scope.launch {
+            emgClient.connect()
+            while (isActive) {
+                delay(2_000L)
+                emgClient.check()
+                _emg.value = emgProcessor.snapshot()
+            }
+        }
         ResponseSettings.load(app)
         arousal.setProfile(ResponseSettings.profile.value)
         scope.launch { ResponseSettings.profile.collect { arousal.setProfile(it) } }

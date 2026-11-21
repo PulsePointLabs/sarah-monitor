@@ -43,7 +43,8 @@ data class SessionData(
     val markers: List<MarkerEntity>,
     val bp: List<BpEntry>,
     val glucose: List<GlucoseEntry>,
-    val hasEcg: Boolean
+    val hasEcg: Boolean,
+    val emg: List<EmgSampleEntity> = emptyList()
 ) {
     val endMs: Long get() = session.endTimeMs ?: listOfNotNull(hr.lastOrNull()?.timestampMs, pelvic.lastOrNull()?.timestampMs, System.currentTimeMillis()).max()
 }

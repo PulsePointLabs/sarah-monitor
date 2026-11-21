@@ -123,6 +123,13 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
     @Synchronized
     fun current(): ResponseState = state.copy(phase = phase, phaseSinceMs = phaseSince, edges = edges, climaxes = climaxes, candidate = candidate)
 
+    private var emgPct: Double? = null
+    private var emgAt = 0L
+
+    /** Strongest calibrated EMG channel, % of its comfortable hold. */
+    @Synchronized
+    fun onEmg(t: Long, pct: Double?) { emgPct = pct; emgAt = t }
+
     @Synchronized
     fun onPelvic(t: Long, aboveRestKpa: Double?, holding: Boolean, pulseCount: Int, lastPulse: PelvicPulse?) {
         if (aboveRestKpa != null) {
@@ -260,11 +267,14 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
         approach += (ppm * 1.2).coerceIn(0.0, 12.0)
         if (holding) approach += 4
         if (train != null) approach += 10
+        val emg = emgPct?.takeIf { t - emgAt < 3_000L }
+        // EMG adds like Sarah's live prediction: a rise of 18%+ counts, up to +12.
+        if (emg != null && emg >= 18) approach += (emg * 0.16).coerceAtMost(12.0)
         if (dropFromPeak > 8) approach -= 12
         // Caps: a fresh build or early session can't claim "near climax" on HR alone.
         val confirmations = listOf(
             (delta ?: 0.0) >= 12 && buildS >= 60, hrvSignal == "compressed" || hrvSignal == "tightening",
-            slope >= 1.5 && buildS >= 45, ppm >= 4, train != null, holding
+            slope >= 1.5 && buildS >= 45, ppm >= 4, train != null, holding, (emg ?: 0.0) >= 18
         ).count { it }
         val minutes = (t - (start ?: t)) / 60_000.0
         if (buildS < 45 && confirmations < 2) approach = min(approach, 45.0)
@@ -326,6 +336,7 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
         if (pAvg != null) signals += "Pelvic floor ${"%.1f".format(pAvg)} kPa above rest (30 s avg)" + if (ppm > 0) ", $ppm contractions/min" else ""
         if (train != null) signals += "Rhythmic contraction train: ${train.first} at ~${"%.1f".format(train.second)} s"
         if (holding) signals += "Holding a contraction"
+        emg?.let { signals += "EMG ${it.roundToInt()}% of your calibrated hold" }
         if (buildS >= 30) signals += "Building for ${buildS / 60}:${"%02d".format(buildS % 60)}"
         if (plateauS >= 30) signals += "Plateau for ${plateauS / 60}:${"%02d".format(plateauS % 60)}"
         if (!profile.learned) signals += "Approach uses a generic 30 bpm climax rise until you've marked a couple of climaxes"

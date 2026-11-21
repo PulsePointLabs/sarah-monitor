@@ -171,6 +171,11 @@ class MainActivity : ComponentActivity() {
      * email…). Same behaviour as Sarah's share target: a CSV file or shared text, parsed by the glucose importer.
      */
     private fun handleSharedExport(intent: android.content.Intent?) {
+        if (intent?.action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            // The EMG Arduino was plugged in (phone or DeX dock).
+            MonitorHub.emgClient.connect()
+            return
+        }
         if (intent == null || (intent.action != android.content.Intent.ACTION_SEND && intent.action != android.content.Intent.ACTION_VIEW)) return
         @Suppress("DEPRECATION")
         val uri: Uri? = when (intent.action) {

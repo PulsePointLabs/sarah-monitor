@@ -98,6 +98,12 @@ private class ReviewSeriesSet(data: SessionData) {
     val sys = ReviewSeries("SYS", MonitorColors.bp, data.bp.map { it.timestampMs }.toLongArray(), data.bp.map { it.systolic.toDouble() }.toDoubleArray(), SeriesStyle.Dots)
     val dia = ReviewSeries("DIA", MonitorColors.bpDia, data.bp.map { it.timestampMs }.toLongArray(), data.bp.map { it.diastolic.toDouble() }.toDoubleArray(), SeriesStyle.Dots)
     val glucose = ReviewSeries("Glucose", MonitorColors.glucose, data.glucose.map { it.timestampMs }.toLongArray(), data.glucose.map { it.mgDl }.toDoubleArray(), SeriesStyle.Dots)
+    private val emgTs = data.emg.map { it.timestampMs }.toLongArray()
+    /** % of calibrated hold when available, else raw ENV (0–1023). */
+    val emgCalibrated = data.emg.any { it.pct1 != null }
+    val emg1 = ReviewSeries("EMG 1", com.pulsepointlabs.sarahmonitor.emg.EmgColor, emgTs, data.emg.map { (if (emgCalibrated) it.pct1 else it.ch1) ?: Double.NaN }.toDoubleArray(), SeriesStyle.Area, gapMs = 1_000L)
+    val emg2 = ReviewSeries("EMG 2", com.pulsepointlabs.sarahmonitor.emg.Emg2Color, emgTs, data.emg.map { (if (emgCalibrated) it.pct2 else it.ch2) ?: Double.NaN }.toDoubleArray(), gapMs = 1_000L)
+    val hasEmg2 = data.emg.any { it.ch2 != null }
     val hasHrv = data.hr.any { it.rmssdMs != null }
     val hasLoad = data.hr.any { it.load != null }
 }
@@ -198,6 +204,7 @@ fun ReviewScreen(
         }
         if (series.hasHrv) ReviewChart("HRV (rolling 2 min)", "ms", listOf(series.rmssd, series.sdnn), viewport, chartMarkers, cursor, setCursor, zoom, 140.dp, minSpan = 10.0, decimals = 1, bands = bands(FlagChart.Hrv))
         if (series.hasLoad) ReviewChart("Load", "0–100", listOf(series.load), viewport, chartMarkers, cursor, setCursor, zoom, 100.dp, fixedBounds = 0.0 to 100.0, refLines = listOf(58.0 to "elevated"), bands = bands(FlagChart.Load))
+        if (d.emg.isNotEmpty()) ReviewChart("EMG", if (series.emgCalibrated) "% of hold" else "raw ENV", listOfNotNull(series.emg1, series.emg2.takeIf { series.hasEmg2 }), viewport, chartMarkers, cursor, setCursor, zoom, 150.dp, minSpan = 20.0)
         if (d.pelvic.isNotEmpty()) ReviewChart("Pelvic pressure", "kPa above rest", listOf(series.pelvic), viewport, chartMarkers, cursor, setCursor, zoom, 170.dp, minSpan = 2.0, decimals = 1, bands = bands(FlagChart.Pelvic))
         if (d.bp.isNotEmpty()) ReviewChart("Blood pressure", "mmHg", listOf(series.sys, series.dia), viewport, chartMarkers, cursor, setCursor, zoom, 120.dp, minSpan = 40.0,
             emptyText = "Readings are outside the zoomed range", bands = bands(FlagChart.Bp))

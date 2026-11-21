@@ -16,7 +16,8 @@ enum class CardType(val title: String, val minW: Int, val minH: Int) {
     BloodPressure("Blood pressure", 4, 3),
     Glucose("Glucose", 3, 3),
     SpO2("SpO2", 3, 3),
-    Body("Body (scale)", 3, 3)
+    Body("Body (scale)", 3, 3),
+    Emg("EMG", 4, 3)
 }
 
 data class CardSlot(val type: CardType, val x: Int, val y: Int, val w: Int, val h: Int, val visible: Boolean = true) {
@@ -46,7 +47,8 @@ object GridLayoutEngine {
         CardSlot(CardType.Pelvic, 16, 0, 8, 10),
         CardSlot(CardType.BloodPressure, 16, 10, 8, 6),
         CardSlot(CardType.SpO2, 0, 16, 5, 4, visible = false),
-        CardSlot(CardType.Body, 5, 16, 5, 4, visible = false)
+        CardSlot(CardType.Body, 5, 16, 5, 4, visible = false),
+        CardSlot(CardType.Emg, 10, 16, 8, 5, visible = false)
     )
 
     fun clampSlot(slot: CardSlot): CardSlot {

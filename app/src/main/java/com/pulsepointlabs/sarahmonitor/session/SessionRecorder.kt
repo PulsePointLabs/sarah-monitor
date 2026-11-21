@@ -34,6 +34,7 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
     private var hr = mutableListOf<HrSampleEntity>()
     private var rr = mutableListOf<RrEntity>()
     private var pelvic = mutableListOf<PelvicSampleEntity>()
+    private var emg = mutableListOf<EmgSampleEntity>()
     private val ecgTs = ArrayList<Long>()
     private val ecgUv = ArrayList<Int>()
     private var lastEcgTs = Long.MIN_VALUE
@@ -54,7 +55,7 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         val now = System.currentTimeMillis()
         val session = SessionEntity(id = UUID.randomUUID().toString(), title = defaultTitle(now), startTimeMs = now)
         withContext(Dispatchers.IO) { dao.upsertSession(session) }
-        synchronized(lock) { hr.clear(); rr.clear(); pelvic.clear(); ecgTs.clear(); ecgUv.clear(); ecgChunks.clear(); lastEcgTs = Long.MIN_VALUE }
+        synchronized(lock) { hr.clear(); rr.clear(); pelvic.clear(); emg.clear(); ecgTs.clear(); ecgUv.clear(); ecgChunks.clear(); lastEcgTs = Long.MIN_VALUE }
         _active.value = session
         session
     }
@@ -98,6 +99,11 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         synchronized(lock) { pelvic += PelvicSampleEntity(sessionId = session.id, timestampMs = timestampMs, pressureKpa = pressureKpa, aboveRestKpa = aboveRestKpa, holding = holding) }
     }
 
+    fun onEmg(row: EmgSampleEntity) {
+        val session = _active.value ?: return
+        synchronized(lock) { emg += row.copy(sessionId = session.id) }
+    }
+
     fun onEcg(batch: List<EcgSample>) {
         val session = _active.value ?: return
         synchronized(lock) {
@@ -127,13 +133,15 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
             hr = mutableListOf(); rr = mutableListOf(); pelvic = mutableListOf(); ecgChunks = mutableListOf()
             out
         }
-        if (h.isEmpty() && r.isEmpty() && p.isEmpty() && e.isEmpty()) return
+        val m = synchronized(lock) { emg.also { emg = mutableListOf() } }
+        if (h.isEmpty() && r.isEmpty() && p.isEmpty() && e.isEmpty() && m.isEmpty()) return
         withContext(Dispatchers.IO) {
             runCatching {
                 @Suppress("UNCHECKED_CAST")
                 dao.insertHr(h as List<HrSampleEntity>); dao.insertRr(r as List<RrEntity>)
                 @Suppress("UNCHECKED_CAST")
                 dao.insertPelvic(p as List<PelvicSampleEntity>); dao.insertEcg(e as List<EcgChunkEntity>)
+                if (m.isNotEmpty()) dao.insertEmg(m)
             }
         }
     }

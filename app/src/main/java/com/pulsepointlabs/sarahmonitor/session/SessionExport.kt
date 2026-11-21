@@ -32,7 +32,8 @@ object SessionRepository {
             markers = markers,
             bp = MonitorHub.bp.items.value.filter { it.timestampMs in (session.startTimeMs - BP_BEFORE_MS)..(end + BP_AFTER_MS) },
             glucose = MonitorHub.glucose.items.value.filter { it.timestampMs in (session.startTimeMs - GLUCOSE_BEFORE_MS)..(end + BP_AFTER_MS) },
-            hasEcg = dao.ecgChunkCount(id) > 0
+            hasEcg = dao.ecgChunkCount(id) > 0,
+            emg = dao.getEmg(id)
         )
     }
 

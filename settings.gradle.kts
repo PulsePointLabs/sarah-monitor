@@ -11,6 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // usb-serial-for-android (Arduino EMG over USB)
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

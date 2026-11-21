@@ -53,6 +53,7 @@ fun SensorsScreen(
             PageSection(7) { H10Section() },
             PageSection(10) { CivetSection(onMessage) },
             PageSection(6) { OmronSection() },
+            PageSection(10) { com.pulsepointlabs.sarahmonitor.emg.EmgSection() },
             PageSection(3) {
                 Section("Glucose", MonitorColors.glucose, "OneTouch Verio Reflect: in OneTouch Reveal, share or export your results and pick Sarah Monitor. Health Connect and CSV files work too, and you can add a reading by hand on the Glucose card.") {
                     Buttons {

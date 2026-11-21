@@ -309,11 +309,8 @@ private fun Vital(label: String, value: String, detail: String, color: Color, mo
 
 @Composable
 private fun EmgPanel(modifier: Modifier) {
-    Panel("EMG", MonitorColors.pnn50, modifier) {
-        Text(
-            "No EMG sensor connected. The MyoWare perineal EMG from Sarah runs through a USB/serial bridge — support for it is being added (see Sensors).",
-            color = MonitorColors.label, fontSize = 13.sp
-        )
+    Panel("EMG", com.pulsepointlabs.sarahmonitor.emg.EmgColor, modifier) {
+        Column(Modifier.fillMaxWidth().heightIn(min = 90.dp, max = 220.dp)) { com.pulsepointlabs.sarahmonitor.emg.EmgCardContent() }
     }
 }
 

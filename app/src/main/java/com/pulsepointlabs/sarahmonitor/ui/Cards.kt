@@ -62,6 +62,7 @@ private fun designSize(type: CardType): Pair<Float, Float> = when (type) {
     CardType.BloodPressure -> 380f to 260f
     CardType.Glucose -> 260f to 200f
     CardType.SpO2, CardType.Body -> 260f to 200f
+    CardType.Emg -> 380f to 260f
 }
 
 private fun identity(type: CardType): Color = when (type) {
@@ -74,6 +75,7 @@ private fun identity(type: CardType): Color = when (type) {
     CardType.Glucose -> MonitorColors.glucose
     CardType.SpO2 -> com.pulsepointlabs.sarahmonitor.vitals.SpO2Color
     CardType.Body -> com.pulsepointlabs.sarahmonitor.vitals.BodyColor
+    CardType.Emg -> com.pulsepointlabs.sarahmonitor.emg.EmgColor
 }
 
 /** One dashboard card (also used, compact, in the floating overlays). */
@@ -102,6 +104,7 @@ fun MonitorCard(type: CardType, modifier: Modifier = Modifier) {
                     CardType.Glucose -> GlucoseCard()
                     CardType.SpO2 -> com.pulsepointlabs.sarahmonitor.vitals.SpO2Card()
                     CardType.Body -> com.pulsepointlabs.sarahmonitor.vitals.BodyCard()
+                    CardType.Emg -> com.pulsepointlabs.sarahmonitor.emg.EmgCard()
                 }
             }
         }
