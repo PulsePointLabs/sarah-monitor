@@ -69,6 +69,9 @@ fun markerColor(types: String): Color = when (MarkerTypes.split(types).firstOrNu
     "arousal" -> MonitorColors.bp
     "plateau" -> Color(0xFFFB923C)
     "edge" -> MonitorColors.pelvic
+    "near" -> Color(0xFFFF9F43)
+    "catheter" -> Color(0xFF93C5FD)
+    "enema" -> Color(0xFF86EFAC)
     "orgasm" -> Color(0xFFFF7AB6)
     "ejaculation" -> Color(0xFFE879F9)
     "resolution" -> Color(0xFFA5B4FC)

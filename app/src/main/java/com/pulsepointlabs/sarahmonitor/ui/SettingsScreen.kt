@@ -50,18 +50,18 @@ fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, e
         MonitorService.start(context)
         onDispose { OverlaySettings.setPreviewing(false) }
     }
-    Box(modifier, contentAlignment = Alignment.TopCenter) {
-        Column(
-            Modifier.widthIn(max = 760.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            OverlaySettingsSection()
-            HeartbeatSoundSection()
-            VoiceSection(onMessage)
-            AlertsSection()
-            extra()
-        }
-    }
+    AdaptiveColumns(
+        listOf(
+            PageSection(10) { OverlaySettingsSection() },
+            PageSection(10) { HeartbeatSoundSection() },
+            PageSection(5) { VoiceSection(onMessage) },
+            PageSection(7) { com.pulsepointlabs.sarahmonitor.response.CoachSettingsSection() },
+            PageSection(8) { AlertsSection() },
+            PageSection(14) { AlertListSection() },
+            PageSection(3) { Column { extra() } }
+        ),
+        modifier
+    )
 }
 
 @Composable

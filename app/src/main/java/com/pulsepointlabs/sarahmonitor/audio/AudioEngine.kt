@@ -25,6 +25,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 /**
@@ -57,6 +58,8 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
         AlertLimits(AudioSettings.highHrLimit.value, AudioSettings.lowHrLimit.value, AudioSettings.longHoldSeconds.value)
     }
     private val scheduler = BeatScheduler()
+    /** One voice at a time: alerts and Sarah's live feedback take turns. */
+    private val speechLock = kotlinx.coroutines.sync.Mutex()
     private val queue = Channel<LiveAlert>(capacity = 6, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     private val _speaking = MutableStateFlow(false)
@@ -155,7 +158,7 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
     }
 
     /** Speaks through the alert queue's voice, ducking the beeps. Also used for "Test voice". */
-    suspend fun say(text: String) {
+    suspend fun say(text: String) = speechLock.withLock {
         _speaking.value = true
         try {
             _voiceProblem.value = voice.speak(text, AudioSettings.alertVolume.value, AudioSettings.voiceEngine.value)

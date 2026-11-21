@@ -5,6 +5,10 @@ import android.util.Log
 import com.pulsepointlabs.sarahmonitor.audio.AudioEngine
 import com.pulsepointlabs.sarahmonitor.ble.BluetoothHrClient
 import com.pulsepointlabs.sarahmonitor.ble.ConnectionState
+import com.pulsepointlabs.sarahmonitor.response.ArousalEngine
+import com.pulsepointlabs.sarahmonitor.response.ResponseSettings
+import com.pulsepointlabs.sarahmonitor.response.ResponseState
+import com.pulsepointlabs.sarahmonitor.response.SarahCoach
 import com.pulsepointlabs.sarahmonitor.ble.CivetClient
 import com.pulsepointlabs.sarahmonitor.ble.OmronBleClient
 import com.pulsepointlabs.sarahmonitor.session.MarkerPreferences
@@ -49,6 +53,13 @@ object MonitorHub {
     private val pelvicProcessor = PelvicProcessor()
     private val trendRecorder = TrendRecorder()
 
+    private val arousal = ArousalEngine()
+    private val _response = MutableStateFlow(ResponseState())
+    /** Live sexual-response read: phase, arousal, approach to climax. */
+    val response: StateFlow<ResponseState> = _response
+    /** Sarah's live spoken feedback (Claude brain, Sarah's voice). */
+    lateinit var coach: SarahCoach; private set
+
     private val _heart = MutableStateFlow(HeartSnapshot())
     val heart: StateFlow<HeartSnapshot> = _heart
 
@@ -82,6 +93,11 @@ object MonitorHub {
         val baselineStore = LoadBaselineStore(app)
         heartEngine = HeartEngine(baselineStore.load(), baselineStore::save)
         audio = AudioEngine(app) { recorder.active.value != null }
+        ResponseSettings.load(app)
+        arousal.setProfile(ResponseSettings.profile.value)
+        scope.launch { ResponseSettings.profile.collect { arousal.setProfile(it) } }
+        coach = SarahCoach({ _response.value }, { recorder.active.value != null }, { audio.say(it) }, scope)
+        coach.start()
         audio.h10Connected = { h10.state.value == ConnectionState.Connected || h10.state.value == ConnectionState.Stale }
 
         scope.launch {
@@ -91,6 +107,7 @@ object MonitorHub {
                 _heart.value = snapshot
                 recorder.onHeart(snapshot, heartEngine.lastRr)
                 audio.onHeart(snapshot, heartEngine.lastRr)
+                _response.value = arousal.onHeart(reading.timestampMs, snapshot.heartRate, snapshot.rmssdMs, snapshot.load.score)
                 val t = reading.timestampMs
                 recentRecorder.add(Metric.Hr, t, snapshot.heartRate?.toDouble())
                 recentRecorder.add(Metric.Rmssd, t, snapshot.rmssdMs)
@@ -113,6 +130,7 @@ object MonitorHub {
                 trendRecorder.addPelvic(sample.timestampMs, snapshot.aboveRestKpa)
                 recorder.onPelvic(sample.timestampMs, sample.pressureKpa, snapshot.aboveRestKpa, snapshot.holding)
                 audio.onPelvic(sample.timestampMs, snapshot)
+                arousal.onPelvic(sample.timestampMs, snapshot.aboveRestKpa, snapshot.holding, snapshot.pulseCount, snapshot.lastPulse)
                 // Pressure can arrive faster than the screen refreshes; publish at most every 33 ms.
                 if (sample.monotonicMs - lastPublish >= 33L || snapshot.capture != null) {
                     lastPublish = sample.monotonicMs
@@ -199,6 +217,10 @@ object MonitorHub {
 
     /** Marks an event at [timestampMs] (the moment the button was pressed). Returns false if not recording. */
     fun markEvent(timestampMs: Long, types: Set<String>, note: String, onDone: (Boolean) -> Unit = {}) {
+        // Marked climaxes teach the arousal engine this person's climax HR rise.
+        if (recorder.active.value != null && ("orgasm" in types || "ejaculation" in types)) arousal.climaxSample()?.let { ResponseSettings.addClimax(it) }
+        arousal.onMarker(timestampMs, types)
+        _response.value = arousal.current()
         scope.launch {
             val marker = recorder.addMarker(timestampMs, types, note)
             if (marker != null) MarkerPreferences.remember(appContext, types, note)
@@ -208,10 +230,23 @@ object MonitorHub {
 
     private lateinit var appContext: Context
 
+    /** The user confirms a detected climax: marks it at the moment it was detected. */
+    fun confirmClimax(onDone: (Boolean) -> Unit = {}) {
+        val c = _response.value.candidate ?: return
+        markEvent(c.timestampMs, setOf("orgasm"), "Climax signature confirmed: ${c.reason}", onDone)
+    }
+
+    fun dismissClimax() {
+        arousal.dismissCandidate()
+        _response.value = arousal.current().copy(candidate = null)
+    }
+
     /** Starts a fresh monitoring period: clears HR/HRV/Load stats, pelvic counts and the trend graphs. */
     fun resetSession() {
         heartEngine.reset()
         audio.resetSession()
+        arousal.reset()
+        _response.value = ResponseState()
         pelvicProcessor.resetStats()
         trendRecorder.clear()
         recentRecorder.clear()

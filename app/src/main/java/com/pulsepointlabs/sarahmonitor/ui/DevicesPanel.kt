@@ -48,22 +48,22 @@ fun SensorsScreen(
     onMessage: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    androidx.compose.foundation.layout.Box(modifier, contentAlignment = Alignment.TopCenter) {
-        Column(
-            Modifier.widthIn(max = 760.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            H10Section()
-            CivetSection(onMessage)
-            OmronSection()
-            Section("Glucose", MonitorColors.glucose, "OneTouch Verio Reflect: in OneTouch Reveal, share or export your results and pick Sarah Monitor. Health Connect and CSV files work too, and you can add a reading by hand on the Glucose card.") {
-                Buttons {
-                    PanelButton("Import CSV", onCsvImport)
-                    PanelButton("Health Connect", onHealthConnectImport)
+    AdaptiveColumns(
+        listOf(
+            PageSection(7) { H10Section() },
+            PageSection(10) { CivetSection(onMessage) },
+            PageSection(6) { OmronSection() },
+            PageSection(3) {
+                Section("Glucose", MonitorColors.glucose, "OneTouch Verio Reflect: in OneTouch Reveal, share or export your results and pick Sarah Monitor. Health Connect and CSV files work too, and you can add a reading by hand on the Glucose card.") {
+                    Buttons {
+                        PanelButton("Import CSV", onCsvImport)
+                        PanelButton("Health Connect", onHealthConnectImport)
+                    }
                 }
             }
-        }
-    }
+        ),
+        modifier
+    )
 }
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)

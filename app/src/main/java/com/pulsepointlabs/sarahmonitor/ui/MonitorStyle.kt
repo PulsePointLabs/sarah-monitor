@@ -295,6 +295,15 @@ fun TrendArrows(strength: Double, modifier: Modifier) {
         val step = h / 3.6f
         val stroke = (w * 0.16f).coerceAtLeast(2f)
         val thresholds = floatArrayOf(0.12f, 0.4f, 0.7f)
+        // Steady: a short dim dash, so you can see the indicator is there and reads "flat".
+        val steady = (1f - mag / 0.12f).coerceIn(0f, 1f)
+        if (steady > 0f) {
+            drawLine(
+                MonitorColors.label.copy(alpha = 0.55f * steady),
+                androidx.compose.ui.geometry.Offset(w * 0.2f, h * 0.5f), androidx.compose.ui.geometry.Offset(w * 0.8f, h * 0.5f),
+                strokeWidth = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round
+            )
+        }
         for (i in 0 until 3) {
             val a = ((mag - thresholds[i]) / 0.15f).coerceIn(0f, 1f)
             if (a <= 0f) continue

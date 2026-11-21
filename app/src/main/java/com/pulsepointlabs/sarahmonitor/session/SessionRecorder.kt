@@ -169,9 +169,12 @@ object MarkerTypes {
         Type("arousal", "Arousal", Group.Sexual),
         Type("plateau", "Plateau", Group.Sexual),
         Type("edge", "Edge", Group.Sexual),
+        Type("near", "Near climax", Group.Sexual),
         Type("orgasm", "Orgasm", Group.Sexual),
         Type("ejaculation", "Ejaculation", Group.Sexual),
-        Type("resolution", "Resolution", Group.Sexual)
+        Type("resolution", "Resolution", Group.Sexual),
+        Type("catheter", "Catheter", Group.Sexual),
+        Type("enema", "Enema", Group.Sexual)
     )
 
     fun inGroup(group: Group): List<Type> = all.filter { it.group == group }

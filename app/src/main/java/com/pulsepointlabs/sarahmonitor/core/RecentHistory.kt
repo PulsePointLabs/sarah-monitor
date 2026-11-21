@@ -5,7 +5,7 @@ enum class Metric(
     /** A change of this size over a minute counts as a strong rise or fall. */
     val fullScale: Double
 ) {
-    Hr(10.0), Rmssd(10.0), Sdnn(10.0), Pnn50(10.0), Load(20.0), Pelvic(1.0)
+    Hr(10.0), Rmssd(10.0), Sdnn(10.0), Pnn50(10.0), Load(12.0), Pelvic(1.0)
 }
 
 data class TimedValue(val timestampMs: Long, val value: Double)

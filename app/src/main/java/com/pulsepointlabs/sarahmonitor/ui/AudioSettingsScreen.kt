@@ -99,8 +99,6 @@ fun AlertsSection() {
     val tone by AudioSettings.alertTone.collectAsState()
     val volume by AudioSettings.alertVolume.collectAsState()
     val engine by AudioSettings.voiceEngine.collectAsState()
-    val modes by AudioSettings.modes.collectAsState()
-    val vibrate by AudioSettings.vibrate.collectAsState()
     val highHr by AudioSettings.highHrLimit.collectAsState()
     val lowHr by AudioSettings.lowHrLimit.collectAsState()
     val hold by AudioSettings.longHoldSeconds.collectAsState()
@@ -130,6 +128,15 @@ fun AlertsSection() {
         Text("Auto = this session's median + 25 (at least 100). Slide left for Auto.", color = MonitorColors.label, fontSize = 12.sp)
         SettingSlider("Low heart rate limit", "$lowHr bpm", lowHr.toFloat(), 35f..60f) { AudioSettings.setLowHrLimit(it.toInt()) }
         SettingSlider("Long pelvic hold", "$hold s", hold.toFloat(), 5f..30f) { AudioSettings.setLongHoldSeconds(it.toInt()) }
+    }
+}
+
+/** Each alert's delivery: off / tone / voice / both, plus vibrate, and a ▶ sample. */
+@Composable
+fun AlertListSection() {
+    val modes by AudioSettings.modes.collectAsState()
+    val vibrate by AudioSettings.vibrate.collectAsState()
+    SettingsSection("Which alerts", MonitorColors.warn, "Tap ▶ to hear a sample.") {
         AlertKind.entries.forEach { kind ->
             val mode = modes[kind] ?: kind.defaultMode
             Column(

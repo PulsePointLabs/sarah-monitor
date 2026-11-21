@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -292,7 +293,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen(val label: String) { Monitor("Monitor"), Sessions("Sessions"), Sensors("Sensors"), Settings("Settings") }
+private enum class Screen(val label: String) { Monitor("Monitor"), Response("Response"), Sessions("Sessions"), Sensors("Sensors"), Settings("Settings") }
 
 @Composable
 private fun MonitorScreen(
@@ -370,6 +371,7 @@ private fun MonitorScreen(
                     onMessage = onMessage,
                     modifier = Modifier.fillMaxSize()
                 )
+                screen == Screen.Response -> com.pulsepointlabs.sarahmonitor.response.ResponseScreen(Modifier.fillMaxSize())
                 screen == Screen.Sessions -> SessionsScreen(onOpen = { reviewId = it }, modifier = Modifier.fillMaxSize())
                 screen == Screen.Sensors -> SensorsScreen(onHealthConnect, onCsvImport, onMessage, Modifier.fillMaxSize())
                 screen == Screen.Settings -> SettingsScreen(onMessage, Modifier.fillMaxSize())
@@ -540,6 +542,7 @@ private fun Tabs(screen: Screen, compact: Boolean, onScreen: (Screen) -> Unit) {
                         when (s) {
                             Screen.Monitor -> Icons.Default.MonitorHeart
                             Screen.Sessions -> Icons.Default.History
+                            Screen.Response -> Icons.Default.Favorite
                             Screen.Sensors -> Icons.Default.Bluetooth
                             Screen.Settings -> Icons.Default.Settings
                         },
