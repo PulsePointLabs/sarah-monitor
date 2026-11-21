@@ -56,3 +56,15 @@ class RealtimeTranscriptionTest {
         assertTrue(RealtimeTranscriber.levelDb(ByteArray(200), 200) < -90.0 + 1e-6 || RealtimeTranscriber.levelDb(ByteArray(200), 200) <= -100.0)
     }
 }
+
+class TranscriptNewTextTest {
+    @org.junit.Test
+    fun existingNoteAloneIsNotNewText() {
+        val a = TranscriptAssembler("Earlier note.")
+        org.junit.Assert.assertFalse(a.hasNewText())
+        a.touch("i1")
+        org.junit.Assert.assertFalse(a.hasNewText())
+        a.delta("i1", "Hello")
+        org.junit.Assert.assertTrue(a.hasNewText())
+    }
+}

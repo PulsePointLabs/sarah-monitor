@@ -125,10 +125,11 @@ fun MarkEventDialog(
     fun ui(block: () -> Unit) = main.post(block)
     fun stopRealtime(then: (String) -> Unit = {}) {
         scope.launch {
+            val before = note
             val text = realtime.finish()
             listening = false; level = 0f
             if (text.isNotBlank()) note = text
-            status = "Transcribed ✓"
+            status = if (text.isNotBlank() && text.trim() != before.trim()) "Transcribed ✓" else realtime.lastProblem ?: "No speech recognized"
             then(note)
         }
     }

@@ -103,12 +103,12 @@ class WhisperTranscriber(private val context: Context) {
         const val PROMPT = "Event note for a physiology monitoring session. Terms: HR, HRV, RMSSD, SDNN, pNN50, " +
             "CIVET, H10, Omron, BP, glucose, arousal, edging, plateau, orgasm, ejaculation, pelvic floor, kegel."
 
-        fun transcribe(audio: ByteArray, apiKey: String, fileName: String = "note.m4a"): String {
+        fun transcribe(audio: ByteArray, apiKey: String, fileName: String = "note.m4a", fileType: String = "audio/mp4", model: String = "whisper-1"): String {
             val boundary = "----SarahMonitor" + UUID.randomUUID().toString().replace("-", "")
             val body = multipartBody(
                 boundary,
-                fields = listOf("model" to "whisper-1", "response_format" to "text", "prompt" to PROMPT),
-                fileField = "file", fileName = fileName, fileType = "audio/mp4", fileBytes = audio
+                fields = listOf("model" to model, "response_format" to "text", "prompt" to PROMPT),
+                fileField = "file", fileName = fileName, fileType = fileType, fileBytes = audio
             )
             val connection = URL(ENDPOINT).openConnection() as HttpURLConnection
             try {

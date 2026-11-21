@@ -44,6 +44,9 @@ class TranscriptAssembler(private val prefix: String = "") {
 
     fun pending(): Boolean = items.keys.any { it !in done && items[it]!!.isNotBlank() }
 
+    /** True once anything beyond the existing note has been transcribed. */
+    fun hasNewText(): Boolean = items.values.any { it.isNotBlank() }
+
     fun text(): String {
         val body = items.values.map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" ")
         return listOf(prefix.trim(), body).filter { it.isNotEmpty() }.joinToString(" ")
@@ -66,6 +69,14 @@ class RealtimeTranscriber {
     private var finished: CompletableDeferred<Unit>? = null
     @Volatile private var model = LIVE_MODEL
     @Volatile private var gotText = false
+    /** Audio waits until the server has applied our session settings (otherwise early audio uses defaults). */
+    @Volatile private var ready = false
+    private val pending = ArrayDeque<ByteArray>()
+    /** Everything recorded, so a silent live stream can still be transcribed afterwards. */
+    private val captured = java.io.ByteArrayOutputStream()
+    /** Last thing that went wrong on the live stream, shown if no text comes back. */
+    @Volatile var lastProblem: String? = null
+        private set
     @Volatile var active = false
         private set
 
@@ -82,6 +93,10 @@ class RealtimeTranscriber {
         assembler = TranscriptAssembler(existingText)
         model = LIVE_MODEL
         gotText = false
+        ready = false
+        synchronized(pending) { pending.clear() }
+        synchronized(captured) { captured.reset() }
+        lastProblem = null
         active = true
         connect()
         startMic()
@@ -97,6 +112,8 @@ class RealtimeTranscriber {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 webSocket.send(sessionUpdate(model).toString())
                 onStatus("Listening…")
+                // If the server never confirms, start streaming anyway after 3 s.
+                scope.launch { kotlinx.coroutines.delay(3_000L); if (socket === webSocket) markReady(webSocket) }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) = handle(webSocket, text)
@@ -120,6 +137,7 @@ class RealtimeTranscriber {
         if (socket !== webSocket) return
         val event = runCatching { JSONObject(raw) }.getOrNull() ?: return
         when (event.optString("type")) {
+            "session.updated", "transcription_session.updated" -> markReady(webSocket)
             "input_audio_buffer.committed" -> assembler.touch(event.optString("item_id"))
             "input_audio_buffer.speech_started" -> { assembler.touch(event.optString("item_id")); onStatus("Hearing you…") }
             "conversation.item.input_audio_transcription.delta" -> {
@@ -134,8 +152,11 @@ class RealtimeTranscriber {
                 onStatus("Listening…")
                 if (!active && !assembler.pending()) finished?.complete(Unit)
             }
-            "conversation.item.input_audio_transcription.failed" ->
-                onStatus("A phrase couldn't be transcribed (${event.optJSONObject("error")?.optString("message").orEmpty()})")
+            "conversation.item.input_audio_transcription.failed" -> {
+                lastProblem = "Live: " + event.optJSONObject("error")?.optString("message").orEmpty().ifBlank { "a phrase couldn't be transcribed" }
+                onStatus(lastProblem!!)
+                if (!active && !assembler.pending()) finished?.complete(Unit)
+            }
             "error" -> {
                 val err = event.optJSONObject("error")
                 val message = err?.optString("message").orEmpty()
@@ -145,12 +166,14 @@ class RealtimeTranscriber {
                     if (!active && !assembler.pending()) finished?.complete(Unit)
                     return
                 }
+                lastProblem = "Live: " + message.ifBlank { "error" } + if (param.isNotBlank()) " ($param)" else ""
                 if (model == LIVE_MODEL && !gotText && (param.contains("transcription") || param.contains("turn_detection") || message.contains("model", true))) {
                     model = FALLBACK_MODEL
+                    ready = false
                     webSocket.send(sessionUpdate(model).toString())
                     return
                 }
-                onStatus(message.ifBlank { "Live transcription error" })
+                onStatus(lastProblem!!)
             }
         }
     }
@@ -180,11 +203,13 @@ class RealtimeTranscriber {
                 // Track the room's noise floor, so "speech" means clearly above it.
                 noiseFloor = if (db < noiseFloor) db else noiseFloor * 0.995 + db * 0.005
                 onLevel(((db + 60) / 60).toFloat().coerceIn(0f, 1f))
-                socket?.send(JSONObject().put("type", "input_audio_buffer.append").put("audio", Base64.encodeToString(buf, 0, n, Base64.NO_WRAP)).toString())
+                val chunk = buf.copyOf(n)
+                synchronized(captured) { if (captured.size() < MAX_CAPTURE_BYTES) captured.write(chunk) }
+                if (ready) sendAudio(chunk) else synchronized(pending) { pending.addLast(chunk); while (pending.size > 300) pending.removeFirst() }
                 val speaking = db > maxOf(noiseFloor + 12, -45.0)
                 if (speaking) { spoke = true; quietMs = 0 } else quietMs += CHUNK_MS
                 // Our own turn detection for the live model (it has none): commit after 0.7 s of quiet.
-                if (model == LIVE_MODEL && spoke && quietMs >= 700) {
+                if (ready && model == LIVE_MODEL && spoke && quietMs >= 700) {
                     socket?.send("""{"type":"input_audio_buffer.commit"}""")
                     spoke = false
                 }
@@ -192,19 +217,43 @@ class RealtimeTranscriber {
         }
     }
 
-    /** Stops listening and waits (up to 4 s) for the last words to come back. Returns the full text. */
+    private fun sendAudio(chunk: ByteArray) {
+        socket?.send(JSONObject().put("type", "input_audio_buffer.append").put("audio", Base64.encodeToString(chunk, Base64.NO_WRAP)).toString())
+    }
+
+    private fun markReady(webSocket: WebSocket) {
+        if (ready || socket !== webSocket) return
+        ready = true
+        val backlog = synchronized(pending) { pending.toList().also { pending.clear() } }
+        backlog.forEach { sendAudio(it) }
+    }
+
+    /** Stops listening and waits (up to 8 s) for the last words to come back. Returns the full text. */
     suspend fun finish(): String {
         if (!active) return assembler.text()
         active = false
         finished = CompletableDeferred()
         recordJob?.cancel()
         releaseMic()
+        if (!ready) socket?.let { markReady(it) }
         socket?.send("""{"type":"input_audio_buffer.commit"}""")
         onStatus("Finishing…")
-        withTimeoutOrNull(4_000L) { finished?.await() }
+        withTimeoutOrNull(8_000L) { finished?.await() }
         closeSocket()
         onLevel(0f)
-        return VoiceTextNormalizer.normalize(assembler.text())
+        val live = VoiceTextNormalizer.normalize(assembler.text())
+        if (assembler.hasNewText()) return live
+        // The live stream gave nothing back: transcribe the recording in one go so the words aren't lost.
+        val pcm = synchronized(captured) { captured.toByteArray() }
+        if (pcm.size < SAMPLE_RATE * 2 / 2) return live // under 0.5 s
+        onStatus("Transcribing the recording…")
+        val wav = com.pulsepointlabs.sarahmonitor.audio.BeatSynth.wav(ShortArray(pcm.size / 2) { i -> ((pcm[2 * i + 1].toInt() shl 8) or (pcm[2 * i].toInt() and 0xff)).toShort() }, SAMPLE_RATE)
+        val text = runCatching { WhisperTranscriber.transcribe(wav, apiKey, "note.wav", "audio/wav", FALLBACK_MODEL) }
+            .recoverCatching { WhisperTranscriber.transcribe(wav, apiKey, "note.wav", "audio/wav", "whisper-1") }
+            .onFailure { lastProblem = (lastProblem?.let { "$it · " } ?: "") + (it.message ?: "transcription failed") }
+            .getOrNull()?.trim().orEmpty()
+        if (text.isBlank()) return live
+        return VoiceTextNormalizer.normalize(listOf(live, text).filter { it.isNotBlank() }.joinToString(" "))
     }
 
     fun stop() {
@@ -234,6 +283,8 @@ class RealtimeTranscriber {
 
     companion object {
         const val SAMPLE_RATE = 24_000
+        /** Keep up to 8 minutes of audio for the after-the-fact fallback. */
+        private const val MAX_CAPTURE_BYTES = SAMPLE_RATE * 2 * 480 // 8 min ≈ 23 MB, under the 25 MB upload limit
         private const val CHUNK_MS = 100
         private const val CHUNK_BYTES = SAMPLE_RATE * 2 * CHUNK_MS / 1000
         const val LIVE_MODEL = "gpt-live-transcribe"
