@@ -317,7 +317,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen(val label: String) { Monitor("Monitor"), Response("Response"), Kegel("Kegels"), Health("Health"), Sessions("Sessions"), Sensors("Sensors"), Settings("Settings") }
+internal enum class Screen(val label: String) { Monitor("Monitor"), Response("Response"), Kegel("Kegels"), Health("Health"), Sessions("Sessions"), Sensors("Sensors"), Settings("Settings") }
 
 @Composable
 private fun MonitorScreen(
@@ -477,7 +477,7 @@ private fun MonitorScreen(
 private val clockFormat = DateTimeFormatter.ofPattern("HH:mm:ss")
 
 @Composable
-private fun TopBar(
+internal fun TopBar(
     screen: Screen,
     recording: com.pulsepointlabs.sarahmonitor.session.SessionEntity?,
     arranging: Boolean,
@@ -500,15 +500,39 @@ private fun TopBar(
         // Three widths: full desktop bar (DeX), medium (tablet / phone landscape) and narrow (phone portrait).
         val full = maxWidth >= 1150.dp
         val narrow = maxWidth < 600.dp
-        Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (narrow) 6.dp else 8.dp)) {
-            if (full) Text("Sarah Monitor", color = MonitorColors.text, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-            if (!narrow) {
-                Text(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(clockFormat), color = MonitorColors.label, fontSize = 14.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
-                if (full) recording?.let { SessionClock(it.startTimeMs, now) }
+        val moreMenu: @Composable () -> Unit = {
+            Box {
+                BarIcon(Icons.Default.MoreVert, "More", { menu = true })
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MonitorColors.panel) {
+                    val board = screen == Screen.Response
+                    DropdownMenuItem(text = { Text("Cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onCards() })
+                    if (!narrow) DropdownMenuItem(text = { Text(if (arranging) "Done arranging" else "Arrange cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onArrange() })
+                    DropdownMenuItem(text = { Text("Start fresh") }, onClick = { menu = false; onReset() })
+                }
             }
+        }
+        if (narrow) {
+            // Phone portrait: tabs get the full width on top; clock, record, mark and toggles get their own row.
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Tabs(screen, compact = true, fill = true, onScreen = onScreen)
+                Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(clockFormat), color = MonitorColors.label, fontSize = 14.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+                    Spacer(Modifier.weight(1f))
+                    RecordButton(recording, now, compact = false, onClick = onRecord)
+                    MarkButton(enabled = recording != null, compact = false, onClick = onMark)
+                    OverlayToggle()
+                    moreMenu()
+                }
+            }
+            return@BoxWithConstraints
+        }
+        Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (full) Text("Sarah Monitor", color = MonitorColors.text, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(clockFormat), color = MonitorColors.label, fontSize = 14.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+            if (full) recording?.let { SessionClock(it.startTimeMs, now) }
             Tabs(screen, compact = !full, onScreen = onScreen)
             Spacer(Modifier.weight(1f))
-            RecordButton(recording, now, compact = narrow, onClick = onRecord)
+            RecordButton(recording, now, compact = false, onClick = onRecord)
             MarkButton(enabled = recording != null, compact = !full, onClick = onMark)
             OverlayToggle()
             if (full) {
@@ -520,17 +544,7 @@ private fun TopBar(
                     BarIcon(Icons.Default.OpenWith, if (arranging) "Done arranging" else "Arrange cards", onArrange, highlighted = arranging)
                     BarIcon(Icons.Default.RestartAlt, "Start fresh", onReset)
                 }
-            } else {
-                Box {
-                    BarIcon(Icons.Default.MoreVert, "More", { menu = true })
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MonitorColors.panel) {
-                        val board = screen == Screen.Response
-                        DropdownMenuItem(text = { Text("Cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onCards() })
-                        if (!narrow) DropdownMenuItem(text = { Text(if (arranging) "Done arranging" else "Arrange cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onArrange() })
-                        DropdownMenuItem(text = { Text("Start fresh") }, onClick = { menu = false; onReset() })
-                    }
-                }
-            }
+            } else moreMenu()
         }
     }
 }
@@ -570,13 +584,13 @@ private fun SessionClock(startMs: Long, now: Long) {
 }
 
 @Composable
-private fun Tabs(screen: Screen, compact: Boolean, onScreen: (Screen) -> Unit) {
-    Row(Modifier.border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(8.dp))) {
+private fun Tabs(screen: Screen, compact: Boolean, fill: Boolean = false, onScreen: (Screen) -> Unit) {
+    Row((if (fill) Modifier.fillMaxWidth() else Modifier).border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(8.dp))) {
         Screen.entries.forEach { s ->
             val on = s == screen
             val tint = if (on) MonitorColors.background else MonitorColors.label
             Box(
-                Modifier
+                (if (fill) Modifier.weight(1f) else Modifier)
                     .background(if (on) MonitorColors.label else Color.Transparent, RoundedCornerShape(8.dp))
                     .clickable { onScreen(s) }
                     .padding(horizontal = if (compact) 10.dp else 10.dp, vertical = 5.dp),
