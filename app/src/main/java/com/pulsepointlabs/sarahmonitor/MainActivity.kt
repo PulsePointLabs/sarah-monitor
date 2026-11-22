@@ -212,25 +212,39 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Overlays hide while this window is the focused one (on DeX: the active window) and come back after.
+    // Overlays hide while the app is on screen. Phone: whenever it's resumed. Multi-window (DeX, split screen):
+    // only while it's the active window, so they come back when you click into another app.
+    private var resumedNow = false
+    private var topResumed = true
+    private fun updateAppInFront() = OverlaySettings.setAppInFront(resumedNow && (topResumed || !isInMultiWindowMode))
+
     override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
         super.onTopResumedActivityChanged(isTopResumedActivity)
-        OverlaySettings.setAppInFront(isTopResumedActivity)
+        topResumed = isTopResumedActivity
+        updateAppInFront()
+    }
+
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+        updateAppInFront()
     }
 
     override fun onPause() {
         super.onPause()
-        if (Build.VERSION.SDK_INT < 29) OverlaySettings.setAppInFront(false)
+        resumedNow = false
+        updateAppInFront()
     }
 
     override fun onStop() {
         super.onStop()
+        resumedNow = false
         OverlaySettings.setAppInFront(false)
     }
 
     override fun onResume() {
         super.onResume()
-        if (Build.VERSION.SDK_INT < 29) OverlaySettings.setAppInFront(true)
+        resumedNow = true
+        updateAppInFront()
         OverlayDisplay.recordActivityDisplay(this)
         MonitorHub.connectRemembered()
         // While on screen, let the service (re)claim microphone use for voice notes from the floating panel.

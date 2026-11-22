@@ -153,8 +153,13 @@ fun CardTitle(label: String, color: Color, unit: String = "", modifier: Modifier
     }
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.size(width = 4.dp, height = s.dp(15f)).background(color, RoundedCornerShape(2.dp)))
-        Text(label, color = color, fontSize = s.sp(14f), fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.weight(1f))
-        trailing()
+        // The title always gets its full width; status text on the right gives way (ellipsis) instead.
+        Text(label, color = color, fontSize = s.sp(14f), fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                CompositionLocalProvider(androidx.compose.material3.LocalTextStyle provides androidx.compose.material3.LocalTextStyle.current.copy(textAlign = androidx.compose.ui.text.style.TextAlign.End)) { trailing() }
+            }
+        }
         if (unit.isNotBlank()) UnitTag(unit, color)
     }
 }

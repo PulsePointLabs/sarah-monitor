@@ -194,7 +194,7 @@ private fun HeartRateCard() {
     val beatMs = if (!fresh) null else heart.latestRrMs?.takeIf { it in 300..2_000 }?.toLong()
         ?: heart.heartRate?.takeIf { it in 30..220 }?.let { 60_000L / it }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        CardTitle("HR", if (LocalOverlayMode.current) tint else MonitorColors.hr, "bpm") { Text(link, color = linkColor, fontSize = LocalCardScale.current.sp(11f), maxLines = 1) }
+        CardTitle("HR", if (LocalOverlayMode.current) tint else MonitorColors.hr, "bpm") { Text(link, color = linkColor, fontSize = LocalCardScale.current.sp(11f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
         BigReading(
             value = if (fresh) heart.heartRate?.toString() ?: "--" else "--",
             color = tint,
@@ -219,7 +219,7 @@ private fun HrvCard() {
     val recent by MonitorHub.recent.collectAsState()
     val s = LocalCardScale.current
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        CardTitle("HRV", MonitorColors.rmssd, "2 min") { Text(heart.hrvQuality, color = MonitorColors.label, fontSize = s.sp(11f), maxLines = 1) }
+        CardTitle("HRV", MonitorColors.rmssd, "2 min") { Text(heart.hrvQuality, color = MonitorColors.label, fontSize = s.sp(11f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
             val wide = maxWidth > maxHeight * 1.5f
             val items = listOf(
@@ -270,7 +270,7 @@ private fun LoadCard() {
     val load = heart.load
     val color = loadColor(load.score)
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        CardTitle("Load", if (LocalOverlayMode.current) trendColor(recent.trend(Metric.Load)) else MonitorColors.load, "0–100") { Text(loadStatus(load), color = if (load.score == null) MonitorColors.warn else color, fontSize = LocalCardScale.current.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1) }
+        CardTitle("Load", if (LocalOverlayMode.current) trendColor(recent.trend(Metric.Load)) else MonitorColors.load, "0–100") { Text(loadStatus(load), color = if (load.score == null) MonitorColors.warn else color, fontSize = LocalCardScale.current.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
         BigReading(
             load.score?.toString() ?: "--", trendColor(recent.trend(Metric.Load)), Modifier.fillMaxWidth().weight(1f),
             maxChars = 3, trend = recent.values(Metric.Load), trendStrength = recent.trend(Metric.Load)
@@ -442,7 +442,7 @@ private fun PelvicCard() {
     val recent by MonitorHub.recent.collectAsState()
     val color = trendColor(recent.trend(Metric.Pelvic))
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        CardTitle("Pelvic pressure", if (LocalOverlayMode.current) color else MonitorColors.pelvic, "kPa") { Text(link, color = linkColor, fontSize = s.sp(11f), maxLines = 1) }
+        CardTitle("Pelvic pressure", if (LocalOverlayMode.current) color else MonitorColors.pelvic, "kPa") { Text(link, color = linkColor, fontSize = s.sp(11f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
         BigReading(
             value = if (fresh) fmt(p.aboveRestKpa, 1) else "--",
             color = color,
