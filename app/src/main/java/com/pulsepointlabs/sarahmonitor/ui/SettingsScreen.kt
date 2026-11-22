@@ -56,6 +56,7 @@ fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, e
             PageSection(10) { HeartbeatSoundSection() },
             PageSection(5) { VoiceSection(onMessage) },
             PageSection(7) { com.pulsepointlabs.sarahmonitor.response.CoachSettingsSection() },
+            PageSection(6) { StressVoiceSection() },
             PageSection(8) { AlertsSection() },
             PageSection(14) { AlertListSection() },
             PageSection(3) { Column { extra() } }

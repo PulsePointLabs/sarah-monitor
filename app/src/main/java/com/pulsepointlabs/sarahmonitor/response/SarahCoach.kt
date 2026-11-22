@@ -144,6 +144,7 @@ class SarahCoach(
         if (!ResponseSettings.coachOn.value) { _status.value = "Off"; return }
         if (ResponseSettings.apiKey.value.isBlank()) { _status.value = "Add your Anthropic key in Settings"; return }
         if (!recording()) { _status.value = "Waiting for a recording"; lastPhase = null; return }
+        if (generalSession()) { _status.value = "Quiet in general sessions"; lastPhase = null; return }
         val s = state()
         val now = System.currentTimeMillis()
         val phaseChanged = lastPhase != null && s.phase != lastPhase
@@ -184,6 +185,10 @@ class SarahCoach(
             }
         }
     }
+
+    private fun generalSession() =
+        com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(com.pulsepointlabs.sarahmonitor.core.MonitorHub.session.value?.category) ==
+            com.pulsepointlabs.sarahmonitor.session.SessionCategory.General
 
     private fun client(key: String): AnthropicClient {
         if (client == null || clientKey != key) {

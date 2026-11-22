@@ -163,3 +163,30 @@ fun AlertListSection() {
         }
     }
 }
+
+/** Sarah's stress voice: announcements and relaxation coaching (general sessions and outside recordings only). */
+@Composable
+fun StressVoiceSection() {
+    val announce by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.announce.collectAsState()
+    val relax by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.relax.collectAsState()
+    val threshold by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.threshold.collectAsState()
+    val gap by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.gapMin.collectAsState()
+    val onlyRec by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.onlyRecording.collectAsState()
+    val status by MonitorHub.stressVoice.status.collectAsState()
+    val last by MonitorHub.stressVoice.last.collectAsState()
+    val s = com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings
+    SettingsSection("Sarah · stress", StressColor) {
+        SettingRow("Announce stress changes", "Rising and easing, with the number") { SettingSwitch(announce) { s.setAnnounce(it) } }
+        SettingRow("Relaxation coaching", "A calm cue when it climbs or stays high") { SettingSwitch(relax) { s.setRelax(it) } }
+        SettingSlider("Speak when it changes by", "$threshold pts", threshold.toFloat(), 5f..25f) { s.setThreshold(Math.round(it)) }
+        SettingSlider("At most every", "$gap min", gap.toFloat(), 1f..15f) { s.setGapMin(Math.round(it)) }
+        SettingRow("Only while recording") { SettingSwitch(onlyRec) { s.setOnlyRecording(it) } }
+        ChoiceRow { ChoiceChip("▶ Test", false, StressColor) { MonitorHub.stressVoice.test() } }
+        val shown = when {
+            !announce && !relax -> "Off"
+            status == "Off" -> "Waiting for heart data"
+            else -> status
+        }
+        Text(last?.let { "“$it”" } ?: shown, color = if (last != null) MonitorColors.text else MonitorColors.label, fontSize = 13.sp)
+    }
+}

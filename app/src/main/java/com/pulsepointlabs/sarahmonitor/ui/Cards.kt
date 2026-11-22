@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -657,7 +660,22 @@ fun StressCard() {
     val s = LocalCardScale.current
     val color = st.score?.let { percentBandColor(it) } ?: MonitorColors.dim
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        val voiceOn by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.announce.collectAsState()
+        val relaxOn by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.relax.collectAsState()
         CardTitle("Stress", if (LocalOverlayMode.current) color else StressColor, "0–100") {
+            if (!LocalOverlayMode.current) {
+                // Quick mute/unmute for Sarah's stress voice (announcements; coaching follows its own switch).
+                val on = voiceOn || relaxOn
+                androidx.compose.material3.Icon(
+                    if (on) androidx.compose.material.icons.Icons.AutoMirrored.Filled.VolumeUp else androidx.compose.material.icons.Icons.AutoMirrored.Filled.VolumeOff,
+                    contentDescription = if (on) "Stress voice on" else "Stress voice off",
+                    tint = if (on) StressColor else MonitorColors.dim,
+                    modifier = Modifier.padding(end = 6.dp).size(s.dp(20f)).clickable {
+                        if (on) { com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.setAnnounce(false); com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.setRelax(false) }
+                        else com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.setAnnounce(true)
+                    }
+                )
+            }
             Text(
                 if (st.moving) "Moving" else st.level?.label ?: "Learning",
                 color = if (st.moving) MonitorColors.label else color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1

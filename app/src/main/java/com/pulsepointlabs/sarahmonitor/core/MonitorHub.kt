@@ -63,6 +63,7 @@ object MonitorHub {
     val response: StateFlow<ResponseState> = _response
     /** Sarah's live spoken feedback (Claude brain, Sarah's voice). */
     lateinit var coach: SarahCoach; private set
+    lateinit var stressVoice: StressVoice; private set
 
     val emgProcessor = com.pulsepointlabs.sarahmonitor.emg.EmgProcessor()
     /** Arduino + MyoWare EMG over USB. */
@@ -127,6 +128,7 @@ object MonitorHub {
         com.pulsepointlabs.sarahmonitor.sleep.PositionCalibration.load(app)
         sleepStore = com.pulsepointlabs.sarahmonitor.sleep.SleepStore(app)
         com.pulsepointlabs.sarahmonitor.emg.EmgSettings.load(app, emgProcessor)
+        StressVoiceSettings.load(app)
         var emgAccN = 0; var emgAcc1 = 0.0; var emgAcc2 = 0.0; var emgLastPublish = 0L
         emgClient = com.pulsepointlabs.sarahmonitor.emg.EmgClient(app) { now, rows ->
             rows.forEachIndexed { i, v ->
@@ -163,6 +165,7 @@ object MonitorHub {
         scope.launch { ResponseSettings.profile.collect { arousal.setProfile(it) } }
         coach = SarahCoach({ _response.value }, { recorder.active.value != null }, { audio.say(it) }, scope)
         coach.start()
+        stressVoice = StressVoice({ audio.say(it) }, scope)
         audio.h10Connected = { h10.state.value == ConnectionState.Connected || h10.state.value == ConnectionState.Stale }
 
         scope.launch {
@@ -186,6 +189,7 @@ object MonitorHub {
                     emgPct = if (sexual) null else _emg.value.peakPct.takeIf { _emg.value.fresh }
                 ))
                 _stress.value = st
+                stressVoice.onStress(reading.timestampMs, st, stressQuietReason(category, resp))
                 recorder.onHeart(snapshot, heartEngine.lastRr, st.score, st.breathsPerMin)
                 val t = reading.timestampMs
                 recentRecorder.add(Metric.Hr, t, snapshot.heartRate?.toDouble())
@@ -335,6 +339,28 @@ object MonitorHub {
 
     private lateinit var appContext: Context
 
+    /**
+     * Stress voice stays in its lane: never in masturbation / sexual activity / body exploration sessions, and in a
+     * hybrid session it pauses while things look sexual (a sexual event in the last 20 min, or near climax).
+     */
+    private fun stressQuietReason(category: com.pulsepointlabs.sarahmonitor.session.SessionCategory?, resp: com.pulsepointlabs.sarahmonitor.response.ResponseState): String? {
+        val rec = recorder.active.value != null
+        if (!rec && StressVoiceSettings.onlyRecording.value) return "Waiting for a recording"
+        return when (category) {
+            null, com.pulsepointlabs.sarahmonitor.session.SessionCategory.General -> null
+            com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid -> {
+                val sexualEvent = recentEvents().any { e ->
+                    System.currentTimeMillis() - e.timestampMs < 20 * 60_000L &&
+                        com.pulsepointlabs.sarahmonitor.session.MarkerTypes.all.any { it.id in e.types && it.group == com.pulsepointlabs.sarahmonitor.session.MarkerTypes.Group.Sexual }
+                }
+                // Phase alone isn't enough (stress raises HR too), so only the climax-specific phases count.
+                val nearClimax = resp.phase in setOf(com.pulsepointlabs.sarahmonitor.response.ResponsePhase.Approaching, com.pulsepointlabs.sarahmonitor.response.ResponsePhase.Climax, com.pulsepointlabs.sarahmonitor.response.ResponsePhase.BackingOff)
+                if (sexualEvent || nearClimax) "Paused during sexual activity" else null
+            }
+            else -> "Quiet in ${category.label.lowercase()} sessions"
+        }
+    }
+
     /** Last few events this session, so Sarah can refer to what you just logged. */
     data class RecentEvent(val timestampMs: Long, val types: Set<String>, val note: String, val checkIn: String?)
     private val recentEvents = ArrayDeque<RecentEvent>()
@@ -388,6 +414,7 @@ object MonitorHub {
         arousal.reset()
         stressTracker.reset()
         synchronized(recentEvents) { recentEvents.clear() }
+        if (::stressVoice.isInitialized) stressVoice.reset()
         _stress.value = StressReading()
         _response.value = ResponseState()
         pelvicProcessor.resetStats()
