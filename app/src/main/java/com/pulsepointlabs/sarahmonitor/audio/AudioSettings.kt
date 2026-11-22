@@ -30,6 +30,9 @@ enum class AlertKind(val label: String, val detail: String, val defaultMode: Ale
     Glucose("Glucose out of range", "New reading below 70 or above 180 mg/dL", AlertMode.Voice, 0L)
 }
 
+/** What other apps (a movie, music) do while Sarah talks. */
+enum class VoiceOverOthers(val label: String) { Lower("Lower other audio"), Pause("Pause other audio") }
+
 enum class VoiceEngine(val label: String) {
     Sarah("Sarah · OpenAI HD Crisp"),
     Android("Android voice (offline)")
@@ -60,6 +63,9 @@ object AudioSettings {
     val alertTone = MutableStateFlow(AlertTone.Soft)
     val alertVolume = MutableStateFlow(0.9f)
     val voiceEngine = MutableStateFlow(VoiceEngine.Sarah)
+    /** Sarah's voice level, 0–2 (above 1 is a loudness boost). Separate from the alert tones. */
+    val voiceVolume = MutableStateFlow(1.3f)
+    val voiceOverOthers = MutableStateFlow(VoiceOverOthers.Lower)
     private val _modes = MutableStateFlow(AlertKind.entries.associateWith { it.defaultMode })
     val modes: StateFlow<Map<AlertKind, AlertMode>> = _modes
     private val _vibrate = MutableStateFlow<Set<AlertKind>>(emptySet())
@@ -88,6 +94,8 @@ object AudioSettings {
         alertTone.value = enumOr(p.getString("tone", null), AlertTone.Soft)
         alertVolume.value = p.getFloat("alert_volume", 0.9f)
         voiceEngine.value = enumOr(p.getString("voice", null), VoiceEngine.Sarah)
+        voiceVolume.value = p.getFloat("voice_volume", 1.3f)
+        voiceOverOthers.value = enumOr(p.getString("voice_over", null), VoiceOverOthers.Lower)
         _modes.value = AlertKind.entries.associateWith { enumOr(p.getString("mode_${it.name}", null), it.defaultMode) }
         _vibrate.value = AlertKind.entries.filter { p.getBoolean("vib_${it.name}", false) }.toSet()
         highHrLimit.value = p.getInt("high_hr", 0)
@@ -114,6 +122,8 @@ object AudioSettings {
     fun setAlertTone(v: AlertTone) { alertTone.value = v; edit { putString("tone", v.name) } }
     fun setAlertVolume(v: Float) { alertVolume.value = v.coerceIn(0f, 1f); edit { putFloat("alert_volume", alertVolume.value) } }
     fun setVoiceEngine(v: VoiceEngine) { voiceEngine.value = v; edit { putString("voice", v.name) } }
+    fun setVoiceVolume(v: Float) { voiceVolume.value = v.coerceIn(0.1f, 2f); edit { putFloat("voice_volume", voiceVolume.value) } }
+    fun setVoiceOverOthers(v: VoiceOverOthers) { voiceOverOthers.value = v; edit { putString("voice_over", v.name) } }
     fun setMode(kind: AlertKind, mode: AlertMode) { _modes.value = _modes.value + (kind to mode); edit { putString("mode_${kind.name}", mode.name) } }
     fun setVibrate(kind: AlertKind, on: Boolean) {
         _vibrate.value = if (on) _vibrate.value + kind else _vibrate.value - kind

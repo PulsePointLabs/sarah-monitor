@@ -99,27 +99,19 @@ fun AlertsSection() {
     val onlyRec by AudioSettings.alertsOnlyRecording.collectAsState()
     val tone by AudioSettings.alertTone.collectAsState()
     val volume by AudioSettings.alertVolume.collectAsState()
-    val engine by AudioSettings.voiceEngine.collectAsState()
     val highHr by AudioSettings.highHrLimit.collectAsState()
     val lowHr by AudioSettings.lowHrLimit.collectAsState()
     val hold by AudioSettings.longHoldSeconds.collectAsState()
-    val problem by MonitorHub.audio.voiceProblem.collectAsState()
-    SettingsSection("Alerts & Sarah's voice", MonitorColors.warn, icon = androidx.compose.material.icons.Icons.Default.NotificationsActive) {
+    SettingsSection("Alerts", MonitorColors.warn, icon = androidx.compose.material.icons.Icons.Default.NotificationsActive) {
         SettingRow("Alerts on") { SettingSwitch(enabled) { AudioSettings.setAlertsEnabled(it) } }
         SettingRow("Only while recording") { SettingSwitch(onlyRec) { AudioSettings.setAlertsOnlyRecording(it) } }
-        Text("Voice", color = MonitorColors.text, fontSize = 15.sp)
-        ChoiceRow {
-            VoiceEngine.entries.forEach { e -> ChoiceChip(e.label, e == engine, MonitorColors.warn) { AudioSettings.setVoiceEngine(e) } }
-            ChoiceChip("▶ Test voice", false, MonitorColors.warn) { MonitorHub.audio.testVoice() }
-        }
-        if (problem != null) Text(problem!!, color = MonitorColors.warn, fontSize = 13.sp)
         Text("Alert tone", color = MonitorColors.text, fontSize = 15.sp)
         ChoiceRow {
             AlertTone.entries.forEach { t ->
                 ChoiceChip(t.label, t == tone, MonitorColors.warn) { AudioSettings.setAlertTone(t); MonitorHub.audio.previewTone(t) }
             }
         }
-        SettingSlider("Alert volume", "${(volume * 100).toInt()}%", volume, 0f..1f) { AudioSettings.setAlertVolume(it) }
+        SettingSlider("Alert tone volume", "${(volume * 100).toInt()}%", volume, 0f..1f) { AudioSettings.setAlertVolume(it) }
         SettingSlider("High heart rate alert", if (highHr == 0) "Auto" else "$highHr bpm", if (highHr == 0) 80f else highHr.toFloat(), 80f..220f) {
             AudioSettings.setHighHrLimit(if (it < 90f) 0 else Math.round(it))
         }
@@ -195,5 +187,25 @@ fun StressVoiceSection() {
             else -> status
         }
         Text(last?.let { "“$it”" } ?: shown, color = if (last != null) MonitorColors.text else MonitorColors.label, fontSize = 13.sp)
+    }
+}
+
+
+/** How Sarah sounds: which voice, how loud, and what other apps do while she talks. */
+@Composable
+fun SarahVoiceSection() {
+    val engine by AudioSettings.voiceEngine.collectAsState()
+    val volume by AudioSettings.voiceVolume.collectAsState()
+    val over by AudioSettings.voiceOverOthers.collectAsState()
+    val problem by MonitorHub.audio.voiceProblem.collectAsState()
+    val color = androidx.compose.ui.graphics.Color(0xFFFF7AB6)
+    SettingsSection("Sarah's voice", color, icon = androidx.compose.material.icons.Icons.Default.GraphicEq) {
+        ChoiceRow { VoiceEngine.entries.forEach { e -> ChoiceChip(e.label, e == engine, color) { AudioSettings.setVoiceEngine(e) } } }
+        SettingSlider("Volume", "${(volume * 100).toInt()}%" + if (volume > 1f) " boost" else "", volume, 0.1f..2f) { AudioSettings.setVoiceVolume((it * 20).toInt() / 20f) }
+        Text("Follows your media volume. Above 100% boosts her over loud audio.", color = MonitorColors.label, fontSize = 12.sp)
+        Text("While she talks", color = MonitorColors.text, fontSize = 15.sp)
+        ChoiceRow { com.pulsepointlabs.sarahmonitor.audio.VoiceOverOthers.entries.forEach { v -> ChoiceChip(v.label, v == over, color) { AudioSettings.setVoiceOverOthers(v) } } }
+        ChoiceRow { ChoiceChip("▶ Test voice", false, color) { MonitorHub.audio.testVoice() } }
+        if (problem != null) Text(problem!!, color = MonitorColors.warn, fontSize = 13.sp)
     }
 }

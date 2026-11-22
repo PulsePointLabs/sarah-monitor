@@ -167,7 +167,7 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
     suspend fun say(text: String) = speechLock.withLock {
         _speaking.value = true
         try {
-            _voiceProblem.value = voice.speak(text, AudioSettings.alertVolume.value, AudioSettings.voiceEngine.value)
+            _voiceProblem.value = voice.speak(text, AudioSettings.voiceVolume.value, AudioSettings.voiceEngine.value)
         } finally {
             _speaking.value = false
         }

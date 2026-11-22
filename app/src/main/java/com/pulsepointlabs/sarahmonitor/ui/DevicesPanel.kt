@@ -230,13 +230,8 @@ private fun OmronSection() {
 fun VoiceSection(onMessage: (String) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var engine by remember { mutableStateOf(VoiceSettings.engine(context)) }
-    var saved by remember { mutableStateOf(VoiceSettings.apiKey(context)) }
-    var key by remember { mutableStateOf("") }
-    SettingsSection(
-        "Voice notes & OpenAI key",
-        MonitorColors.text, icon = androidx.compose.material.icons.Icons.Default.Mic, subtitle =
-        "Speech-to-text for event notes. OpenAI live shows punctuated words as you speak; Whisper transcribes after you stop; Android's recognizer works offline without a key. The key is also used for Sarah's voice."
-    ) {
+    SettingsSection("Speech to text", MonitorColors.text, icon = androidx.compose.material.icons.Icons.Default.Mic) {
+        Text("For event notes. OpenAI live types as you talk; Whisper types after you stop; Android works offline.", color = MonitorColors.label, fontSize = 12.sp)
         Buttons {
             VoiceSettings.Engine.entries.forEach { e ->
                 val on = e == engine
@@ -260,28 +255,52 @@ fun VoiceSection(onMessage: (String) -> Unit) {
             VoiceSettings.setAutoStopSeconds(context, autoStop)
         }
         SettingRow("Use Bluetooth headset mic") { SettingSwitch(headset) { headset = it; VoiceSettings.setPreferHeadsetMic(context, it) } }
-        run {
-            Text(
-                if (saved.isBlank()) "No OpenAI key saved yet: voice notes use Android's recognizer and Sarah uses the Android voice until you add one."
-                else "Key saved: ${saved.take(3)}…${saved.takeLast(4)}",
-                color = if (saved.isBlank()) MonitorColors.warn else MonitorColors.good,
-                fontSize = 13.sp
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.OutlinedTextField(
-                    value = key,
-                    onValueChange = { key = it.trim() },
-                    label = { Text("OpenAI API key (sk-…)") },
-                    singleLine = true,
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(enabled = key.isNotBlank(), onClick = {
-                    VoiceSettings.setApiKey(context, key); saved = key; key = ""
-                    onMessage("OpenAI key saved. Voice notes and Sarah's voice will use it.")
-                }) { Text("Save") }
-                if (saved.isNotBlank()) TextButton(onClick = { VoiceSettings.setApiKey(context, ""); saved = "" }) { Text("Remove", color = MonitorColors.alarm) }
-            }
+    }
+}
+
+
+/** All API keys in one place, at the bottom of Settings, with what each one powers. */
+@Composable
+fun ApiKeysSection(onMessage: (String) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var openAi by remember { mutableStateOf(VoiceSettings.apiKey(context)) }
+    val anthropic by com.pulsepointlabs.sarahmonitor.response.ResponseSettings.apiKey.collectAsState()
+    SettingsSection("API keys", MonitorColors.label, icon = androidx.compose.material.icons.Icons.Default.Key) {
+        KeyField(
+            "OpenAI", "Live voice notes and Sarah's HD voice", openAi, "sk-…",
+            onSave = { VoiceSettings.setApiKey(context, it); openAi = it; onMessage("OpenAI key saved.") },
+            onRemove = { VoiceSettings.setApiKey(context, ""); openAi = "" }
+        )
+        androidx.compose.material3.HorizontalDivider(color = MonitorColors.panelBorder)
+        KeyField(
+            "Anthropic", "Sarah's brain: live feedback and stress coaching", anthropic, "sk-ant-…",
+            onSave = { com.pulsepointlabs.sarahmonitor.response.ResponseSettings.setApiKey(it); onMessage("Anthropic key saved.") },
+            onRemove = { com.pulsepointlabs.sarahmonitor.response.ResponseSettings.setApiKey("") }
+        )
+    }
+}
+
+@Composable
+private fun KeyField(name: String, powers: String, saved: String, hint: String, onSave: (String) -> Unit, onRemove: () -> Unit) {
+    var draft by remember { mutableStateOf("") }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(name, color = MonitorColors.text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(powers, color = MonitorColors.label, fontSize = 12.sp)
         }
+        Text(
+            if (saved.isBlank()) "Not set" else "✓ ${saved.take(6)}…${saved.takeLast(4)}",
+            color = if (saved.isBlank()) MonitorColors.warn else MonitorColors.good, fontSize = 12.sp, fontWeight = FontWeight.Bold
+        )
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.material3.OutlinedTextField(
+            value = draft, onValueChange = { draft = it.trim() },
+            label = { Text(if (saved.isBlank()) "Paste $name key ($hint)" else "Replace $name key") }, singleLine = true,
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            modifier = Modifier.weight(1f)
+        )
+        TextButton(enabled = draft.isNotBlank(), onClick = { onSave(draft); draft = "" }) { Text("Save") }
+        if (saved.isNotBlank()) TextButton(onClick = onRemove) { Text("Remove", color = MonitorColors.alarm) }
     }
 }

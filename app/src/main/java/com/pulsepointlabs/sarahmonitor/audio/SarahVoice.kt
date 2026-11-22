@@ -28,16 +28,21 @@ import kotlin.coroutines.resume
 class SarahVoice(context: Context) {
     private val app = context.applicationContext
     private val audioManager = app.getSystemService(AudioManager::class.java)
+    // Navigation-guidance speech (what map apps use): plays at media volume and is meant to be heard over a
+    // movie or music. (Sonification followed the much quieter system volume, so Sarah got lost under playback.)
     private val attributes = AudioAttributes.Builder()
-        .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+        .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
         .build()
-    private val focus = if (Build.VERSION.SDK_INT >= 26) {
-        AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+    private fun focusRequest(gain: Int) = if (Build.VERSION.SDK_INT >= 26) {
+        AudioFocusRequest.Builder(gain)
             .setAudioAttributes(attributes)
             .setOnAudioFocusChangeListener { }
             .build()
     } else null
+    private val duckFocus = focusRequest(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+    private val pauseFocus = focusRequest(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+    private var focus: AudioFocusRequest? = null
     private val cacheDir = File(app.cacheDir, "sarah-voice").apply { mkdirs() }
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -55,7 +60,7 @@ class SarahVoice(context: Context) {
         } else if (engine == VoiceEngine.Sarah) {
             problem = "No OpenAI key saved — using the Android voice"
         }
-        speakAndroid(text)
+        speakAndroid(text, volume)
         return problem
     }
 
@@ -118,8 +123,14 @@ class SarahVoice(context: Context) {
                     runCatching {
                         player.setAudioAttributes(attributes)
                         player.setDataSource(file.absolutePath)
-                        player.setVolume(volume, volume)
-                        player.setOnCompletionListener { done() }
+                        player.setVolume(volume.coerceAtMost(1f), volume.coerceAtMost(1f))
+                        // Above 100 %: a loudness boost on the player's own audio (up to about +9 dB).
+                        val boost = if (volume > 1f) runCatching {
+                            android.media.audiofx.LoudnessEnhancer(player.audioSessionId).apply {
+                                setTargetGain((2000 * kotlin.math.log10(volume.toDouble())).toInt().coerceIn(0, 900)); enabled = true
+                            }
+                        }.getOrNull() else null
+                        player.setOnCompletionListener { runCatching { boost?.release() }; done() }
                         player.setOnErrorListener { _, _, _ -> done(); true }
                         player.prepare()
                         player.start()
@@ -132,7 +143,7 @@ class SarahVoice(context: Context) {
         }
     }
 
-    private suspend fun speakAndroid(text: String) {
+    private suspend fun speakAndroid(text: String, volume: Float) {
         val engine = tts ?: withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { cont ->
                 var created: TextToSpeech? = null
@@ -156,7 +167,7 @@ class SarahVoice(context: Context) {
                     })
                     engine.setAudioAttributes(attributes)
                     engine.setSpeechRate(SPEED.toFloat())
-                    engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+                    engine.speak(text, TextToSpeech.QUEUE_FLUSH, android.os.Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume.coerceIn(0f, 1f)) }, id)
                 }
             }
         } finally {
@@ -165,8 +176,13 @@ class SarahVoice(context: Context) {
     }
 
     private fun requestFocus() {
-        if (Build.VERSION.SDK_INT >= 26) focus?.let(audioManager::requestAudioFocus)
-        else @Suppress("DEPRECATION") audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+        val pause = AudioSettings.voiceOverOthers.value == VoiceOverOthers.Pause
+        if (Build.VERSION.SDK_INT >= 26) {
+            focus = if (pause) pauseFocus else duckFocus
+            focus?.let(audioManager::requestAudioFocus)
+        } else @Suppress("DEPRECATION") audioManager.requestAudioFocus(
+            null, AudioManager.STREAM_MUSIC, if (pause) AudioManager.AUDIOFOCUS_GAIN_TRANSIENT else AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+        )
     }
 
     private fun abandonFocus() {

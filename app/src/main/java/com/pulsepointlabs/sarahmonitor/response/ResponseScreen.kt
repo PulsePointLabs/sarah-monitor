@@ -97,25 +97,11 @@ fun CoachSettingsSection() {
     val model by ResponseSettings.model.collectAsState()
     val cadence by ResponseSettings.cadenceS.collectAsState()
     val profile by ResponseSettings.profile.collectAsState()
-    var draft by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
     com.pulsepointlabs.sarahmonitor.ui.SettingsSection(
         "Sarah live feedback", Color(0xFFFF7AB6), icon = androidx.compose.material.icons.Icons.Default.RecordVoiceOver, subtitle =
         "During a recording on the Response tab, Sarah speaks short lines about what your body is doing. Claude is her brain (your Anthropic key); her voice is the HD Crisp OpenAI voice."
     ) {
-        Text(
-            if (key.isBlank()) "No Anthropic key saved yet." else "Anthropic key saved: ${key.take(7)}…${key.takeLast(4)}",
-            color = if (key.isBlank()) MonitorColors.warn else MonitorColors.good, fontSize = 13.sp
-        )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            androidx.compose.material3.OutlinedTextField(
-                value = draft, onValueChange = { draft = it.trim() },
-                label = { Text("Anthropic API key (sk-ant-…)") }, singleLine = true,
-                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                modifier = Modifier.weight(1f)
-            )
-            androidx.compose.material3.TextButton(enabled = draft.isNotBlank(), onClick = { ResponseSettings.setApiKey(draft); draft = "" }) { Text("Save") }
-            if (key.isNotBlank()) androidx.compose.material3.TextButton(onClick = { ResponseSettings.setApiKey("") }) { Text("Remove", color = MonitorColors.alarm) }
-        }
+        if (key.isBlank()) Text("Needs an Anthropic key (API keys, at the bottom).", color = MonitorColors.warn, fontSize = 13.sp)
         Text("Brain", color = MonitorColors.text, fontSize = 15.sp)
         ChoiceRow { CoachModel.entries.forEach { m -> ChoiceChip(m.label, m == model, Color(0xFFFF7AB6)) { ResponseSettings.setModel(m) } } }
         com.pulsepointlabs.sarahmonitor.ui.SettingSlider("Check in every", "$cadence s", cadence.toFloat(), 20f..300f) { ResponseSettings.setCadence(it.toInt()) }
