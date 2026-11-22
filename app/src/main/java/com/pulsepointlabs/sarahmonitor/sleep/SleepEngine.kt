@@ -76,6 +76,8 @@ object PositionCalibration {
 }
 
 object SleepMath {
+    /** 7.2 breaths/min: below this, RR rhythm is dominated by ~0.1 Hz blood-pressure (Mayer) waves. */
+    private const val LOW_HZ = 0.12
     fun unit(v: DoubleArray): DoubleArray { val n = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).takeIf { it > 1e-9 } ?: 1.0; return doubleArrayOf(v[0] / n, v[1] / n, v[2] / n) }
     fun dot(a: DoubleArray, b: DoubleArray) = a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
     fun angle(a: DoubleArray, b: DoubleArray) = Math.toDegrees(acos(dot(unit(a), unit(b)).coerceIn(-1.0, 1.0)))
@@ -115,7 +117,7 @@ object SleepMath {
         val mean = x.average()
         for (k in x.indices) x[k] -= mean
         var bestF = 0.0; var bestP = 0.0; var total = 0.0
-        var f = 0.1
+        var f = LOW_HZ
         while (f <= 0.5) {
             var re = 0.0; var im = 0.0
             for (k in x.indices) { val a = 2 * PI * f * k / fs; re += x[k] * cos(a); im -= x[k] * sin(a) }
@@ -124,9 +126,10 @@ object SleepMath {
             if (p > bestP) { bestP = p; bestF = f }
             f += 0.005
         }
-        // The peak should stand clearly above the band's average.
-        val steps = ((0.5 - 0.1) / 0.005).toInt() + 1
-        return if (bestP > total / steps * 4) bestF * 60 else null
+        // The peak should stand clearly above the band's average, and not sit on the band's bottom edge
+        // (that's slow blood-pressure waves leaking in, not breathing).
+        val steps = ((0.5 - LOW_HZ) / 0.005).toInt() + 1
+        return if (bestP > total / steps * 4 && bestF > LOW_HZ + 0.01) bestF * 60 else null
     }
 
     fun rmssd(rr: List<Int>): Double? {

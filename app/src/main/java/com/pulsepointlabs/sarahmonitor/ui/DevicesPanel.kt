@@ -252,6 +252,13 @@ fun VoiceSection(onMessage: (String) -> Unit) {
                 )
             }
         }
+        var autoStop by remember { mutableStateOf(VoiceSettings.autoStopSeconds(context)) }
+        var headset by remember { mutableStateOf(VoiceSettings.preferHeadsetMic(context)) }
+        SettingSlider("Stop after quiet", if (autoStop < 1f) "Off" else "%.1f s".format(autoStop), autoStop, 0f..10f) {
+            autoStop = if (it < 1f) 0f else (it * 2).toInt() / 2f
+            VoiceSettings.setAutoStopSeconds(context, autoStop)
+        }
+        SettingRow("Use Bluetooth headset mic") { SettingSwitch(headset) { headset = it; VoiceSettings.setPreferHeadsetMic(context, it) } }
         run {
             Text(
                 if (saved.isBlank()) "No OpenAI key saved yet: voice notes use Android's recognizer and Sarah uses the Android voice until you add one."

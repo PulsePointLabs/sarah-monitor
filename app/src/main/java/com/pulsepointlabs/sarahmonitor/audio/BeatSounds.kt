@@ -59,6 +59,16 @@ object BeatSynth {
 
     fun render(tone: AlertTone): ShortArray? = if (tone == AlertTone.Chime) chime() else null
 
+    /** Short two-note cue: rising = "listening", falling = "done". */
+    fun listenCue(start: Boolean): ShortArray {
+        val b = buffer(260)
+        val (f1, f2) = if (start) 880.0 to 1_318.5 else 1_318.5 to 880.0
+        addPartial(b, f1, 1.0, 90.0, 0.0)
+        addPartial(b, f2, 1.0, 120.0, 110.0)
+        edges(b, 3.0, 60.0)
+        return finish(b, 0.55)
+    }
+
     private fun buffer(ms: Int) = DoubleArray(SAMPLE_RATE * ms / 1000)
 
     /** Raised-cosine fade in over [attackMs] and out over the last [releaseMs] — removes clicks. */

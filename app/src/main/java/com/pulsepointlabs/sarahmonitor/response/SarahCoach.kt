@@ -255,6 +255,13 @@ class SarahCoach(
             .put("climaxes_this_session", s.climaxes)
             .put("climax_signature_detected", s.candidate?.reason)
             .put("recent_things_you_said", JSONArray(recent.toList()))
+            .put("events_he_logged", JSONArray().apply {
+                val now = System.currentTimeMillis()
+                com.pulsepointlabs.sarahmonitor.core.MonitorHub.recentEvents().forEach { e ->
+                    put(JSONObject().put("minutes_ago", ((now - e.timestampMs) / 6_000L) / 10.0).put("types", JSONArray(e.types.toList()))
+                        .put("note", e.note.take(200)).put("check_in", e.checkIn))
+                }
+            })
     }
 
     companion object {

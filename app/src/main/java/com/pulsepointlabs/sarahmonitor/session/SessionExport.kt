@@ -113,6 +113,7 @@ object SessionExport {
                         (if (response.isNotEmpty()) "; $response" else "") +
                         (m.note.takeIf { it.isNotBlank() }?.let { "; note: ${oneLine(it)}" } ?: "") +
                         (com.pulsepointlabs.sarahmonitor.session.CheckIn.of(m).label?.let { "; check-in: $it" } ?: "") +
+                        (com.pulsepointlabs.sarahmonitor.core.EventSnapshot.describe(m.snapshot)?.let { "; at that moment: $it" } ?: "") +
                         (data.hr.minByOrNull { kotlin.math.abs(it.timestampMs - m.timestampMs) }?.stress?.let { "; estimated stress $it/100" } ?: "")
                 )
             }
@@ -169,7 +170,7 @@ object SessionExport {
     /** One row per second: HR, rolling HRV, Load, pressure mean/max, and any event in that second. */
     fun csv(data: SessionData): String = buildString {
         val start = data.session.startTimeMs
-        appendLine("local_time,elapsed_s,hr_bpm,rmssd_ms,sdnn_ms,pnn50_pct,load,stress_est,breaths_per_min,pressure_kpa,above_rest_kpa_mean,above_rest_kpa_max,holding,event,event_note,feeling_1_5,self_stress_0_10,bp,glucose_mg_dl,auto_flags")
+        appendLine("local_time,elapsed_s,hr_bpm,rmssd_ms,sdnn_ms,pnn50_pct,load,stress_est,breaths_per_min,pressure_kpa,above_rest_kpa_mean,above_rest_kpa_max,holding,event,event_note,feeling_1_5,self_stress_0_10,event_snapshot_json,bp,glucose_mg_dl,auto_flags")
         val flags = SessionFlags.detect(data)
         val hrBySecond = data.hr.groupBy { (it.timestampMs - start) / 1000 }
         val pBySecond = data.pelvic.groupBy { (it.timestampMs - start) / 1000 }
@@ -196,6 +197,7 @@ object SessionExport {
             append(q(markers.joinToString(" | ") { it.note })).append(',')
             append(markers.mapNotNull { it.wellbeing }.joinToString(" | ")).append(',')
             append(markers.mapNotNull { it.selfStress }.joinToString(" | ")).append(',')
+            append(q(markers.mapNotNull { it.snapshot }.joinToString(" | "))).append(',')
             append(bpBySecond[sec]?.joinToString(" | ") { "${it.systolic}/${it.diastolic}" } ?: "").append(',')
             append(gBySecond[sec]?.joinToString(" | ") { "%.0f".format(Locale.US, it.mgDl) } ?: "").append(',')
             val t = start + sec * 1000

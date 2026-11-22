@@ -147,11 +147,11 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    suspend fun addMarker(timestampMs: Long, types: Set<String>, note: String, checkIn: CheckIn = CheckIn()): MarkerEntity? {
+    suspend fun addMarker(timestampMs: Long, types: Set<String>, note: String, checkIn: CheckIn = CheckIn(), snapshot: String? = null): MarkerEntity? {
         val session = _active.value ?: return null
         val marker = MarkerEntity(
             UUID.randomUUID().toString(), session.id, timestampMs, MarkerTypes.join(types), MarkerTypes.label(types), note.trim(),
-            wellbeing = checkIn.wellbeing, selfStress = checkIn.selfStress
+            wellbeing = checkIn.wellbeing, selfStress = checkIn.selfStress, snapshot = snapshot
         )
         withContext(Dispatchers.IO) { dao.upsertMarker(marker) }
         return marker

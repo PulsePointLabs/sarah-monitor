@@ -516,6 +516,7 @@ private fun EventsCard(d: SessionData, selected: String?, onFocus: (MarkerEntity
                     }
                     if (m.note.isNotBlank()) Text(m.note, color = MonitorColors.text, fontSize = 13.sp)
                     com.pulsepointlabs.sarahmonitor.session.CheckIn.of(m).label?.let { Text("Check-in: $it", color = com.pulsepointlabs.sarahmonitor.ui.StressColor, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+                    com.pulsepointlabs.sarahmonitor.core.EventSnapshot.describe(m.snapshot)?.let { Text("At that moment: $it", color = MonitorColors.label, fontSize = 12.sp) }
                     val facts = listOfNotNull(
                         d.hr.minByOrNull { kotlin.math.abs(it.timestampMs - m.timestampMs) }?.takeIf { kotlin.math.abs(it.timestampMs - m.timestampMs) < 5_000L }?.stress?.let { "est. stress $it" },
                         ctx.hrAt?.let { "HR $it" },

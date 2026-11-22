@@ -30,6 +30,14 @@ object VoiceSettings {
 
     fun setApiKey(context: Context, key: String) = prefs(context).edit().putString("openai_key", key.trim()).apply()
 
+    /** Stop listening after this many seconds of quiet once you've spoken (0 = only when you tap stop). */
+    fun autoStopSeconds(context: Context): Float = prefs(context).getFloat("auto_stop", 3f)
+    fun setAutoStopSeconds(context: Context, s: Float) = prefs(context).edit().putFloat("auto_stop", s).apply()
+
+    /** Use a connected Bluetooth headset's microphone when there is one. */
+    fun preferHeadsetMic(context: Context): Boolean = prefs(context).getBoolean("headset_mic", true)
+    fun setPreferHeadsetMic(context: Context, on: Boolean) = prefs(context).edit().putBoolean("headset_mic", on).apply()
+
     /** Whisper is used only when chosen and a key is saved; otherwise Android's recognizer. */
     fun useWhisper(context: Context): Boolean = engine(context) == Engine.Whisper && apiKey(context).isNotBlank()
 
@@ -46,14 +54,22 @@ object VoiceSettings {
 class WhisperTranscriber(private val context: Context) {
     private var recorder: MediaRecorder? = null
     private var file: File? = null
+    private var route: MicRoute.Route? = null
+
+    /** 0–1 loudness since the last call (for the level meter / auto-stop). */
+    fun level(): Float = recorder?.let { r -> runCatching { (r.maxAmplitude / 32767f).let { a -> if (a <= 0f) 0f else ((20 * kotlin.math.log10(a) + 60) / 60).coerceIn(0f, 1f) } }.getOrDefault(0f) } ?: 0f
+
+    val micLabel: String get() = route?.label ?: "Phone mic"
 
     val recording: Boolean get() = recorder != null
 
     fun start() {
         stopRecorder()
         val out = File(context.cacheDir, "voice-note-${System.currentTimeMillis()}.m4a")
+        route = MicRoute.open(context)
         val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(context) else @Suppress("DEPRECATION") MediaRecorder()
-        r.setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+        r.setAudioSource(if (route?.headset == true) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION)
+        route?.input?.let { r.setPreferredDevice(it) }
         r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
         r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
         r.setAudioSamplingRate(16_000)
@@ -94,6 +110,7 @@ class WhisperTranscriber(private val context: Context) {
             runCatching { r.release() }
         }
         recorder = null
+        MicRoute.close(context, route)
     }
 
     companion object {
@@ -114,7 +131,7 @@ class WhisperTranscriber(private val context: Context) {
             try {
                 connection.requestMethod = "POST"
                 connection.connectTimeout = 15_000
-                connection.readTimeout = 60_000
+                connection.readTimeout = 30_000
                 connection.doOutput = true
                 connection.setRequestProperty("Authorization", "Bearer $apiKey")
                 connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")

@@ -45,6 +45,7 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
     private val pool = SoundPool.Builder().setMaxStreams(3).setAudioAttributes(beepAttributes).build()
     private val beatIds = mutableMapOf<BeatSound, Int>()
     private val toneIds = mutableMapOf<AlertTone, Int>()
+    private val cueIds = mutableMapOf<Boolean, Int>()
     private val loaded = mutableSetOf<Int>()
     private val beepFocus = if (Build.VERSION.SDK_INT >= 26) {
         AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
@@ -88,6 +89,11 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
                     pool.load(f.absolutePath, 1)
                 }
                 if (id != null) beatIds[s] = id
+            }
+            listOf(true, false).forEach { start ->
+                val f = File(dir, "cue-${if (start) "listen" else "done"}-v1.wav")
+                if (!f.exists()) f.writeBytes(BeatSynth.wav(BeatSynth.listenCue(start)))
+                cueIds[start] = pool.load(f.absolutePath, 1)
             }
             AlertTone.entries.forEach { t ->
                 val id = t.rawRes?.let { pool.load(app, it, 1) } ?: BeatSynth.render(t)?.let { pcm ->
@@ -232,6 +238,13 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
     fun previewBeat(sound: BeatSound) = handler.post { playBeat(sound, preview = true) }
 
     fun previewTone(tone: AlertTone) = handler.post { playTone(tone, AudioSettings.alertVolume.value) }
+
+    /** Voice notes: rising cue when listening starts, falling when it stops. */
+    fun listenCue(start: Boolean) = handler.post {
+        val id = cueIds[start]?.takeIf(::isLoaded) ?: return@post
+        val v = AudioSettings.alertVolume.value
+        pool.play(id, v, v, 3, 0, 1f)
+    }
 
     private fun playTone(tone: AlertTone, volume: Float) {
         val id = toneIds[tone]?.takeIf(::isLoaded) ?: return

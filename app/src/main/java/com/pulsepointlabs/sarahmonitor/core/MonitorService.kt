@@ -43,14 +43,7 @@ class MonitorService : Service() {
         OverlaySettings.load(this)
         overlays = OverlayManager(this)
         createChannel()
-        val started = runCatching {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification("Monitoring sensors"),
-                if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0
-            )
-        }.isSuccess
+        val started = goForeground()
         if (!started) {
             // Android refuses a connected-device service without Bluetooth permission; try again after it's granted.
             stopSelf()
@@ -124,8 +117,27 @@ class MonitorService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        // Started again while the app is on screen: (re)claim microphone use so voice notes work from overlays.
+        goForeground()
         MonitorHub.connectRemembered()
         return START_STICKY
+    }
+
+    /**
+     * Foreground with Bluetooth (always) plus microphone (when the permission is granted and Android allows it
+     * now — it does while the app is on screen). Without the microphone type, Android gives a background app
+     * silence instead of audio, which is what broke voice notes in the floating ＋ panel.
+     */
+    private fun goForeground(): Boolean {
+        val connected = if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0
+        val micGranted = ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (micGranted && Build.VERSION.SDK_INT >= 30) {
+            val withMic = runCatching {
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(lastText), connected or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            }.isSuccess
+            if (withMic) { micReady = true; return true }
+        }
+        return runCatching { ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(lastText), connected) }.isSuccess
     }
 
     override fun onDestroy() {
@@ -173,6 +185,8 @@ class MonitorService : Service() {
     }
 
     companion object {
+        /** True once the service holds microphone use (voice notes can record from overlays). */
+        @Volatile var micReady = false
         private const val CHANNEL = "monitor"
         private const val NOTIFICATION_ID = 7
         const val ACTION_STOP = "com.pulsepointlabs.sarahmonitor.STOP"

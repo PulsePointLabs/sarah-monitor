@@ -59,7 +59,7 @@ class TranscriptAssembler(private val prefix: String = "") {
  * quiet so each sentence finalises quickly. Uses gpt-live-transcribe; if the account can't use it, falls back to
  * gpt-4o-transcribe with server-side turn detection.
  */
-class RealtimeTranscriber {
+class RealtimeTranscriber(private val context: android.content.Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val client = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).pingInterval(20, TimeUnit.SECONDS).build()
     private var socket: WebSocket? = null
@@ -79,6 +79,11 @@ class RealtimeTranscriber {
         private set
     @Volatile var active = false
         private set
+    /** Loudest moment heard (dBFS); below about −55 means the mic gave silence. */
+    @Volatile private var peakDb = -120.0
+    private var route: MicRoute.Route? = null
+    private var onAutoStop: () -> Unit = {}
+    private var autoStopMs = 0
 
     private lateinit var onText: (String) -> Unit
     private lateinit var onStatus: (String) -> Unit
@@ -86,9 +91,15 @@ class RealtimeTranscriber {
     private lateinit var onError: (String) -> Unit
     private var apiKey = ""
 
-    fun start(apiKey: String, existingText: String, onText: (String) -> Unit, onStatus: (String) -> Unit, onLevel: (Float) -> Unit, onError: (String) -> Unit) {
+    fun start(
+        apiKey: String, existingText: String, onText: (String) -> Unit, onStatus: (String) -> Unit, onLevel: (Float) -> Unit, onError: (String) -> Unit,
+        onAutoStop: () -> Unit = {}
+    ) {
         stop()
         this.apiKey = apiKey
+        this.onAutoStop = onAutoStop
+        autoStopMs = (VoiceSettings.autoStopSeconds(context) * 1000).toInt()
+        peakDb = -120.0
         this.onText = onText; this.onStatus = onStatus; this.onLevel = onLevel; this.onError = onError
         assembler = TranscriptAssembler(existingText)
         model = LIVE_MODEL
@@ -143,7 +154,7 @@ class RealtimeTranscriber {
             "conversation.item.input_audio_transcription.delta" -> {
                 gotText = true
                 assembler.delta(event.optString("item_id"), event.optString("delta"))
-                onText(assembler.text())
+                onText(VoiceTextNormalizer.normalize(assembler.text()))
             }
             "conversation.item.input_audio_transcription.completed" -> {
                 gotText = true
@@ -181,8 +192,11 @@ class RealtimeTranscriber {
     @SuppressLint("MissingPermission") // checked by the caller before start()
     private fun startMic() {
         val min = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        route = MicRoute.open(context)
+        val source = if (route?.headset == true) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION
         val r = runCatching {
-            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, CHUNK_BYTES * 4))
+            AudioRecord(source, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, CHUNK_BYTES * 4))
+                .also { rec -> route?.input?.let { rec.preferredDevice = it } }
         }.getOrNull()
         if (r == null || r.state != AudioRecord.STATE_INITIALIZED) {
             r?.release()
@@ -194,12 +208,15 @@ class RealtimeTranscriber {
         recordJob = scope.launch {
             val buf = ByteArray(CHUNK_BYTES)
             var spoke = false
+            var everSpoke = false
             var quietMs = 0
+            var silentMs = 0
             var noiseFloor = -50.0
             while (isActive && active) {
                 val n = r.read(buf, 0, buf.size)
                 if (n <= 0) continue
                 val db = levelDb(buf, n)
+                if (db > peakDb) peakDb = db
                 // Track the room's noise floor, so "speech" means clearly above it.
                 noiseFloor = if (db < noiseFloor) db else noiseFloor * 0.995 + db * 0.005
                 onLevel(((db + 60) / 60).toFloat().coerceIn(0f, 1f))
@@ -207,7 +224,9 @@ class RealtimeTranscriber {
                 synchronized(captured) { if (captured.size() < MAX_CAPTURE_BYTES) captured.write(chunk) }
                 if (ready) sendAudio(chunk) else synchronized(pending) { pending.addLast(chunk); while (pending.size > 300) pending.removeFirst() }
                 val speaking = db > maxOf(noiseFloor + 12, -45.0)
-                if (speaking) { spoke = true; quietMs = 0 } else quietMs += CHUNK_MS
+                if (speaking) { spoke = true; everSpoke = true; quietMs = 0; silentMs = 0 } else { quietMs += CHUNK_MS; silentMs += CHUNK_MS }
+                // Optional: finish by itself once you've stopped talking for the set time.
+                if (autoStopMs > 0 && everSpoke && silentMs >= autoStopMs) { silentMs = Int.MIN_VALUE / 2; onAutoStop() }
                 // Our own turn detection for the live model (it has none): commit after 0.7 s of quiet.
                 if (ready && model == LIVE_MODEL && spoke && quietMs >= 700) {
                     socket?.send("""{"type":"input_audio_buffer.commit"}""")
@@ -246,6 +265,10 @@ class RealtimeTranscriber {
         // The live stream gave nothing back: transcribe the recording in one go so the words aren't lost.
         val pcm = synchronized(captured) { captured.toByteArray() }
         if (pcm.size < SAMPLE_RATE * 2 / 2) return live // under 0.5 s
+        if (peakDb < -55) {
+            lastProblem = "No sound reached the microphone (${route?.label ?: "mic"})"
+            return live
+        }
         onStatus("Transcribing the recording…")
         val wav = com.pulsepointlabs.sarahmonitor.audio.BeatSynth.wav(ShortArray(pcm.size / 2) { i -> ((pcm[2 * i + 1].toInt() shl 8) or (pcm[2 * i].toInt() and 0xff)).toShort() }, SAMPLE_RATE)
         val text = runCatching { WhisperTranscriber.transcribe(wav, apiKey, "note.wav", "audio/wav", FALLBACK_MODEL) }
@@ -271,7 +294,11 @@ class RealtimeTranscriber {
         onError(message)
     }
 
+    /** Which microphone is in use (for the listening label). */
+    val micLabel: String get() = route?.label ?: "Phone mic"
+
     private fun releaseMic() {
+        MicRoute.close(context, route)
         record?.let { runCatching { it.stop() }; runCatching { it.release() } }
         record = null
     }

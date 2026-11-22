@@ -233,6 +233,8 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT < 29) OverlaySettings.setAppInFront(true)
         OverlayDisplay.recordActivityDisplay(this)
         MonitorHub.connectRemembered()
+        // While on screen, let the service (re)claim microphone use for voice notes from the floating panel.
+        MonitorService.start(this)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -249,6 +251,7 @@ class MainActivity : ComponentActivity() {
                 add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
             if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+            add(Manifest.permission.RECORD_AUDIO)
         }
         permissionLauncher.launch(wanted.toTypedArray())
     }

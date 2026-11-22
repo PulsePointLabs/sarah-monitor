@@ -318,14 +318,27 @@ object MonitorHub {
         if (recorder.active.value != null && ("orgasm" in types || "ejaculation" in types)) arousal.climaxSample()?.let { ResponseSettings.addClimax(it) }
         arousal.onMarker(timestampMs, types)
         _response.value = arousal.current()
+        // Freeze the moment now (not when the save finishes).
+        val snapshot = runCatching { EventSnapshot.capture(timestampMs).toString() }.getOrNull()
         scope.launch {
-            val marker = recorder.addMarker(timestampMs, types, note, checkIn)
-            if (marker != null) MarkerPreferences.remember(appContext, types, note)
+            val marker = recorder.addMarker(timestampMs, types, note, checkIn, snapshot)
+            if (marker != null) {
+                MarkerPreferences.remember(appContext, types, note)
+                synchronized(recentEvents) {
+                    recentEvents.addLast(RecentEvent(timestampMs, types, note, checkIn.label))
+                    while (recentEvents.size > 5) recentEvents.removeFirst()
+                }
+            }
             onDone(marker != null)
         }
     }
 
     private lateinit var appContext: Context
+
+    /** Last few events this session, so Sarah can refer to what you just logged. */
+    data class RecentEvent(val timestampMs: Long, val types: Set<String>, val note: String, val checkIn: String?)
+    private val recentEvents = ArrayDeque<RecentEvent>()
+    fun recentEvents(): List<RecentEvent> = synchronized(recentEvents) { recentEvents.toList() }
 
     /** Sleep mode: overnight epochs from the H10 (no full recording needed). */
     fun startSleep() {
@@ -374,6 +387,7 @@ object MonitorHub {
         audio.resetSession()
         arousal.reset()
         stressTracker.reset()
+        synchronized(recentEvents) { recentEvents.clear() }
         _stress.value = StressReading()
         _response.value = ResponseState()
         pelvicProcessor.resetStats()

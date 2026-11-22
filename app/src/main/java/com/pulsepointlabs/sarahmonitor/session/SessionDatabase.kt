@@ -118,7 +118,9 @@ data class MarkerEntity(
     /** Self-reported check-in: how you feel, 1 (awful) – 5 (great). */
     val wellbeing: Int? = null,
     /** Self-reported stress, 0 (none) – 10 (extreme). */
-    val selfStress: Int? = null
+    val selfStress: Int? = null,
+    /** JSON: everything live at the moment it was marked (see EventSnapshot). Null for events added in review. */
+    val snapshot: String? = null
 )
 
 @Dao
@@ -162,7 +164,7 @@ interface SessionDao {
 
 @Database(
     entities = [SessionEntity::class, HrSampleEntity::class, RrEntity::class, PelvicSampleEntity::class, EcgChunkEntity::class, MarkerEntity::class, EmgSampleEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class SessionDatabase : RoomDatabase() {
@@ -170,6 +172,13 @@ abstract class SessionDatabase : RoomDatabase() {
 
     companion object {
         @Volatile private var instance: SessionDatabase? = null
+
+        /** 0.15.0: snapshot of everything live when an event is marked. */
+        val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `markers` ADD COLUMN `snapshot` TEXT")
+            }
+        }
 
         /** 0.14.0: estimated stress + breathing per sample; check-in ratings on events. */
         val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
@@ -197,7 +206,7 @@ abstract class SessionDatabase : RoomDatabase() {
         }
         fun get(context: Context): SessionDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, SessionDatabase::class.java, "sarah_monitor_sessions.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build().also { instance = it }
         }
     }

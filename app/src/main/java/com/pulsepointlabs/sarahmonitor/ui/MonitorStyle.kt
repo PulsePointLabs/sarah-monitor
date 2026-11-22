@@ -230,7 +230,8 @@ fun BigReading(
     leading: (@Composable (sizeDp: Float) -> Unit)? = null,
     maxSizeDp: Float = 260f
 ) {
-    if (LocalOverlayMode.current && trend != null) {
+    // The axes chart needs a little history; until then the plain big number reads better than an empty grid.
+    if (LocalOverlayMode.current && trend != null && trend.size >= 3) {
         OverlayReading(value, color, modifier, maxChars, trend, trendColor, trendStrength, leading, maxSizeDp)
         return
     }
