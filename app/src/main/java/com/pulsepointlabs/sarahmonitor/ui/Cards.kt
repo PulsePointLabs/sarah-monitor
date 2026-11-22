@@ -663,7 +663,8 @@ fun StressCard() {
         val voiceOn by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.announce.collectAsState()
         val relaxOn by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.relax.collectAsState()
         CardTitle("Stress", if (LocalOverlayMode.current) color else StressColor, "0–100") {
-            if (!LocalOverlayMode.current) {
+            // Only when there's room: the title always wins over the speaker toggle.
+            if (!LocalOverlayMode.current && s.widthDp >= 180f) {
                 // Quick mute/unmute for Sarah's stress voice (announcements; coaching follows its own switch).
                 val on = voiceOn || relaxOn
                 androidx.compose.material3.Icon(

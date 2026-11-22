@@ -331,6 +331,12 @@ private fun MonitorScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val responseStore = remember { LayoutStore(context, "response_v1", GridLayoutEngine.responseLayout) }
     var responseSlots by remember { mutableStateOf(responseStore.load()) }
+    // Phones (portrait or landscape) have their own card sets, laid out to fit one screen.
+    val compact = com.pulsepointlabs.sarahmonitor.ui.isCompactWindow()
+    val fitStore = remember { LayoutStore(context, "fit_monitor_v1", com.pulsepointlabs.sarahmonitor.ui.FitLayout.monitorDefaults) }
+    var fitSlots by remember { mutableStateOf(fitStore.load()) }
+    val fitResponseStore = remember { LayoutStore(context, "fit_response_v1", com.pulsepointlabs.sarahmonitor.ui.FitLayout.responseDefaults) }
+    var fitResponseSlots by remember { mutableStateOf(fitResponseStore.load()) }
     var arranging by remember { mutableStateOf(false) }
     var screen by rememberSaveable { mutableStateOf(Screen.Monitor) }
     var reviewId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -389,7 +395,7 @@ private fun MonitorScreen(
                 onArrange = { arranging = !arranging },
                 onReset = { confirmReset = true }
             )
-            Spacer(Modifier.size(4.dp))
+            Spacer(Modifier.size(8.dp))
             val openReview = reviewId
             when {
                 openReview != null -> ReviewScreen(
@@ -400,11 +406,12 @@ private fun MonitorScreen(
                     modifier = Modifier.fillMaxSize()
                 )
                 screen == Screen.Response -> com.pulsepointlabs.sarahmonitor.response.ResponseScreen(
-                    slots = responseSlots,
+                    slots = if (compact) fitResponseSlots else responseSlots,
                     arranging = arranging,
                     onArrangingChange = { arranging = it },
                     onChange = { responseSlots = it; responseStore.save(it) },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    compact = compact
                 )
                 screen == Screen.Kegel -> com.pulsepointlabs.sarahmonitor.kegel.KegelScreen(Modifier.fillMaxSize())
                 screen == Screen.Health -> com.pulsepointlabs.sarahmonitor.vitals.HealthScreen(onCsvImport, onHealthConnect, Modifier.fillMaxSize()) { m -> com.pulsepointlabs.sarahmonitor.sleep.SleepScreen(m) }
@@ -412,11 +419,12 @@ private fun MonitorScreen(
                 screen == Screen.Sensors -> SensorsScreen(onHealthConnect, onCsvImport, onMessage, Modifier.fillMaxSize())
                 screen == Screen.Settings -> SettingsScreen(onMessage, Modifier.fillMaxSize())
                 else -> Dashboard(
-                    slots = slots,
+                    slots = if (compact) fitSlots else slots,
                     arranging = arranging,
                     onArrangingChange = { arranging = it },
                     onChange = { slots = it; layoutStore.save(it) },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    compact = compact
                 )
             }
         }
@@ -448,7 +456,19 @@ private fun MonitorScreen(
         )
     }
     if (showCards) {
-        if (screen == Screen.Response) CardsDialog(
+        if (compact && screen == Screen.Response) CardsDialog(
+            slots = fitResponseSlots,
+            types = GridLayoutEngine.responseLayout.map { it.type },
+            onToggle = { type, on -> fitResponseSlots = GridLayoutEngine.setVisible(fitResponseSlots, type, on); fitResponseStore.save(fitResponseSlots) },
+            onResetLayout = { fitResponseSlots = com.pulsepointlabs.sarahmonitor.ui.FitLayout.responseDefaults; fitResponseStore.save(fitResponseSlots) },
+            onDismiss = { showCards = false }
+        ) else if (compact) CardsDialog(
+            slots = fitSlots,
+            types = GridLayoutEngine.defaultLayout.map { it.type },
+            onToggle = { type, on -> fitSlots = GridLayoutEngine.setVisible(fitSlots, type, on); fitStore.save(fitSlots) },
+            onResetLayout = { fitSlots = com.pulsepointlabs.sarahmonitor.ui.FitLayout.monitorDefaults; fitStore.save(fitSlots) },
+            onDismiss = { showCards = false }
+        ) else if (screen == Screen.Response) CardsDialog(
             slots = responseSlots,
             types = GridLayoutEngine.responseLayout.map { it.type },
             onToggle = { type, on -> responseSlots = GridLayoutEngine.setVisible(responseSlots, type, on); responseStore.save(responseSlots) },
@@ -500,22 +520,24 @@ internal fun TopBar(
         // Three widths: full desktop bar (DeX), medium (tablet / phone landscape) and narrow (phone portrait).
         val full = maxWidth >= 1150.dp
         val narrow = maxWidth < 600.dp
+        // Phone-sized windows use the fit-to-screen board (no free arranging).
+        val fit = com.pulsepointlabs.sarahmonitor.ui.isCompactWindow()
         val moreMenu: @Composable () -> Unit = {
             Box {
                 BarIcon(Icons.Default.MoreVert, "More", { menu = true })
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MonitorColors.panel) {
                     val board = screen == Screen.Response
                     DropdownMenuItem(text = { Text("Cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onCards() })
-                    if (!narrow) DropdownMenuItem(text = { Text(if (arranging) "Done arranging" else "Arrange cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onArrange() })
+                    if (!fit) DropdownMenuItem(text = { Text(if (arranging) "Done arranging" else "Arrange cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onArrange() })
                     DropdownMenuItem(text = { Text("Start fresh") }, onClick = { menu = false; onReset() })
                 }
             }
         }
         if (narrow) {
             // Phone portrait: tabs get the full width on top; clock, record, mark and toggles get their own row.
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Tabs(screen, compact = true, fill = true, onScreen = onScreen)
-                Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().height(34.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(clockFormat), color = MonitorColors.label, fontSize = 14.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
                     Spacer(Modifier.weight(1f))
                     RecordButton(recording, now, compact = false, onClick = onRecord)
@@ -607,7 +629,7 @@ private fun Tabs(screen: Screen, compact: Boolean, fill: Boolean = false, onScre
                             Screen.Sensors -> Icons.Default.Bluetooth
                             Screen.Settings -> Icons.Default.Settings
                         },
-                        contentDescription = s.label, tint = tint, modifier = Modifier.size(20.dp)
+                        contentDescription = s.label, tint = tint, modifier = Modifier.size(18.dp)
                     )
                 } else {
                     Text(s.label, color = tint, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
@@ -617,15 +639,18 @@ private fun Tabs(screen: Screen, compact: Boolean, fill: Boolean = false, onScre
     }
 }
 
+private val BAR_BUTTON_H = 32.dp
+
 @Composable
 private fun RecordButton(recording: com.pulsepointlabs.sarahmonitor.session.SessionEntity?, now: Long, compact: Boolean, onClick: () -> Unit) {
     val active = recording != null
     Row(
         Modifier
+            .height(BAR_BUTTON_H)
             .background(if (active) MonitorColors.alarm else Color.Transparent, RoundedCornerShape(8.dp))
             .border(1.dp, MonitorColors.alarm, RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
@@ -641,25 +666,33 @@ private fun RecordButton(recording: com.pulsepointlabs.sarahmonitor.session.Sess
 @Composable
 private fun MarkButton(enabled: Boolean, compact: Boolean, onClick: () -> Unit) {
     val color = if (enabled) MonitorColors.warn else MonitorColors.dim
-    Text(
-        if (compact) "★" else "★ Mark",
-        color = color,
-        fontSize = 13.sp,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier
+    Box(
+        Modifier
+            .height(BAR_BUTTON_H)
             .border(1.dp, color.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp)
-    )
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(if (compact) "★" else "★ Mark", color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    }
 }
 
 @Composable
 private fun BarIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit, highlighted: Boolean = false) {
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier.size(36.dp).then(if (highlighted) Modifier.background(MonitorColors.pelvic.copy(alpha = 0.2f), CircleShape) else Modifier)
+    // Same height and corner as the Record / Mark buttons; the highlight stays inside its own box.
+    Box(
+        Modifier
+            .size(BAR_BUTTON_H)
+            .then(
+                if (highlighted) Modifier.background(MonitorColors.pelvic.copy(alpha = 0.16f), RoundedCornerShape(8.dp))
+                    .border(1.dp, MonitorColors.pelvic.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                else Modifier
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
     ) {
-        Icon(icon, contentDescription = label, tint = if (highlighted) MonitorColors.pelvic else MonitorColors.label)
+        Icon(icon, contentDescription = label, tint = if (highlighted) MonitorColors.pelvic else MonitorColors.label, modifier = Modifier.size(18.dp))
     }
 }
 

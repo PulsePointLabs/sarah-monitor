@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -78,14 +79,13 @@ fun Dashboard(
     arranging: Boolean,
     onArrangingChange: (Boolean) -> Unit,
     onChange: (List<CardSlot>) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Phone layout (portrait or landscape): fit-to-screen rows instead of the free grid. */
+    compact: Boolean = false
 ) {
     BoxWithConstraints(modifier) {
-        if (maxWidth < 600.dp) {
-            StackedDashboard(slots, columns = 1)
-        } else if (maxHeight < 480.dp) {
-            // Phone held sideways: too short for the screen-filling grid; two scrolling columns instead.
-            StackedDashboard(slots, columns = 2)
+        if (compact) {
+            FitDashboard(slots, maxWidth.value, maxHeight.value)
         } else {
             Column(Modifier.fillMaxSize()) {
                 if (arranging) ArrangeBanner { onArrangingChange(false) }
@@ -95,6 +95,13 @@ fun Dashboard(
             }
         }
     }
+}
+
+/** True for phone-sized windows (portrait or landscape), which use the fit-to-screen layout and their own card set. */
+@Composable
+fun isCompactWindow(): Boolean {
+    val c = androidx.compose.ui.platform.LocalConfiguration.current
+    return c.screenWidthDp < 600 || c.screenHeightDp < 480
 }
 
 @Composable
@@ -125,29 +132,18 @@ private fun ArrangeBanner(onDone: () -> Unit) {
     }
 }
 
+/** Every visible card on one screen: rows share the height, cards in a row share the width by their span. */
 @Composable
-private fun StackedDashboard(slots: List<CardSlot>, columns: Int) {
-    val ordered = slots.filter { it.visible }.sortedWith(compareBy({ it.y }, { it.x }))
-    fun height(type: CardType) = when (type) {
-        CardType.Pelvic -> if (columns == 1) 420.dp else 300.dp
-        CardType.Ecg -> 190.dp
-        CardType.BloodPressure -> 250.dp
-        CardType.Load -> 170.dp
-        CardType.HeartRate -> 200.dp
-        else -> 210.dp
-    }
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        ordered.chunked(columns).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val h = row.maxOf { height(it.type).value }.dp
-                row.forEach { slot -> MonitorCard(slot.type, Modifier.weight(1f).height(h)) }
-                repeat(columns - row.size) { Box(Modifier.weight(1f)) }
+private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float) {
+    val order = slots.filter { it.visible }.sortedWith(compareBy({ it.y }, { it.x })).map { it.type }
+    val units = FitLayout.bestUnits(order, widthDp, heightDp)
+    val rows = FitLayout.rows(order, units)
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(GAP_DP.dp)) {
+        rows.forEach { row ->
+            Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp)) {
+                row.forEach { type -> MonitorCard(type, Modifier.weight(FitLayout.span(type, units).toFloat()).fillMaxHeight()) }
             }
         }
-        Box(Modifier.height(8.dp))
     }
 }
 
@@ -165,7 +161,9 @@ private fun GridDashboard(
     val density = LocalDensity.current
     val gapPx = with(density) { GAP_DP.dp.toPx() }
     val colPx = (with(density) { width.toPx() } + gapPx) / GridLayoutEngine.COLUMNS
-    val rowPx = maxOf(with(density) { 28.dp.toPx() }, (with(density) { height.toPx() } + gapPx) / GridLayoutEngine.SCREEN_ROWS)
+    // Rows stretch or shrink so the whole layout always fits the screen (no scrolling).
+    val committedRows = maxOf(GridLayoutEngine.SCREEN_ROWS, slots.filter { it.visible }.maxOfOrNull { it.bottom } ?: 0)
+    val rowPx = (with(density) { height.toPx() } + gapPx) / committedRows
     val scrollStepPx = with(density) { SCROLL_STEP_DP.dp.toPx() }
     var drag by remember { mutableStateOf<DragState?>(null) }
     val currentSlots by rememberUpdatedState(slots)
@@ -196,11 +194,7 @@ private fun GridDashboard(
     fun px(slot: CardSlot) = IntOffset((colPx * slot.x).roundToInt(), (rowPx * slot.y).roundToInt())
     fun Float.toDpValue(): Dp = with(density) { this@toDpValue.toDp() }
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState(), enabled = drag == null)
-    ) {
+    Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxWidth().height((rowPx * bottomRows).toDpValue())) {
             // Translucent placeholder where the dragged card will land.
             drag?.let { d ->

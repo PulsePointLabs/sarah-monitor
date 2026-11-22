@@ -80,10 +80,11 @@ fun ResponseScreen(
     arranging: Boolean,
     onArrangingChange: (Boolean) -> Unit,
     onChange: (List<com.pulsepointlabs.sarahmonitor.ui.CardSlot>) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
 ) {
     Box(modifier) {
-        com.pulsepointlabs.sarahmonitor.ui.Dashboard(slots, arranging, onArrangingChange, onChange, Modifier.fillMaxSize())
+        com.pulsepointlabs.sarahmonitor.ui.Dashboard(slots, arranging, onArrangingChange, onChange, Modifier.fillMaxSize(), compact)
         UrgencyFrame()
     }
 }

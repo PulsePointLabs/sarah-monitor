@@ -163,3 +163,55 @@ class LayoutStore(context: Context, private val key: String = "grid_v1", val def
     fun load(): List<CardSlot> = GridLayoutEngine.fromJson(prefs.getString(key, null), defaults)
     fun save(slots: List<CardSlot>) = prefs.edit().putString(key, GridLayoutEngine.toJson(slots)).apply()
 }
+
+/**
+ * Phone layouts (portrait or landscape): no scrolling, like a bedside monitor. Visible cards are packed in order
+ * into rows of [units] slots — waveform/trend cards take two slots, numeric cards one — and the rows share the
+ * screen height. A gap left in a row is filled by pulling the next small card forward; anything left over is
+ * absorbed by stretching the row's cards.
+ */
+object FitLayout {
+    val wideTypes = setOf(CardType.Ecg, CardType.HrTrend, CardType.HrvTrend, CardType.PelvicTrend, CardType.ResponseTimeline, CardType.Cardiac, CardType.QuickMarks)
+
+    fun span(type: CardType, units: Int) = if (type in wideTypes) minOf(2, units) else 1
+
+    fun rows(cards: List<CardType>, units: Int): List<List<CardType>> {
+        val left = cards.toMutableList()
+        val rows = mutableListOf<List<CardType>>()
+        while (left.isNotEmpty()) {
+            val row = mutableListOf<CardType>()
+            var used = 0
+            while (used < units) {
+                val next = left.firstOrNull { span(it, units) <= units - used } ?: break
+                // Keep order unless the very next card doesn't fit (then pull a smaller one forward).
+                left.remove(next)
+                row += next
+                used += span(next, units)
+            }
+            rows += row
+        }
+        return rows
+    }
+
+    /**
+     * Picks how many slots per row (2–6) give the biggest readable tiles for this screen: each candidate is scored by
+     * the smaller of tile height and tile width ÷ 1.5 (cards read best a little wider than tall).
+     */
+    fun bestUnits(cards: List<CardType>, widthDp: Float, heightDp: Float): Int =
+        (2..6).maxBy { u -> minOf(widthDp / u / 1.5f, heightDp / rows(cards, u).size.coerceAtLeast(1)) }
+
+    private fun compactSlots(order: List<CardType>, hidden: List<CardType>): List<CardSlot> =
+        order.mapIndexed { i, t -> CardSlot(t, 0, i, t.minW, t.minH) } +
+            hidden.mapIndexed { i, t -> CardSlot(t, 0, order.size + i, t.minW, t.minH, visible = false) }
+
+    val monitorDefaults = compactSlots(
+        listOf(CardType.HeartRate, CardType.Stress, CardType.Ecg, CardType.Hrv, CardType.Load, CardType.Pelvic, CardType.BloodPressure, CardType.HrTrend),
+        listOf(CardType.HrvTrend, CardType.PelvicTrend, CardType.Glucose, CardType.SpO2, CardType.Body, CardType.Emg)
+    )
+
+    val responseDefaults = compactSlots(
+        listOf(CardType.Phase, CardType.NearClimax, CardType.Pelvic, CardType.HeartRate, CardType.ResponseTimeline, CardType.SarahLive, CardType.Hrv),
+        listOf(CardType.QuickMarks, CardType.Matrix, CardType.Emg, CardType.Recovery, CardType.Respiration, CardType.Cardiac, CardType.Load,
+            CardType.Ecg, CardType.BloodPressure, CardType.PelvicTrend, CardType.HrTrend)
+    )
+}
