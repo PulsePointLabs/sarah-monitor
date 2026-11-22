@@ -797,7 +797,7 @@ private fun StartSessionDialog(onStart: (com.pulsepointlabs.sarahmonitor.session
         title = { Text("Start recording", color = MonitorColors.text, fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                com.pulsepointlabs.sarahmonitor.session.SessionCategory.entries.forEach { c ->
+                com.pulsepointlabs.sarahmonitor.session.SessionCategory.entries.filter { it.pickable }.forEach { c ->
                     val on = c == last
                     val color = if (c.sexual && c != com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid) Color(0xFFFF7AB6) else if (c == com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid) MonitorColors.pnn50 else MonitorColors.hr
                     Text(

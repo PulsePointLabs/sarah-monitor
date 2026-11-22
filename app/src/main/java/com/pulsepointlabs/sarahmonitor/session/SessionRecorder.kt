@@ -46,18 +46,38 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
             while (isActive) {
                 delay(2_000L)
                 flush()
+                if (System.currentTimeMillis() - lastSummaryAt >= 30_000L) refreshLiveSummary()
             }
         }
     }
 
-    suspend fun start(category: SessionCategory = SessionCategory.General): SessionEntity = mutex.withLock {
+    suspend fun start(category: SessionCategory = SessionCategory.General, title: String? = null): SessionEntity = mutex.withLock {
         _active.value?.let { return it }
         val now = System.currentTimeMillis()
-        val session = SessionEntity(id = UUID.randomUUID().toString(), title = defaultTitle(now), startTimeMs = now, category = category.name)
+        val session = SessionEntity(id = UUID.randomUUID().toString(), title = title ?: defaultTitle(now), startTimeMs = now, category = category.name)
         withContext(Dispatchers.IO) { dao.upsertSession(session) }
         synchronized(lock) { hr.clear(); rr.clear(); pelvic.clear(); emg.clear(); ecgTs.clear(); ecgUv.clear(); ecgChunks.clear(); lastEcgTs = Long.MIN_VALUE }
         _active.value = session
         session
+    }
+
+    private var lastSummaryAt = 0L
+
+    /**
+     * Keeps the recording's summary (averages, HRV, events, sparkline) current while it runs, so the session list
+     * and review show it like any saved session. Holds the lock so it can't overwrite a session that just stopped.
+     */
+    suspend fun refreshLiveSummary() {
+        mutex.withLock {
+            val current = _active.value ?: return
+            lastSummaryAt = System.currentTimeMillis()
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val base = (dao.getSession(current.id) ?: current).copy(endTimeMs = null)
+                    dao.upsertSession(SessionAnalysis.summarize(base, dao.getHr(base.id), dao.getRr(base.id), dao.getPelvic(base.id), dao.getMarkers(base.id).size))
+                }
+            }
+        }
     }
 
     suspend fun stop(): SessionEntity? {
@@ -69,7 +89,7 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         flushEcg(force = true, sessionId = session.id)
         flush(session.id)
         return withContext(Dispatchers.IO) {
-            val ended = session.copy(endTimeMs = System.currentTimeMillis())
+            val ended = (dao.getSession(session.id) ?: session).copy(endTimeMs = System.currentTimeMillis())
             val summarized = SessionAnalysis.summarize(ended, dao.getHr(ended.id), dao.getRr(ended.id), dao.getPelvic(ended.id), dao.getMarkers(ended.id).size)
             dao.upsertSession(summarized)
             summarized
@@ -154,6 +174,7 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
             wellbeing = checkIn.wellbeing, selfStress = checkIn.selfStress, snapshot = snapshot
         )
         withContext(Dispatchers.IO) { dao.upsertMarker(marker) }
+        scope.launch(Dispatchers.IO) { flush(); refreshLiveSummary() }
         return marker
     }
 
@@ -182,7 +203,11 @@ enum class SessionCategory(val label: String, val groups: List<MarkerTypes.Group
     Masturbation("Masturbation", listOf(MarkerTypes.Group.Sexual)),
     Sexual("Sexual activity", listOf(MarkerTypes.Group.Sexual)),
     Exploration("Body exploration", listOf(MarkerTypes.Group.Sexual)),
-    Hybrid("Hybrid (general + sexual)", listOf(MarkerTypes.Group.General, MarkerTypes.Group.Sexual));
+    Hybrid("Hybrid (general + sexual)", listOf(MarkerTypes.Group.General, MarkerTypes.Group.Sexual)),
+    /** Started automatically by a Kegel set (not offered in the record chooser). */
+    Kegel("Kegel set", listOf(MarkerTypes.Group.General));
+
+    val pickable: Boolean get() = this != Kegel
 
     val sexual: Boolean get() = MarkerTypes.Group.Sexual in groups
 

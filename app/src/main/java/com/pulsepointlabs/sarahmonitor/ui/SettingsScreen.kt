@@ -1,5 +1,6 @@
 package com.pulsepointlabs.sarahmonitor.ui
 
+import androidx.compose.material.icons.filled.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,9 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -50,8 +54,9 @@ fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, e
         MonitorService.start(context)
         onDispose { OverlaySettings.setPreviewing(false) }
     }
-    AdaptiveColumns(
+    CompositionLocalProvider(LocalCollapsibleSections provides true) { AdaptiveColumns(
         listOf(
+            PageSection(6) { QuickControls() },
             PageSection(10) { OverlaySettingsSection() },
             PageSection(10) { HeartbeatSoundSection() },
             PageSection(5) { VoiceSection(onMessage) },
@@ -62,21 +67,83 @@ fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, e
             PageSection(3) { Column { extra() } }
         ),
         modifier
-    )
+    ) }
 }
 
+/** On the Settings page, sections fold into a tappable header (closed by default) so the page stays tidy. */
+val LocalCollapsibleSections = androidx.compose.runtime.compositionLocalOf { false }
+
 @Composable
-fun SettingsSection(title: String, color: Color, subtitle: String? = null, content: @Composable ColumnScope.() -> Unit) {
+fun SettingsSection(
+    title: String, color: Color, subtitle: String? = null,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val collapsible = LocalCollapsibleSections.current
+    var open by androidx.compose.runtime.saveable.rememberSaveable(title) { mutableStateOf(!collapsible) }
     Column(
         Modifier
             .fillMaxWidth()
             .background(color.copy(alpha = 0.07f), RoundedCornerShape(10.dp))
             .border(1.dp, color.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
-            .padding(12.dp),
+            .padding(horizontal = 12.dp, vertical = if (collapsible && !open) 4.dp else 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(title, color = color, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        content()
+        Row(
+            Modifier.fillMaxWidth().then(if (collapsible) Modifier.heightIn(min = 44.dp).clickable { open = !open } else Modifier),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (icon != null) {
+                Box(Modifier.size(30.dp).background(color.copy(alpha = 0.16f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
+                }
+            }
+            Text(title, color = color, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+            if (collapsible) androidx.compose.material3.Icon(
+                if (open) androidx.compose.material.icons.Icons.Default.ExpandLess else androidx.compose.material.icons.Icons.Default.ExpandMore,
+                contentDescription = if (open) "Collapse" else "Expand", tint = MonitorColors.label
+            )
+        }
+        if (open) content()
+    }
+}
+
+/** The switches you reach for most, always open at the top of Settings. */
+@Composable
+private fun QuickControls() {
+    val context = LocalContext.current
+    val overlaysOn by OverlaySettings.on.collectAsState()
+    val profile by OverlaySettings.profile.collectAsState()
+    val beep by com.pulsepointlabs.sarahmonitor.audio.AudioSettings.beepEnabled.collectAsState()
+    val alerts by com.pulsepointlabs.sarahmonitor.audio.AudioSettings.alertsEnabled.collectAsState()
+    val announce by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.announce.collectAsState()
+    val relax by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.relax.collectAsState()
+    val coach by com.pulsepointlabs.sarahmonitor.response.ResponseSettings.coachOn.collectAsState()
+    val I = androidx.compose.material.icons.Icons.Default
+    CompositionLocalProvider(LocalCollapsibleSections provides false) {
+        SettingsSection("Quick controls", MonitorColors.text, icon = I.ToggleOn) {
+            QuickRow(I.Layers, MonitorColors.pelvic, "Overlays", "On ${profile.label.lowercase()}", overlaysOn) {
+                OverlaySettings.toggle(context); MonitorService.start(context)
+            }
+            QuickRow(I.MonitorHeart, MonitorColors.hr, "Heartbeat beep", null, beep) { com.pulsepointlabs.sarahmonitor.audio.AudioSettings.setBeepEnabled(it) }
+            QuickRow(I.NotificationsActive, MonitorColors.warn, "Alerts", null, alerts) { com.pulsepointlabs.sarahmonitor.audio.AudioSettings.setAlertsEnabled(it) }
+            QuickRow(I.Campaign, StressColor, "Stress announcements", null, announce) { com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.setAnnounce(it) }
+            QuickRow(I.SelfImprovement, StressColor, "Relaxation coaching", null, relax) { com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.setRelax(it) }
+            QuickRow(I.RecordVoiceOver, Color(0xFFFF7AB6), "Sarah live", "Sexual sessions", coach) { com.pulsepointlabs.sarahmonitor.response.ResponseSettings.setCoachOn(it) }
+        }
+    }
+}
+
+@Composable
+private fun QuickRow(icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color, label: String, detail: String?, on: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        androidx.compose.material3.Icon(icon, contentDescription = null, tint = if (on) color else MonitorColors.dim, modifier = Modifier.size(22.dp))
+        Column(Modifier.weight(1f)) {
+            Text(label, color = MonitorColors.text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            if (detail != null) Text(detail, color = MonitorColors.label, fontSize = 12.sp)
+        }
+        SettingSwitch(on, onChange)
     }
 }
 
@@ -120,7 +187,7 @@ private fun OverlaySettingsSection() {
     val st = states[profile] ?: return
     val canDraw = OverlaySettings.canDraw(context)
     SettingsSection(
-        "Floating overlays", MonitorColors.pelvic,
+        "Floating overlays", MonitorColors.pelvic, icon = androidx.compose.material.icons.Icons.Default.Layers, subtitle =
         "Float over other apps; drag to move, corner grip to resize. The phone and DeX each keep their own overlays, sizes and positions. They hide while Sarah Monitor is the active window — except on this page, so you can see changes live."
     ) {
         if (!canDraw) {

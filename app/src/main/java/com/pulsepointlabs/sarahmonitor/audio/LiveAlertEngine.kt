@@ -114,7 +114,8 @@ class LiveAlertEngine(private val limits: () -> AlertLimits = { AlertLimits() })
             if (t - since >= 30_000L && AlertKind.LowHr !in latched) {
                 latched += AlertKind.LowHr
                 fire(out, AlertKind.LowHr, t, if (now < 40) FlagSeverity.High else FlagSeverity.Notable,
-                    "Heart rate is low, $now, under ${lim.lowHr} for 30 seconds.", "HR $now (< ${lim.lowHr})")
+                    if (lim.lowHr >= 60) "Heart rate's down to $now, under your ${lim.lowHr} target." else "Heart rate is low, $now, under ${lim.lowHr} for 30 seconds.",
+                    "HR $now (< ${lim.lowHr})")
             }
         } else {
             lowSince = null

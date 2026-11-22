@@ -1,5 +1,6 @@
 package com.pulsepointlabs.sarahmonitor.response
 
+import androidx.compose.material.icons.filled.*
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -98,7 +99,7 @@ fun CoachSettingsSection() {
     val profile by ResponseSettings.profile.collectAsState()
     var draft by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
     com.pulsepointlabs.sarahmonitor.ui.SettingsSection(
-        "Sarah live feedback", Color(0xFFFF7AB6),
+        "Sarah live feedback", Color(0xFFFF7AB6), icon = androidx.compose.material.icons.Icons.Default.RecordVoiceOver, subtitle =
         "During a recording on the Response tab, Sarah speaks short lines about what your body is doing. Claude is her brain (your Anthropic key); her voice is the HD Crisp OpenAI voice."
     ) {
         Text(

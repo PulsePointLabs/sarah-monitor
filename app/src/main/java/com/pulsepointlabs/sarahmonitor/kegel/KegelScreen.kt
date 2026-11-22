@@ -25,6 +25,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.material.icons.filled.ShowChart
+import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -95,6 +100,26 @@ fun KegelScreen(modifier: Modifier = Modifier) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var lastIndex by remember { mutableIntStateOf(-1) }
     val scope = rememberCoroutineScope()
+    // A set started while nothing was recording gets its own session, stopped when the set ends.
+    var autoSession by remember { mutableStateOf(false) }
+    val autoRef = androidx.compose.runtime.rememberUpdatedState(autoSession)
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { if (autoRef.value) MonitorHub.stopSession() } }
+
+    fun finish(s: KegelSession, at: Long, early: Boolean) {
+        val r = s.result(at)
+        KegelHistory.add(context, r)
+        val wasAuto = autoSession
+        autoSession = false
+        if (MonitorHub.session.value != null) {
+            MonitorHub.markEvent(
+                at, setOf("activity"), "Kegels: ${r.routine.label}, ${r.reps} reps, score ${r.score}" + if (early) " (stopped early)" else "",
+                extra = "kegel" to s.toJson(r, early)
+            ) { if (wasAuto) MonitorHub.stopSession() }
+        }
+        result = r
+        session = null
+        lastIndex = -1
+    }
 
     // Clock + scoring loop while a set runs.
     LaunchedEffect(session) {
@@ -127,15 +152,8 @@ fun KegelScreen(modifier: Modifier = Modifier) {
                 }
             }
             if (n.done) {
-                val r = s.result(now)
-                KegelHistory.add(context, r)
-                if (MonitorHub.session.value != null) {
-                    MonitorHub.markEvent(now, setOf("activity"), "Kegels: ${r.routine.label}, ${r.reps} reps, score ${r.score}")
-                }
-                if (cues == Cues.Voice) scope.launch { MonitorHub.audio.say("Set complete. Score ${r.score}.") }
-                result = r
-                session = null
-                lastIndex = -1
+                if (cues == Cues.Voice) scope.launch { MonitorHub.audio.say("Set complete. Score ${s.result(now).score}.") }
+                finish(s, now, early = false)
                 break
             }
             delay(50L)
@@ -145,57 +163,97 @@ fun KegelScreen(modifier: Modifier = Modifier) {
     fun start() {
         result = null
         lastIndex = -1
+        if (MonitorHub.session.value == null) {
+            val clock = java.time.LocalTime.now().format(DateTimeFormatter.ofPattern("h:mm a"))
+            MonitorHub.startSession(com.pulsepointlabs.sarahmonitor.session.SessionCategory.Kegel, "Kegels · ${routine.label} · $clock")
+            autoSession = true
+        }
         session = KegelSession(routine, reps, hold, rest, System.currentTimeMillis())
     }
 
-    val setup: @Composable () -> Unit = {
-        Card("Routine", squeezeColor, Modifier.fillMaxWidth()) {
-            ChoiceRow {
-                KegelRoutine.entries.forEach { r ->
-                    ChoiceChip(r.label, r == routine, squeezeColor) {
-                        if (session == null) {
-                            routine = r
-                            val (a, b, c) = r.defaults()
-                            reps = a; hold = b; rest = c
-                        }
-                    }
-                }
-            }
+    val running = session != null
+    val setupPanel: @Composable () -> Unit = {
+        Column(Modifier.width(340.dp).padding(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(routine.detail, color = MonitorColors.label, fontSize = 13.sp)
-            SettingSlider("Reps", "$reps", reps.toFloat(), 1f..30f) { if (session == null) reps = it.toInt() }
-            SettingSlider(if (routine == KegelRoutine.Elevator) "Seconds per floor" else if (routine == KegelRoutine.Reverse) "Release" else "Squeeze / hold", "${"%.0f".format(hold)} s", hold.toFloat(), 1f..60f) { if (session == null) hold = it.toInt().toDouble() }
-            SettingSlider("Rest", "${"%.0f".format(rest)} s", rest.toFloat(), 1f..60f) { if (session == null) rest = it.toInt().toDouble() }
-            Text("Cues", color = MonitorColors.text, fontSize = 15.sp)
+            SettingSlider("Reps", "$reps", reps.toFloat(), 1f..30f) { if (!running) reps = Math.round(it) }
+            SettingSlider(if (routine == KegelRoutine.Elevator) "Seconds per floor" else if (routine == KegelRoutine.Reverse) "Release" else "Squeeze / hold", "${"%.0f".format(hold)} s", hold.toFloat(), 1f..60f) { if (!running) hold = Math.round(it).toDouble() }
+            SettingSlider("Rest", "${"%.0f".format(rest)} s", rest.toFloat(), 1f..60f) { if (!running) rest = Math.round(it).toDouble() }
+            Text("Cues", color = MonitorColors.text, fontSize = 14.sp)
             ChoiceRow { Cues.entries.forEach { c -> ChoiceChip(c.label, c == cues, squeezeColor) { cues = c } } }
         }
-        Card("Calibration (CIVET)", relaxColor, Modifier.fillMaxWidth()) {
+    }
+    val calibrationPanel: @Composable () -> Unit = {
+        Column(Modifier.width(340.dp).padding(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 when {
                     pelvic.pressureKpa == null -> "CIVET not connected"
-                    pelvic.referenceKpa == null -> "No reference hold"
-                    else -> "Reference ${"%.1f".format(pelvic.referenceKpa)} kPa"
+                    pelvic.referenceKpa == null -> "No reference hold yet"
+                    else -> "Reference ${"%.1f".format(pelvic.referenceKpa)} kPa · rest ${pelvic.restSource.name.lowercase()}"
                 },
                 color = MonitorColors.text, fontSize = 13.sp
             )
             pelvic.capture?.let { Text(it.message, color = MonitorColors.warn, fontSize = 13.sp) }
-            ChoiceRow {
-                ChoiceChip("Capture rest (5 s relaxed)", false, relaxColor) { MonitorHub.startPelvicCapture(CaptureKind.Rest) }
-                ChoiceChip("Capture reference (5 s squeeze)", false, relaxColor) { MonitorHub.startPelvicCapture(CaptureKind.Reference) }
-            }
+            ChoiceChip("Capture rest (5 s relaxed)", false, relaxColor) { MonitorHub.startPelvicCapture(CaptureKind.Rest) }
+            ChoiceChip("Capture reference (5 s squeeze)", false, relaxColor) { MonitorHub.startPelvicCapture(CaptureKind.Reference) }
         }
     }
 
-    val trainer: @Composable (Modifier) -> Unit = { m ->
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Routine + three dropdowns; everything else stays out of the way of the circle.
+        val routines: @Composable () -> Unit = {
+            ChoiceRow {
+                KegelRoutine.entries.forEach { r ->
+                    ChoiceChip(r.label, r == routine, squeezeColor) {
+                        if (!running) { routine = r; val (a, b, c) = r.defaults(); reps = a; hold = b; rest = c }
+                    }
+                }
+            }
+        }
+        val panels: @Composable () -> Unit = {
+            PanelButton(androidx.compose.material.icons.Icons.Default.Tune, "Setup", squeezeColor) { setupPanel() }
+            PanelButton(androidx.compose.material.icons.Icons.Default.Compress, "Calibrate", if (pelvic.referenceKpa == null) MonitorColors.warn else relaxColor) { calibrationPanel() }
+            PanelButton(androidx.compose.material.icons.Icons.Default.ShowChart, "Progress", MonitorColors.rmssd) { Box(Modifier.width(380.dp).padding(horizontal = 8.dp)) { HistoryCard() } }
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            if (maxWidth >= 900.dp) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.weight(1f)) { routines() }
+                    panels()
+                }
+            } else {
+                // Phone: routines get the full width; the three dropdowns sit in their own row.
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    routines()
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) { panels() }
+                }
+            }
+        }
+        Text(
+            "${routine.label} · $reps reps · ${"%.0f".format(hold)} s ${if (routine == KegelRoutine.Reverse) "release" else "hold"} · ${"%.0f".format(rest)} s rest",
+            color = MonitorColors.label, fontSize = 13.sp
+        )
         val s = session
         val n = s?.at(now)
         val livePct = pelvic.aboveRestKpa?.let { a -> pelvic.referenceKpa?.takeIf { it > 0.3 }?.let { a / it * 100 } ?: (a / pelvic.thresholdKpa * 50) }
-        Column(m, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            BreathingRing(n?.step, n?.stepProgress ?: 0.0, n?.remainingS, livePct, Modifier.fillMaxWidth().widthIn(max = 520.dp).aspectRatio(1f))
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            // As big as fits, never wider or taller than the space.
+            BreathingRing(n?.step, n?.stepProgress ?: 0.0, n?.remainingS, livePct, Modifier.size(minOf(maxWidth, maxHeight)))
+        }
+        // Live feedback under the circle.
+        Column(Modifier.fillMaxWidth().widthIn(max = 620.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (s != null && n != null) {
+                Text(kegelCoach(n.step, livePct), color = if (n.step.kind in setOf(StepKind.Squeeze, StepKind.Hold)) squeezeColor else relaxColor, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 RepDots(s, n.step.rep)
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ChoiceChip("■ Stop", false, MonitorColors.alarm) { session = null; lastIndex = -1 }
+                val (onTarget, strength, relax) = s.soFar()
+                val left = (s.totalS - (now - s.startMs) / 1000.0).coerceAtLeast(0.0)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    LiveStat("On target", onTarget?.let { "$it%" }, MonitorColors.good, Modifier.weight(1f))
+                    LiveStat("Strength", strength?.let { "$it%" }, squeezeColor, Modifier.weight(1f))
+                    LiveStat("Relax", relax?.let { "$it%" }, relaxColor, Modifier.weight(1f))
+                    LiveStat("Left", "${(left / 60).toInt()}:${"%02d".format((left % 60).toInt())}", MonitorColors.text, Modifier.weight(1f))
                 }
+                LiveTrace(pelvic, n.step.targetPct, Modifier.fillMaxWidth().height(54.dp))
+                ChoiceChip("■ Stop", false, MonitorColors.alarm) { finish(s, System.currentTimeMillis(), early = true) }
             } else {
                 Text(
                     "▶ Start ${routine.label.lowercase()}",
@@ -203,27 +261,63 @@ fun KegelScreen(modifier: Modifier = Modifier) {
                     modifier = Modifier
                         .background(Brush.horizontalGradient(listOf(squeezeColor, relaxColor)), RoundedCornerShape(28.dp))
                         .clickable { start() }
-                        .padding(horizontal = 28.dp, vertical = 14.dp)
+                        .padding(horizontal = 28.dp, vertical = 12.dp)
                 )
                 result?.let { ResultCard(it) }
             }
         }
     }
+}
 
-    BoxWithConstraints(modifier) {
-        if (maxWidth >= 1000.dp) {
-            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.weight(0.9f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) { setup() }
-                Box(Modifier.weight(1.2f).fillMaxHeight().verticalScroll(rememberScrollState()), contentAlignment = Alignment.TopCenter) { trainer(Modifier.fillMaxWidth()) }
-                Column(Modifier.weight(0.9f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) { HistoryCard() }
-            }
-        } else {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                trainer(Modifier.fillMaxWidth())
-                setup()
-                HistoryCard()
-            }
+/** A toggle chip that opens its panel as a dropdown, so settings never crowd the trainer. */
+@Composable
+private fun PanelButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, color: Color, content: @Composable () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier.height(34.dp)
+                .background(if (open) color.copy(alpha = 0.18f) else Color.Transparent, RoundedCornerShape(8.dp))
+                .border(1.dp, color.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                .clickable { open = !open }
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            androidx.compose.material3.Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
+            Text(label, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
+        androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = MonitorColors.panel) { content() }
+    }
+}
+
+@Composable
+private fun LiveStat(label: String, value: String?, color: Color, modifier: Modifier) {
+    Column(modifier.background(color.copy(alpha = 0.08f), RoundedCornerShape(8.dp)).border(1.dp, color.copy(alpha = 0.25f), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp)) {
+        Text(label, color = MonitorColors.label, fontSize = 11.sp, maxLines = 1)
+        Text(value ?: "--", color = if (value == null) MonitorColors.dim else color, fontSize = 18.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, maxLines = 1)
+    }
+}
+
+/** The last 20 s of squeeze (% of reference) with the current target as a dashed line. */
+@Composable
+private fun LiveTrace(p: com.pulsepointlabs.sarahmonitor.core.PelvicSnapshot, targetPct: Int?, modifier: Modifier) {
+    val pts = p.trace.takeLast(400)
+    Canvas(modifier.background(MonitorColors.panel, RoundedCornerShape(8.dp)).border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(8.dp))) {
+        val end = pts.lastOrNull()?.timestampMs ?: return@Canvas
+        val start = end - 20_000L
+        fun pct(a: Double) = p.referenceKpa?.takeIf { it > 0.3 }?.let { a / it * 100 } ?: (a / p.thresholdKpa * 50)
+        fun y(v: Double) = size.height - (v / 120.0).toFloat().coerceIn(0f, 1f) * (size.height - 6f) - 3f
+        targetPct?.let { t ->
+            drawLine(MonitorColors.warn, Offset(0f, y(t.toDouble())), Offset(size.width, y(t.toDouble())), 1.5f,
+                pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 8f)))
+        }
+        val path = androidx.compose.ui.graphics.Path(); var started = false
+        pts.filter { it.timestampMs >= start }.forEach { q ->
+            val a = q.aboveRestKpa ?: return@forEach
+            val x = (q.timestampMs - start).toFloat() / 20_000f * size.width
+            if (!started || q.gapBefore) path.moveTo(x, y(pct(a))) else path.lineTo(x, y(pct(a)))
+            started = true
+        }
+        drawPath(path, squeezeColor, style = Stroke(2.2f, cap = StrokeCap.Round))
     }
 }
 

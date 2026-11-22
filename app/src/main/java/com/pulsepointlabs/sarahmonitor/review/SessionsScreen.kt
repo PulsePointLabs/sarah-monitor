@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,52 +78,67 @@ fun SessionsScreen(onOpen: (String) -> Unit, modifier: Modifier = Modifier) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/** Every session card has the same shape — the live recording included (its numbers refresh as it runs). */
 @Composable
 private fun SessionCard(s: SessionEntity, onClick: () -> Unit) {
     val shape = RoundedCornerShape(12.dp)
     val start = Instant.ofEpochMilli(s.startTimeMs).atZone(ZoneId.systemDefault())
+    var now by androidx.compose.runtime.remember { androidx.compose.runtime.mutableLongStateOf(System.currentTimeMillis()) }
+    if (s.active) androidx.compose.runtime.LaunchedEffect(s.id) { while (true) { kotlinx.coroutines.delay(1_000L); now = System.currentTimeMillis() } }
+    val category = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(s.category)
     Column(
         Modifier
             .fillMaxWidth()
             .background(MonitorColors.panel, shape)
-            .border(1.dp, if (s.active) MonitorColors.alarm else MonitorColors.panelBorder, shape)
+            .border(1.dp, if (s.active) MonitorColors.alarm.copy(alpha = 0.8f) else MonitorColors.panelBorder, shape)
             .clickable(onClick = onClick)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (s.active) Box(Modifier.size(9.dp).background(MonitorColors.alarm, CircleShape))
             Text(s.title, color = MonitorColors.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text(SessionAnalysis.durationWords(s.durationMs), color = MonitorColors.label, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+            Text(
+                if (s.active) SessionAnalysis.elapsed(now - s.startTimeMs) else SessionAnalysis.durationWords(s.durationMs),
+                color = if (s.active) MonitorColors.alarm else MonitorColors.label, fontSize = 13.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold
+            )
         }
-        Text(
-            "${start.format(dayFmt)} · ${clockLabel(s.startTimeMs)}" + if (s.active) " · recording now" else "",
-            color = if (s.active) MonitorColors.alarm else MonitorColors.label,
-            fontSize = 12.sp
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (s.active) Tag("● REC", MonitorColors.alarm)
+            category?.let { Tag(it.label, if (it.sexual && it != com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid) androidx.compose.ui.graphics.Color(0xFFFF7AB6) else MonitorColors.sdnn) }
+            Text("${start.format(dayFmt)} · ${clockLabel(s.startTimeMs)}", color = MonitorColors.label, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         Sparkline(s.hrSparkline, Modifier.fillMaxWidth().height(34.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Stat("Avg HR", s.averageHr?.let { "%.0f".format(it) }, MonitorColors.hr)
-            Stat("Min", s.minHr?.toString(), MonitorColors.sdnn)
-            Stat("Max", s.maxHr?.toString(), MonitorColors.alarm)
-            Stat("RMSSD", s.rmssdMs?.let { "%.1f".format(it) }, MonitorColors.rmssd)
-            Stat("Pressure max", s.pelvicMaxKpa?.let { "%.1f kPa".format(it) }, MonitorColors.pelvic)
-            Stat("Contractions", s.pelvicPulseCount?.toString(), MonitorColors.pelvic)
-            Stat("Events", s.markerCount.takeIf { it > 0 }?.toString(), MonitorColors.text)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Stat("Avg HR", s.averageHr?.let { "%.0f".format(it) }, MonitorColors.hr, Modifier.weight(1f))
+            Stat("Min", s.minHr?.toString(), MonitorColors.sdnn, Modifier.weight(1f))
+            Stat("Max", s.maxHr?.toString(), MonitorColors.alarm, Modifier.weight(1f))
+            Stat("RMSSD", s.rmssdMs?.let { "%.1f".format(it) }, MonitorColors.rmssd, Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Stat("Events", s.markerCount.toString(), MonitorColors.text, Modifier.weight(1f))
+            Stat("Max kPa", s.pelvicMaxKpa?.let { "%.1f".format(it) }, MonitorColors.pelvic, Modifier.weight(1f))
+            Stat("Contract.", s.pelvicPulseCount?.toString(), MonitorColors.pelvic, Modifier.weight(1f))
+            Stat("Hold", s.pelvicLongestHoldS?.let { "%.0f s".format(it) }, MonitorColors.pelvic, Modifier.weight(1f))
         }
     }
 }
 
 @Composable
-private fun Stat(label: String, value: String?, color: androidx.compose.ui.graphics.Color) {
-    if (value == null) return
-    Row(
-        Modifier.background(color.copy(alpha = 0.1f), RoundedCornerShape(6.dp)).padding(horizontal = 7.dp, vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+private fun Tag(text: String, color: androidx.compose.ui.graphics.Color) {
+    Text(
+        text, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+        modifier = Modifier.background(color.copy(alpha = 0.12f), RoundedCornerShape(5.dp)).border(1.dp, color.copy(alpha = 0.45f), RoundedCornerShape(5.dp)).padding(horizontal = 6.dp, vertical = 1.dp)
+    )
+}
+
+/** Fixed-size stat cell: label over value; "--" when there's nothing, so every card lines up. */
+@Composable
+private fun Stat(label: String, value: String?, color: androidx.compose.ui.graphics.Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier.background(color.copy(alpha = if (value == null) 0.04f else 0.1f), RoundedCornerShape(6.dp)).padding(horizontal = 7.dp, vertical = 3.dp)
     ) {
-        Text(label, color = MonitorColors.label, fontSize = 12.sp)
-        Text(value, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = MonitorColors.label, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value ?: "--", color = if (value == null) MonitorColors.dim else color, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }
 

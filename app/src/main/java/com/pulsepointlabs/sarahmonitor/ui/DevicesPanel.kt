@@ -1,5 +1,6 @@
 package com.pulsepointlabs.sarahmonitor.ui
 
+import androidx.compose.material.icons.filled.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -231,9 +232,9 @@ fun VoiceSection(onMessage: (String) -> Unit) {
     var engine by remember { mutableStateOf(VoiceSettings.engine(context)) }
     var saved by remember { mutableStateOf(VoiceSettings.apiKey(context)) }
     var key by remember { mutableStateOf("") }
-    Section(
+    SettingsSection(
         "Voice notes & OpenAI key",
-        MonitorColors.text,
+        MonitorColors.text, icon = androidx.compose.material.icons.Icons.Default.Mic, subtitle =
         "Speech-to-text for event notes. OpenAI live shows punctuated words as you speak; Whisper transcribes after you stop; Android's recognizer works offline without a key. The key is also used for Sarah's voice."
     ) {
         Buttons {

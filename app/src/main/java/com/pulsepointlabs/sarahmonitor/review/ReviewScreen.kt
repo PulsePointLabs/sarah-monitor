@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -172,10 +175,37 @@ fun ReviewScreen(
 
     val chartMarkers = d.markers.map { ChartMarker(it.timestampMs, markerColor(it.types), it.id == selectedMarker) }
     val flags = remember(d) { SessionFlags.detect(d) }
+    val category = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(d.session.category)
+    val responseLane = category != null && category.sexual
+    val exploration = category == com.pulsepointlabs.sarahmonitor.session.SessionCategory.Exploration
+    // Replaying the arousal engine is heavy: recompute about once a minute of new data while recording.
+    val episodes by androidx.compose.runtime.produceState(emptyList<com.pulsepointlabs.sarahmonitor.response.ResponseEpisode>(), d.session.id, d.hr.size / 60, responseLane) {
+        value = if (!responseLane) emptyList() else withContext(Dispatchers.Default) {
+            runCatching { com.pulsepointlabs.sarahmonitor.response.ResponseEpisodes.detect(d, com.pulsepointlabs.sarahmonitor.response.ResponseSettings.profile.value) }.getOrDefault(emptyList())
+        }
+    }
     var showFlags by remember { mutableStateOf(true) }
     var selectedFlag by remember(sessionId) { mutableStateOf<SessionFlag?>(null) }
+    var selectedEpisode by remember(sessionId) { mutableStateOf<com.pulsepointlabs.sarahmonitor.response.ResponseEpisode?>(null) }
+    val kegelSets = remember(d) { d.markers.mapNotNull { com.pulsepointlabs.sarahmonitor.kegel.KegelRecord.from(it) } }
     fun bands(chart: FlagChart): List<ChartBand> =
-        if (!showFlags) emptyList() else flags.filter { it.kind.chart == chart }.map { ChartBand(it.startMs, it.endMs, flagColor(it.severity), it == selectedFlag) }
+        (if (!showFlags) emptyList() else flags.filter { it.kind.chart == chart }.map { ChartBand(it.startMs, it.endMs, flagColor(it.severity), it == selectedFlag) }) +
+            (if (chart == FlagChart.Hr) episodes.map { ChartBand(it.startMs, it.endMs, EpisodePink, it == selectedEpisode) } else emptyList()) +
+            (if (chart == FlagChart.Pelvic) kegelSets.flatMap { k -> k.squeezes.map { (a, b, _) -> ChartBand(a, b, EpisodePink.copy(alpha = 0.6f)) } } else emptyList())
+    // Tooltip lines: the event, flag or episode under a moment.
+    val describe: (Long) -> List<Pair<String, Color>> = { t ->
+        buildList {
+            d.markers.filter { kotlin.math.abs(it.timestampMs - t) <= maxOf(10_000L, viewport.spanMs / 80) }.forEach { m ->
+                add(("● " + m.label + if (m.note.isNotBlank()) " — " + m.note.take(40) else "") to markerColor(m.types))
+            }
+            episodes.filter { t in it.startMs..it.endMs }.forEach { e ->
+                add("${episodeLabel(e, exploration)} · ${SessionAnalysis.durationWords(e.durationMs)} · ${e.peakApproach}%" to EpisodePink)
+            }
+            if (showFlags) flags.filter { t in (it.startMs - 2_000L)..(it.endMs + 2_000L) && it.kind != com.pulsepointlabs.sarahmonitor.session.FlagKind.HrSignalGap }.take(2).forEach { f ->
+                add("${f.kind.title} · ${SessionAnalysis.durationWords(f.durationMs.coerceAtLeast(1_000L))}" to flagColor(f.severity))
+            }
+        }
+    }
     fun focusFlag(flag: SessionFlag) {
         selectedFlag = flag
         selectedMarker = null
@@ -198,32 +228,56 @@ fun ReviewScreen(
         reload++
     }
 
+    class ChartEntry(val nominal: Float, val draw: @Composable (Modifier, Boolean) -> Unit)
+    val entries = buildList {
+        if (d.hr.isNotEmpty()) {
+            val avg = d.session.averageHr ?: d.hr.map { it.bpm }.average()
+            add(ChartEntry(170f) { m, fill -> ReviewChart("Heart rate", "bpm", listOf(series.hr), viewport, chartMarkers, cursor, setCursor, zoom, 170.dp, m, minSpan = 20.0,
+                refLines = listOf(avg to "avg ${"%.0f".format(avg)}"), bands = bands(FlagChart.Hr), fillHeight = fill, describe = describe) })
+        }
+        if (series.hasHrv) add(ChartEntry(140f) { m, fill -> ReviewChart("HRV (rolling 2 min)", "ms", listOf(series.rmssd, series.sdnn), viewport, chartMarkers, cursor, setCursor, zoom, 140.dp, m, minSpan = 10.0, decimals = 1, bands = bands(FlagChart.Hrv), fillHeight = fill, describe = describe) })
+        if (series.hasStress) add(ChartEntry(100f) { m, fill -> ReviewChart("Stress", "0–100", listOf(series.stress), viewport, chartMarkers, cursor, setCursor, zoom, 100.dp, m, fixedBounds = 0.0 to 100.0, refLines = listOf(50.0 to "elevated"), fillHeight = fill, describe = describe) })
+        if (series.hasBreaths) add(ChartEntry(90f) { m, fill -> ReviewChart("Breathing", "/min", listOf(series.breaths), viewport, chartMarkers, cursor, setCursor, zoom, 90.dp, m, minSpan = 6.0, fillHeight = fill, describe = describe) })
+        if (series.hasLoad) add(ChartEntry(100f) { m, fill -> ReviewChart("Load", "0–100", listOf(series.load), viewport, chartMarkers, cursor, setCursor, zoom, 100.dp, m, fixedBounds = 0.0 to 100.0, refLines = listOf(58.0 to "elevated"), bands = bands(FlagChart.Load), fillHeight = fill, describe = describe) })
+        if (d.emg.isNotEmpty()) add(ChartEntry(150f) { m, fill -> ReviewChart("EMG", if (series.emgCalibrated) "% of hold" else "raw ENV", listOfNotNull(series.emg1, series.emg2.takeIf { series.hasEmg2 }), viewport, chartMarkers, cursor, setCursor, zoom, 150.dp, m, minSpan = 20.0, fillHeight = fill, describe = describe) })
+        if (d.pelvic.isNotEmpty()) add(ChartEntry(170f) { m, fill -> ReviewChart("Pelvic pressure", "kPa above rest", listOf(series.pelvic), viewport, chartMarkers, cursor, setCursor, zoom, 170.dp, m, minSpan = 2.0, decimals = 1, bands = bands(FlagChart.Pelvic), fillHeight = fill, describe = describe) })
+        if (d.bp.isNotEmpty()) add(ChartEntry(120f) { m, fill -> ReviewChart("Blood pressure", "mmHg", listOf(series.sys, series.dia), viewport, chartMarkers, cursor, setCursor, zoom, 120.dp, m, minSpan = 40.0,
+            emptyText = "Readings are outside the zoomed range", bands = bands(FlagChart.Bp), fillHeight = fill, describe = describe) })
+        if (d.glucose.any { it.timestampMs in fullStart..fullEnd }) add(ChartEntry(110f) { m, fill -> ReviewChart("Glucose", "mg/dL", listOf(series.glucose), viewport, chartMarkers, cursor, setCursor, zoom, 110.dp, m, minSpan = 40.0,
+            refLines = listOf(70.0 to "70", 180.0 to "180"), emptyText = "Readings are outside the zoomed range", bands = bands(FlagChart.Glucose), fillHeight = fill, describe = describe) })
+    }
     val charts: @Composable ColumnScope.() -> Unit = {
         RangeBar(viewport, fullStart, fullEnd, cursor, series, chartMarkers) { viewport = it }
         CursorReadout(cursor, d, series)
-        if (d.hr.isNotEmpty()) {
-            val avg = d.session.averageHr ?: d.hr.map { it.bpm }.average()
-            ReviewChart("Heart rate", "bpm", listOf(series.hr), viewport, chartMarkers, cursor, setCursor, zoom, 170.dp, minSpan = 20.0,
-                refLines = listOf(avg to "avg ${"%.0f".format(avg)}"), bands = bands(FlagChart.Hr))
-        }
-        if (series.hasHrv) ReviewChart("HRV (rolling 2 min)", "ms", listOf(series.rmssd, series.sdnn), viewport, chartMarkers, cursor, setCursor, zoom, 140.dp, minSpan = 10.0, decimals = 1, bands = bands(FlagChart.Hrv))
-        if (series.hasStress) ReviewChart("Stress", "0–100", listOf(series.stress), viewport, chartMarkers, cursor, setCursor, zoom, 100.dp, fixedBounds = 0.0 to 100.0, refLines = listOf(50.0 to "elevated"))
-        if (series.hasBreaths) ReviewChart("Breathing", "/min", listOf(series.breaths), viewport, chartMarkers, cursor, setCursor, zoom, 90.dp, minSpan = 6.0)
-        if (series.hasLoad) ReviewChart("Load", "0–100", listOf(series.load), viewport, chartMarkers, cursor, setCursor, zoom, 100.dp, fixedBounds = 0.0 to 100.0, refLines = listOf(58.0 to "elevated"), bands = bands(FlagChart.Load))
-        if (d.emg.isNotEmpty()) ReviewChart("EMG", if (series.emgCalibrated) "% of hold" else "raw ENV", listOfNotNull(series.emg1, series.emg2.takeIf { series.hasEmg2 }), viewport, chartMarkers, cursor, setCursor, zoom, 150.dp, minSpan = 20.0)
-        if (d.pelvic.isNotEmpty()) ReviewChart("Pelvic pressure", "kPa above rest", listOf(series.pelvic), viewport, chartMarkers, cursor, setCursor, zoom, 170.dp, minSpan = 2.0, decimals = 1, bands = bands(FlagChart.Pelvic))
-        if (d.bp.isNotEmpty()) ReviewChart("Blood pressure", "mmHg", listOf(series.sys, series.dia), viewport, chartMarkers, cursor, setCursor, zoom, 120.dp, minSpan = 40.0,
-            emptyText = "Readings are outside the zoomed range", bands = bands(FlagChart.Bp))
-        if (d.glucose.any { it.timestampMs in fullStart..fullEnd }) ReviewChart("Glucose", "mg/dL", listOf(series.glucose), viewport, chartMarkers, cursor, setCursor, zoom, 110.dp, minSpan = 40.0,
-            refLines = listOf(70.0 to "70", 180.0 to "180"), emptyText = "Readings are outside the zoomed range", bands = bands(FlagChart.Glucose))
+        entries.forEach { it.draw(Modifier, false) }
         if (d.hasEcg && cursor != null) EcgAtCursor(sessionId, cursor!!)
         if (d.hr.isEmpty() && d.pelvic.isEmpty()) Text("No sensor data was recorded in this session.", color = MonitorColors.label, fontSize = 14.sp)
     }
+    /** Wide screens: the graphs share the full height (no scrolling) as long as each keeps a readable size. */
+    val fittedCharts: @Composable ColumnScope.() -> Unit = {
+        RangeBar(viewport, fullStart, fullEnd, cursor, series, chartMarkers) { viewport = it }
+        CursorReadout(cursor, d, series)
+        entries.forEach { e -> e.draw(Modifier.weight(e.nominal), true) }
+        if (d.hasEcg && cursor != null) EcgAtCursor(sessionId, cursor!!)
+    }
     val flagsCard: @Composable () -> Unit = {
-        FlagsCard(flags, d, selectedFlag, showFlags, onToggle = { showFlags = it }, onFocus = ::focusFlag)
+        InsightFlagsCard(flags, d, selectedFlag, showFlags, onToggle = { showFlags = it }, onFocus = ::focusFlag)
+    }
+    fun focusEpisode(e: com.pulsepointlabs.sarahmonitor.response.ResponseEpisode) {
+        selectedEpisode = e; selectedFlag = null; selectedMarker = null
+        cursor = e.peakMs
+        viewport = viewport.centeredOn((e.startMs + e.endMs) / 2, maxOf(e.durationMs * 3, 6 * 60_000L).coerceAtMost(40 * 60_000L), fullStart, fullEnd)
+    }
+    val episodesCard: @Composable () -> Unit = {
+        if (responseLane) EpisodesCard(episodes, d, exploration, ::focusEpisode)
+        if (kegelSets.isNotEmpty()) KegelCard(kegelSets) { k ->
+            cursor = k.startMs
+            viewport = viewport.centeredOn((k.startMs + k.endMs) / 2, ((k.endMs - k.startMs) * 1.3).toLong().coerceAtLeast(60_000L), fullStart, fullEnd)
+        }
     }
     val details: @Composable ColumnScope.() -> Unit = {
         SummaryCard(d, flags)
+        episodesCard()
         flagsCard()
         EventsCard(
             d, selectedMarker,
@@ -247,14 +301,18 @@ fun ReviewScreen(
         )
         BoxWithConstraints(Modifier.fillMaxSize()) {
             if (maxWidth >= 900.dp && maxHeight >= 500.dp) {
+                val chartRoom = maxHeight.value - 150f - (if (d.hasEcg && cursor != null) 200f else 0f)
+                val fits = entries.isNotEmpty() && chartRoom / entries.size >= 80f
                 Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Column(Modifier.weight(1.7f).fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) { charts() }
+                    if (fits) Column(Modifier.weight(1.7f).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) { fittedCharts() }
+                    else Column(Modifier.weight(1.7f).fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) { charts() }
                     Column(Modifier.weight(1f).fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) { details() }
                 }
             } else {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SummaryCard(d, flags)
                     charts()
+                    episodesCard()
                     flagsCard()
                     EventsCard(d, selectedMarker, onFocus = ::focus, onEdit = { editing = it }, onAdd = { addingAt = cursor ?: d.endMs })
                     NotesCard(d.session.notes) { notes ->
@@ -393,35 +451,25 @@ private fun SummaryCard(d: SessionData, flags: List<SessionFlag>) {
     Section("Summary") {
         SessionAnalysis.plainSummary(d).forEach { Text(it, color = MonitorColors.text, fontSize = 14.sp) }
         SessionFlags.describeCounts(flags)?.let { Text("Flagged automatically: $it.", color = MonitorColors.warn, fontSize = 14.sp) }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Tile("Avg HR", fmt(s.averageHr), "bpm", MonitorColors.hr)
-            Tile("Min HR", s.minHr?.toString() ?: "--", "bpm", MonitorColors.sdnn)
-            Tile("Max HR", s.maxHr?.toString() ?: "--", "bpm", MonitorColors.alarm)
-            Tile("RMSSD", fmt(s.rmssdMs, 1), "ms", MonitorColors.rmssd)
-            Tile("SDNN", fmt(s.sdnnMs, 1), "ms", MonitorColors.sdnn)
-            Tile("pNN50", fmt(s.pnn50Percent, 0), "%", MonitorColors.pnn50)
-            if (loads.isNotEmpty()) Tile("Load avg / max", "${"%.0f".format(loads.average())} / ${loads.max()}", "", loadColor(loads.max()))
+        BalancedTiles(buildList {
+            add(TileSpec("Avg HR", fmt(s.averageHr), "bpm", MonitorColors.hr))
+            add(TileSpec("Min HR", s.minHr?.toString() ?: "--", "bpm", MonitorColors.sdnn))
+            add(TileSpec("Max HR", s.maxHr?.toString() ?: "--", "bpm", MonitorColors.alarm))
+            add(TileSpec("RMSSD", fmt(s.rmssdMs, 1), "ms", MonitorColors.rmssd))
+            add(TileSpec("SDNN", fmt(s.sdnnMs, 1), "ms", MonitorColors.sdnn))
+            add(TileSpec("pNN50", fmt(s.pnn50Percent, 0), "%", MonitorColors.pnn50))
+            if (loads.isNotEmpty()) add(TileSpec("Load avg / max", "${"%.0f".format(loads.average())}/${loads.max()}", "", loadColor(loads.max())))
+            d.hr.mapNotNull { it.stress }.takeIf { it.isNotEmpty() }?.let { add(TileSpec("Stress avg / max", "${it.average().toInt()}/${it.max()}", "", com.pulsepointlabs.sarahmonitor.ui.StressColor)) }
+            d.hr.mapNotNull { it.breathsPerMin }.takeIf { it.isNotEmpty() }?.let { add(TileSpec("Breathing", "%.0f".format(it.average()), "/min", MonitorColors.pelvic)) }
+            add(TileSpec("Events", d.markers.size.toString(), "", MonitorColors.text))
             if (d.pelvic.isNotEmpty()) {
-                Tile("Pressure peak", fmt(pelvic.maxKpa, 1), "kPa", MonitorColors.pelvic)
-                Tile("Contractions", pelvic.pulses.size.toString(), "", MonitorColors.pelvic)
-                Tile("Longest hold", fmt(pelvic.longestHoldS, 1), "s", MonitorColors.pelvic)
+                add(TileSpec("Pressure peak", fmt(pelvic.maxKpa, 1), "kPa", MonitorColors.pelvic))
+                add(TileSpec("Contractions", pelvic.pulses.size.toString(), "", MonitorColors.pelvic))
+                add(TileSpec("Longest hold", fmt(pelvic.longestHoldS, 1), "s", MonitorColors.pelvic))
             }
-            d.bp.lastOrNull()?.let { Tile("Last BP", "${it.systolic}/${it.diastolic}", "mmHg", bpColor(it.systolic, it.diastolic)) }
-            d.glucose.lastOrNull()?.let { Tile("Last glucose", fmt(it.mgDl), "mg/dL", MonitorColors.glucose) }
-        }
-    }
-}
-
-@Composable
-private fun Tile(label: String, value: String, unit: String, color: Color) {
-    Column(
-        Modifier.widthIn(min = 96.dp).background(color.copy(alpha = 0.08f), RoundedCornerShape(8.dp)).border(1.dp, color.copy(alpha = 0.25f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp)
-    ) {
-        Text(label, color = MonitorColors.label, fontSize = 12.sp)
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(value, color = color, fontSize = 20.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-            if (unit.isNotBlank()) Text(" $unit", color = MonitorColors.label, fontSize = 12.sp, modifier = Modifier.padding(bottom = 2.dp))
-        }
+            d.bp.lastOrNull()?.let { add(TileSpec("Last BP", "${it.systolic}/${it.diastolic}", "mmHg", bpColor(it.systolic, it.diastolic))) }
+            d.glucose.lastOrNull()?.let { add(TileSpec("Last glucose", fmt(it.mgDl), "mg/dL", MonitorColors.glucose)) }
+        })
     }
 }
 
@@ -542,56 +590,6 @@ fun flagColor(severity: FlagSeverity): Color = when (severity) {
     FlagSeverity.Info -> MonitorColors.label
 }
 
-/** Things Sarah Monitor noticed by itself; tap one to jump to it on the graphs. */
-@Composable
-private fun FlagsCard(
-    flags: List<SessionFlag>,
-    d: SessionData,
-    selected: SessionFlag?,
-    showOnGraphs: Boolean,
-    onToggle: (Boolean) -> Unit,
-    onFocus: (SessionFlag) -> Unit
-) {
-    var showAll by remember { mutableStateOf(false) }
-    val sorted = flags.sortedWith(compareByDescending<SessionFlag> { it.severity.ordinal }.thenBy { it.startMs })
-    val visible = if (showAll) sorted else sorted.take(8)
-    Section("Automatic flags (${flags.size})", trailing = {
-        TextButton(onClick = { onToggle(!showOnGraphs) }) { Text(if (showOnGraphs) "Hide on graphs" else "Show on graphs", fontSize = 13.sp) }
-    }) {
-        if (flags.isEmpty()) {
-            Text("Nothing stood out: no high HR or load periods, HR surges, HRV drops, unusual contractions, or out-of-range BP/glucose.", color = MonitorColors.label, fontSize = 13.sp)
-        } else {
-        }
-        visible.forEach { f ->
-            val color = flagColor(f.severity)
-            val isSelected = f == selected
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(if (isSelected) color.copy(alpha = 0.12f) else Color.Transparent, RoundedCornerShape(8.dp))
-                    .border(1.dp, if (isSelected) color.copy(alpha = 0.7f) else MonitorColors.panelBorder, RoundedCornerShape(8.dp))
-                    .clickable { onFocus(f) }
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(if (f.severity == FlagSeverity.High) "▲" else if (f.severity == FlagSeverity.Notable) "◆" else "•", color = color, fontSize = 13.sp, modifier = Modifier.padding(top = 1.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(f.kind.title, color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        Text(
-                            clockLabel(f.startMs, seconds = true) + if (f.durationMs >= 1_000L) " · ${SessionAnalysis.durationWords(f.durationMs)}" else "",
-                            color = MonitorColors.label, fontSize = 12.sp, fontFamily = FontFamily.Monospace
-                        )
-                    }
-                    Text(f.detail, color = MonitorColors.text, fontSize = 13.sp)
-                    if (f.alongside.isNotEmpty()) Text("Alongside: " + f.alongside.joinToString(", ") { it.lowerTitle }, color = MonitorColors.label, fontSize = 12.sp)
-                }
-            }
-        }
-        if (sorted.size > 8) TextButton(onClick = { showAll = !showAll }) { Text(if (showAll) "Show fewer" else "Show all ${sorted.size}", fontSize = 13.sp) }
-    }
-}
-
 @Composable
 private fun NotesCard(notes: String, onSave: (String) -> Unit) {
     var text by remember(notes) { mutableStateOf(notes) }
@@ -643,6 +641,262 @@ private fun EcgAtCursor(sessionId: String, cursor: Long) {
                 drawLine(Color.White.copy(alpha = 0.6f), Offset(size.width / 2, 0f), Offset(size.width / 2, size.height), strokeWidth = 1.2f)
             }
             if (trace == null) Text("No ECG recorded at this moment", color = MonitorColors.dim, fontSize = 13.sp, modifier = Modifier.align(Alignment.Center))
+        }
+    }
+}
+
+// ---- Insights: balanced tiles, expandable flags, response episodes, mini traces ----
+
+private data class TileSpec(val label: String, val value: String, val unit: String, val color: Color)
+
+/** Tiles in even rows that fill the width (no lonely last tile): columns chosen so rows balance. */
+@Composable
+private fun BalancedTiles(tiles: List<TileSpec>, minTileDp: Float = 100f) {
+    if (tiles.isEmpty()) return
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val maxCols = (maxWidth.value / minTileDp).toInt().coerceIn(2, 8)
+        val rows = (tiles.size + maxCols - 1) / maxCols
+        val cols = (tiles.size + rows - 1) / rows
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            tiles.chunked(cols).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    row.forEach { t ->
+                        Column(
+                            Modifier.weight(1f).background(t.color.copy(alpha = 0.08f), RoundedCornerShape(8.dp)).border(1.dp, t.color.copy(alpha = 0.25f), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 5.dp)
+                        ) {
+                            Text(t.label, color = MonitorColors.label, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(t.value, color = t.color, fontSize = 18.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, maxLines = 1)
+                                if (t.unit.isNotBlank()) Text(" ${t.unit}", color = MonitorColors.label, fontSize = 11.sp, maxLines = 1, modifier = Modifier.padding(bottom = 2.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FactGrid(facts: List<com.pulsepointlabs.sarahmonitor.session.InsightFact>, color: Color) =
+    BalancedTiles(facts.map { TileSpec(it.label, it.value, "", color) }, minTileDp = 110f)
+
+/** Small stacked traces for a window, with the interesting span shaded. */
+@Composable
+private fun MiniTraces(traces: List<com.pulsepointlabs.sarahmonitor.session.InsightTrace>, fromMs: Long, toMs: Long, hiStart: Long, hiEnd: Long, color: Color) {
+    val palette = listOf(color, MonitorColors.hr, MonitorColors.rmssd)
+    traces.take(3).forEachIndexed { i, tr ->
+        val c = if (tr.label == "Heart rate") MonitorColors.hr else if (tr.label == "RMSSD") MonitorColors.rmssd else palette[i]
+        val vals = tr.values.filter { !it.isNaN() }
+        if (vals.size < 2) return@forEachIndexed
+        val lo = vals.min(); val hi = vals.max().let { if (it - lo < 1e-6) lo + 1 else it }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.width(58.dp)) {
+                Text(tr.label, color = c, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text("${SessionAnalysis.num(lo)}–${SessionAnalysis.num(hi)}", color = MonitorColors.label, fontSize = 10.sp, maxLines = 1)
+            }
+            Canvas(Modifier.weight(1f).height(46.dp)) {
+                val span = (toMs - fromMs).coerceAtLeast(1L).toFloat()
+                fun x(t: Long) = (t - fromMs) / span * size.width
+                drawRect(c.copy(alpha = 0.12f), Offset(x(hiStart), 0f), androidx.compose.ui.geometry.Size((x(hiEnd) - x(hiStart)).coerceAtLeast(2f), size.height))
+                drawLine(MonitorColors.trendGrid, Offset(0f, size.height), Offset(size.width, size.height), 1f)
+                val path = Path(); var started = false; var lastT = Long.MIN_VALUE
+                for (k in tr.timestamps.indices) {
+                    val v = tr.values[k]
+                    if (v.isNaN()) { started = false; continue }
+                    val px = x(tr.timestamps[k]); val py = size.height - ((v - lo) / (hi - lo)).toFloat() * (size.height - 4f) - 2f
+                    if (!started || tr.timestamps[k] - lastT > 10_000L) path.moveTo(px, py) else path.lineTo(px, py)
+                    started = true; lastT = tr.timestamps[k]
+                }
+                drawPath(path, c, style = Stroke(width = 1.6f * density / 2f + 0.6f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
+        }
+    }
+}
+
+/** Things Sarah Monitor noticed by itself. Tap a row to open the breakdown (and jump to it on the graphs). */
+@Composable
+internal fun InsightFlagsCard(
+    flags: List<SessionFlag>,
+    d: SessionData,
+    selected: SessionFlag?,
+    showOnGraphs: Boolean,
+    onToggle: (Boolean) -> Unit,
+    onFocus: (SessionFlag) -> Unit,
+    initiallyOpen: SessionFlag? = null
+) {
+    var showAll by remember { mutableStateOf(false) }
+    var open by remember { mutableStateOf(initiallyOpen) }
+    val sorted = flags.filter { it.kind != com.pulsepointlabs.sarahmonitor.session.FlagKind.HrSignalGap || flags.size < 4 }
+        .sortedWith(compareByDescending<SessionFlag> { it.severity.ordinal }.thenBy { it.startMs })
+    val visible = if (showAll) sorted else sorted.take(8)
+    Section("Automatic flags (${flags.size})", trailing = {
+        TextButton(onClick = { onToggle(!showOnGraphs) }) { Text(if (showOnGraphs) "Hide on graphs" else "Show on graphs", fontSize = 13.sp) }
+    }) {
+        if (flags.isEmpty()) Text("Nothing stood out.", color = MonitorColors.label, fontSize = 13.sp)
+        visible.forEach { f ->
+            val color = flagColor(f.severity)
+            val expanded = open == f
+            Column(
+                Modifier.fillMaxWidth()
+                    .background(if (f == selected || expanded) color.copy(alpha = 0.10f) else Color.Transparent, RoundedCornerShape(8.dp))
+                    .border(1.dp, if (f == selected || expanded) color.copy(alpha = 0.6f) else MonitorColors.panelBorder, RoundedCornerShape(8.dp))
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().clickable { open = if (expanded) null else f; onFocus(f) }.padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(if (f.severity == FlagSeverity.High) "▲" else if (f.severity == FlagSeverity.Notable) "◆" else "•", color = color, fontSize = 13.sp)
+                    Column(Modifier.weight(1f)) {
+                        Text(f.kind.title, color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text(f.detail, color = MonitorColors.text, fontSize = 12.sp, maxLines = if (expanded) 3 else 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Text(clockLabel(f.startMs, seconds = true) + if (f.durationMs >= 1_000L) "\n" + SessionAnalysis.durationWords(f.durationMs) else "",
+                        color = MonitorColors.label, fontSize = 11.sp, fontFamily = FontFamily.Monospace, textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                    Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null, tint = MonitorColors.label)
+                }
+                if (expanded) {
+                    val b = remember(f, d) { com.pulsepointlabs.sarahmonitor.session.FlagInsight.explain(f, d) }
+                    Column(Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(b.story, color = MonitorColors.text, fontSize = 13.sp, lineHeight = 18.sp)
+                        FactGrid(b.facts, color)
+                        MiniTraces(b.traces, b.fromMs, b.toMs, f.startMs, f.endMs, color)
+                    }
+                }
+            }
+        }
+        if (sorted.size > 8) TextButton(onClick = { showAll = !showAll }) { Text(if (showAll) "Show fewer" else "Show all ${sorted.size}", fontSize = 13.sp) }
+    }
+}
+
+val EpisodePink = Color(0xFFFF7AB6)
+
+fun episodeLabel(e: com.pulsepointlabs.sarahmonitor.response.ResponseEpisode, exploration: Boolean): String =
+    if (!exploration) e.kind.label else when (e.kind) {
+        com.pulsepointlabs.sarahmonitor.response.EpisodeKind.Climax -> "Climax"
+        com.pulsepointlabs.sarahmonitor.response.EpisodeKind.Build -> "Arousal rise"
+        else -> "Strong arousal peak"
+    }
+
+/** Build → peak → recovery cycles found in the recording, each one openable for its numbers and a plain read. */
+@Composable
+internal fun EpisodesCard(
+    episodes: List<com.pulsepointlabs.sarahmonitor.response.ResponseEpisode>,
+    d: SessionData,
+    exploration: Boolean,
+    onFocus: (com.pulsepointlabs.sarahmonitor.response.ResponseEpisode) -> Unit,
+    initiallyOpen: com.pulsepointlabs.sarahmonitor.response.ResponseEpisode? = null
+) {
+    var open by remember { mutableStateOf(initiallyOpen) }
+    val near = episodes.count { it.kind == com.pulsepointlabs.sarahmonitor.response.EpisodeKind.NearClimax || it.kind == com.pulsepointlabs.sarahmonitor.response.EpisodeKind.Edge }
+    val climax = episodes.count { it.kind == com.pulsepointlabs.sarahmonitor.response.EpisodeKind.Climax }
+    Section(if (exploration) "Arousal peaks (${episodes.size})" else "Sexual response (${episodes.size} episodes)") {
+        if (episodes.isEmpty()) {
+            Text("No clear arousal build in this recording.", color = MonitorColors.label, fontSize = 13.sp)
+            return@Section
+        }
+        if (!exploration) BalancedTiles(listOfNotNull(
+            TileSpec("Near climax", near.toString(), "", MonitorColors.load),
+            TileSpec("Climax", climax.toString(), "", EpisodePink),
+            TileSpec("Closest", "${episodes.maxOf { it.peakApproach }}", "%", EpisodePink),
+            episodes.mapNotNull { it.riseBpm }.maxOrNull()?.let { TileSpec("Biggest rise", "+${it.toInt()}", "bpm", MonitorColors.hr) },
+            episodes.mapNotNull { it.halfRecoveryS }.takeIf { it.isNotEmpty() }?.let { TileSpec("Typical recovery", SessionAnalysis.durationWords(it.sorted()[it.size / 2] * 1000L), "", MonitorColors.pelvic) }
+        ))
+        episodes.forEachIndexed { i, e ->
+            val color = when (e.kind) {
+                com.pulsepointlabs.sarahmonitor.response.EpisodeKind.Climax -> EpisodePink
+                com.pulsepointlabs.sarahmonitor.response.EpisodeKind.NearClimax, com.pulsepointlabs.sarahmonitor.response.EpisodeKind.Edge -> MonitorColors.load
+                com.pulsepointlabs.sarahmonitor.response.EpisodeKind.Close -> MonitorColors.rmssd
+                else -> MonitorColors.sdnn
+            }
+            val expanded = open == e
+            Column(
+                Modifier.fillMaxWidth()
+                    .background(if (expanded) color.copy(alpha = 0.10f) else Color.Transparent, RoundedCornerShape(8.dp))
+                    .border(1.dp, if (expanded) color.copy(alpha = 0.6f) else MonitorColors.panelBorder, RoundedCornerShape(8.dp))
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().clickable { open = if (expanded) null else e; onFocus(e) }.padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("${i + 1}", color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(episodeLabel(e, exploration), color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            Text("${clockLabel(e.startMs, seconds = true)} · ${SessionAnalysis.durationWords(e.durationMs)}", color = MonitorColors.label, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                        }
+                        // Proximity bar: how close to climax it got.
+                        Box(Modifier.fillMaxWidth().height(6.dp).background(MonitorColors.trendGrid, RoundedCornerShape(3.dp))) {
+                            Box(Modifier.fillMaxWidth(e.peakApproach / 100f).height(6.dp).background(color, RoundedCornerShape(3.dp)))
+                        }
+                    }
+                    Text("${e.peakApproach}%", color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                    Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null, tint = MonitorColors.label)
+                }
+                if (expanded) Column(Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(e.story(), color = MonitorColors.text, fontSize = 13.sp, lineHeight = 18.sp)
+                    FactGrid(listOfNotNull(
+                        com.pulsepointlabs.sarahmonitor.session.InsightFact(if (exploration) "Peak intensity" else "Proximity", "${e.peakApproach}%"),
+                        com.pulsepointlabs.sarahmonitor.session.InsightFact("Arousal", "${e.peakArousal}%"),
+                        com.pulsepointlabs.sarahmonitor.session.InsightFact("Duration", SessionAnalysis.durationWords(e.durationMs)),
+                        e.buildS?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Build", SessionAnalysis.durationWords(it * 1000L)) },
+                        e.peakHr?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Peak HR", "${it.toInt()} bpm") },
+                        e.riseBpm?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Rise", "+${it.toInt()} bpm") },
+                        e.rmssdAtPeak?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("HRV at peak", "${SessionAnalysis.num(it)} ms") },
+                        e.pelvicPeakKpa?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Pelvic peak", "${SessionAnalysis.num(it)} kPa") },
+                        if (e.contractions > 0) com.pulsepointlabs.sarahmonitor.session.InsightFact("Contractions", "${e.contractions}") else null,
+                        e.halfRecoveryS?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Half recovery", SessionAnalysis.durationWords(it * 1000L)) },
+                        e.drop60?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("HR drop 60 s", "−${it.toInt()} bpm") },
+                        e.breathsAtPeak?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Breathing", "${it.toInt()}/min") }
+                    ), color)
+                    val from = e.startMs - 180_000L; val to = e.endMs + 120_000L
+                    val win = d.hr.filter { it.timestampMs in from..to }
+                    val ts = win.map { it.timestampMs }.toLongArray()
+                    MiniTraces(listOfNotNull(
+                        com.pulsepointlabs.sarahmonitor.session.InsightTrace("Heart rate", "bpm", ts, win.map { it.bpm.toDouble() }.toDoubleArray()),
+                        com.pulsepointlabs.sarahmonitor.session.InsightTrace("RMSSD", "ms", ts, win.map { it.rmssdMs ?: Double.NaN }.toDoubleArray()).takeIf { win.any { it.rmssdMs != null } },
+                        d.pelvic.filter { it.timestampMs in from..to }.takeIf { it.isNotEmpty() }?.let { p -> com.pulsepointlabs.sarahmonitor.session.InsightTrace("Pelvic", "kPa", p.map { it.timestampMs }.toLongArray(), p.map { it.aboveRestKpa ?: Double.NaN }.toDoubleArray()) }
+                    ), from, to, e.startMs, e.endMs, color)
+                    if (e.markedEvents.isNotEmpty()) Text("Marked: " + e.markedEvents.joinToString(", "), color = MonitorColors.label, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+/** Kegel sets in this session: score, per-rep quality, and a plain read (fatigue, relaxation). */
+@Composable
+internal fun KegelCard(sets: List<com.pulsepointlabs.sarahmonitor.kegel.KegelRecord>, onFocus: (com.pulsepointlabs.sarahmonitor.kegel.KegelRecord) -> Unit) {
+    val pink = EpisodePink
+    Section(if (sets.size == 1) "Kegel set" else "Kegel sets (${sets.size})") {
+        sets.forEach { k ->
+            Column(
+                Modifier.fillMaxWidth().border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(8.dp)).clickable { onFocus(k) }.padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(k.routineLabel, color = pink, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("${clockLabel(k.startMs, seconds = true)} · ${k.reps} reps · ${"%.0f".format(k.holdS)} s / ${"%.0f".format(k.restS)} s", color = MonitorColors.label, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                }
+                BalancedTiles(listOf(
+                    TileSpec("Score", "${k.score}", "", if (k.score >= 70) MonitorColors.good else if (k.score >= 40) MonitorColors.warn else MonitorColors.alarm),
+                    TileSpec("Strength", k.strengthPct?.toString() ?: "--", "% ref", pink),
+                    TileSpec("Relax", k.relaxPct?.toString() ?: "--", "%", MonitorColors.pelvic),
+                    TileSpec("On target", k.repScores.takeIf { it.isNotEmpty() }?.map { it.second }?.average()?.toInt()?.toString() ?: "--", "%", MonitorColors.good)
+                ))
+                // Per-rep bars: height = on-target %, dot = strength.
+                if (k.repScores.isNotEmpty()) Canvas(Modifier.fillMaxWidth().height(64.dp)) {
+                    val w = size.width / k.repScores.size
+                    k.repScores.forEachIndexed { i, (_, on, str) ->
+                        val h = size.height * on / 100f
+                        val c = if (on >= 70) MonitorColors.good else if (on >= 40) MonitorColors.warn else MonitorColors.alarm
+                        drawRoundRect(c.copy(alpha = 0.8f), Offset(i * w + w * 0.18f, size.height - h), androidx.compose.ui.geometry.Size(w * 0.64f, h), androidx.compose.ui.geometry.CornerRadius(3f))
+                        str?.let { drawCircle(pink, 3.5f * density / 2f + 1.5f, Offset(i * w + w / 2, size.height - size.height * (it.coerceIn(0, 120) / 120f))) }
+                    }
+                }
+                Text("Bars: time on target per rep · dots: strength (% of reference)", color = MonitorColors.dim, fontSize = 11.sp)
+                Text(k.story(), color = MonitorColors.text, fontSize = 13.sp, lineHeight = 18.sp)
+            }
         }
     }
 }

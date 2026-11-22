@@ -144,7 +144,7 @@ class SarahCoach(
         if (!ResponseSettings.coachOn.value) { _status.value = "Off"; return }
         if (ResponseSettings.apiKey.value.isBlank()) { _status.value = "Add your Anthropic key in Settings"; return }
         if (!recording()) { _status.value = "Waiting for a recording"; lastPhase = null; return }
-        if (generalSession()) { _status.value = "Quiet in general sessions"; lastPhase = null; return }
+        if (generalSession()) { _status.value = "Quiet in this session type"; lastPhase = null; return }
         val s = state()
         val now = System.currentTimeMillis()
         val phaseChanged = lastPhase != null && s.phase != lastPhase
@@ -186,9 +186,9 @@ class SarahCoach(
         }
     }
 
+    /** Sarah's sexual-session voice stays out of general and Kegel sessions. */
     private fun generalSession() =
-        com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(com.pulsepointlabs.sarahmonitor.core.MonitorHub.session.value?.category) ==
-            com.pulsepointlabs.sarahmonitor.session.SessionCategory.General
+        com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(com.pulsepointlabs.sarahmonitor.core.MonitorHub.session.value?.category)?.sexual == false
 
     private fun client(key: String): AnthropicClient {
         if (client == null || clientKey != key) {

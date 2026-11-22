@@ -1,5 +1,6 @@
 package com.pulsepointlabs.sarahmonitor.ui
 
+import androidx.compose.material.icons.filled.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -63,7 +64,7 @@ fun HeartbeatSoundSection() {
     val onlyRec by AudioSettings.beepOnlyRecording.collectAsState()
     val muteContact by AudioSettings.muteOnContactLoss.collectAsState()
     val over by AudioSettings.beepOverOtherAudio.collectAsState()
-    SettingsSection("Heartbeat sound", MonitorColors.hr, "A beep on every beat from the H10. Tap a sound to hear it.") {
+    SettingsSection("Heartbeat sound", MonitorColors.hr, icon = androidx.compose.material.icons.Icons.Default.MonitorHeart) {
         SettingRow("Beep with each heartbeat") { SettingSwitch(enabled) { AudioSettings.setBeepEnabled(it) } }
         ChoiceRow {
             BeatSound.entries.forEach { s ->
@@ -103,10 +104,7 @@ fun AlertsSection() {
     val lowHr by AudioSettings.lowHrLimit.collectAsState()
     val hold by AudioSettings.longHoldSeconds.collectAsState()
     val problem by MonitorHub.audio.voiceProblem.collectAsState()
-    SettingsSection(
-        "Alerts & Sarah's voice", MonitorColors.warn,
-        "Same rules as the session auto-flags. Alerts wait their turn instead of talking over each other, and the heartbeat beep dips while Sarah speaks."
-    ) {
+    SettingsSection("Alerts & Sarah's voice", MonitorColors.warn, icon = androidx.compose.material.icons.Icons.Default.NotificationsActive) {
         SettingRow("Alerts on") { SettingSwitch(enabled) { AudioSettings.setAlertsEnabled(it) } }
         SettingRow("Only while recording") { SettingSwitch(onlyRec) { AudioSettings.setAlertsOnlyRecording(it) } }
         Text("Voice", color = MonitorColors.text, fontSize = 15.sp)
@@ -122,10 +120,19 @@ fun AlertsSection() {
             }
         }
         SettingSlider("Alert volume", "${(volume * 100).toInt()}%", volume, 0f..1f) { AudioSettings.setAlertVolume(it) }
-        SettingSlider("High heart rate limit", if (highHr == 0) "Auto" else "$highHr bpm", highHr.toFloat(), 0f..200f) {
-            AudioSettings.setHighHrLimit(if (it < 90f) 0 else it.toInt())
+        SettingSlider("High heart rate alert", if (highHr == 0) "Auto" else "$highHr bpm", if (highHr == 0) 80f else highHr.toFloat(), 80f..220f) {
+            AudioSettings.setHighHrLimit(if (it < 90f) 0 else Math.round(it))
         }
-        SettingSlider("Low heart rate limit", "$lowHr bpm", lowHr.toFloat(), 35f..60f) { AudioSettings.setLowHrLimit(it.toInt()) }
+        Text(
+            if (highHr == 0) "Auto: 25 above this session's typical heart rate (never below 100), once it has a few minutes to learn. Slide left to the end for Auto."
+            else "Alerts when heart rate stays above $highHr for 30 seconds. Slide left to the end for Auto.",
+            color = MonitorColors.label, fontSize = 12.sp
+        )
+        SettingSlider("Low heart rate alert", "$lowHr bpm", lowHr.toFloat(), 35f..110f) { AudioSettings.setLowHrLimit(Math.round(it)) }
+        Text(
+            if (lowHr >= 60) "A target: Sarah tells you when you've been under $lowHr for 30 seconds." else "Alerts when heart rate stays under $lowHr for 30 seconds.",
+            color = MonitorColors.label, fontSize = 12.sp
+        )
         SettingSlider("Long pelvic hold", "$hold s", hold.toFloat(), 5f..30f) { AudioSettings.setLongHoldSeconds(it.toInt()) }
     }
 }
@@ -135,7 +142,7 @@ fun AlertsSection() {
 fun AlertListSection() {
     val modes by AudioSettings.modes.collectAsState()
     val vibrate by AudioSettings.vibrate.collectAsState()
-    SettingsSection("Which alerts", MonitorColors.warn, "Tap ▶ to hear a sample.") {
+    SettingsSection("Which alerts", MonitorColors.warn, icon = androidx.compose.material.icons.Icons.Default.Checklist) {
         AlertKind.entries.forEach { kind ->
             val mode = modes[kind] ?: kind.defaultMode
             Column(
@@ -175,7 +182,7 @@ fun StressVoiceSection() {
     val status by MonitorHub.stressVoice.status.collectAsState()
     val last by MonitorHub.stressVoice.last.collectAsState()
     val s = com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings
-    SettingsSection("Sarah · stress", StressColor) {
+    SettingsSection("Sarah · stress", StressColor, icon = androidx.compose.material.icons.Icons.Default.SelfImprovement) {
         SettingRow("Announce stress changes", "Rising and easing, with the number") { SettingSwitch(announce) { s.setAnnounce(it) } }
         SettingRow("Relaxation coaching", "A calm cue when it climbs or stays high") { SettingSwitch(relax) { s.setRelax(it) } }
         SettingSlider("Speak when it changes by", "$threshold pts", threshold.toFloat(), 5f..25f) { s.setThreshold(Math.round(it)) }

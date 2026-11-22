@@ -69,7 +69,7 @@ data class KegelResult(
  * Runs a guided set against the clock and scores it from CIVET pressure (above rest, as % of the reference hold;
  * without a reference, the hold threshold counts as "on"). Pure: the caller supplies the time and pressure.
  */
-class KegelSession(val routine: KegelRoutine, reps: Int, holdS: Double, restS: Double, private val startMs: Long) {
+class KegelSession(val routine: KegelRoutine, val reps: Int, val holdS: Double, val restS: Double, val startMs: Long) {
     val steps = routine.steps(reps, holdS, restS)
     private val boundaries = steps.runningFold(0.0) { acc, s -> acc + s.seconds }
     val totalS: Double = boundaries.last()
@@ -114,6 +114,28 @@ class KegelSession(val routine: KegelRoutine, reps: Int, holdS: Double, restS: D
         }
     }
 
+    /** Each step's wall-clock window (for the review graph). */
+    fun stepWindows(): List<Triple<KegelStep, Long, Long>> =
+        steps.mapIndexed { i, s -> Triple(s, startMs + (boundaries[i] * 1000).toLong(), startMs + (boundaries[i + 1] * 1000).toLong()) }
+
+    /** Running totals while the set is going: on-target %, strength (% of reference) and relax quality. */
+    fun soFar(): Triple<Int?, Int?, Int?> {
+        val reps = repScores()
+        return Triple(
+            reps.takeIf { it.isNotEmpty() }?.map { it.onTargetPct }?.average()?.roundToInt(),
+            reps.mapNotNull { it.avgPctOfRef }.takeIf { it.isNotEmpty() }?.average()?.roundToInt(),
+            if (relaxN == 0) null else relaxGood * 100 / relaxN
+        )
+    }
+
+    /** Everything about this set as JSON, frozen onto its event so the review can rebuild it. */
+    fun toJson(r: KegelResult, stoppedEarly: Boolean): JSONObject = JSONObject()
+        .put("routine", routine.name).put("routine_label", routine.label).put("reps", reps).put("hold_s", holdS).put("rest_s", restS)
+        .put("start_ms", startMs).put("score", r.score).put("strength_pct", r.avgPctOfRef ?: JSONObject.NULL).put("relax_pct", r.relaxQualityPct ?: JSONObject.NULL)
+        .put("stopped_early", stoppedEarly)
+        .put("rep_scores", JSONArray().apply { repScores().forEach { put(JSONObject().put("rep", it.rep).put("on_target_pct", it.onTargetPct).put("strength_pct", it.avgPctOfRef ?: JSONObject.NULL)) } })
+        .put("steps", JSONArray().apply { stepWindows().forEach { (s, a, b) -> put(JSONObject().put("kind", s.kind.name).put("rep", s.rep).put("target_pct", s.targetPct ?: JSONObject.NULL).put("start_ms", a).put("end_ms", b)) } })
+
     fun repScores(): List<RepScore> = onTarget.keys.sorted().map { r ->
         val (a, b) = onTarget[r]!!
         RepScore(r, if (b == 0) 0 else a * 100 / b, strength[r]?.takeIf { it.isNotEmpty() }?.average()?.roundToInt())
@@ -126,6 +148,23 @@ class KegelSession(val routine: KegelRoutine, reps: Int, holdS: Double, restS: D
         val score = if (routine == KegelRoutine.Reverse) (relax ?: 0) else ((onTargetAvg * 0.8) + (relax ?: 100) * 0.2).roundToInt()
         val strengths = reps.mapNotNull { it.avgPctOfRef }
         return KegelResult(nowMs, routine, steps.maxOf { it.rep }, score.coerceIn(0, 100), strengths.takeIf { it.isNotEmpty() }?.average()?.roundToInt(), relax)
+    }
+}
+
+/** One short, plain coaching line for right now, from the step and the live squeeze (% of reference). */
+fun kegelCoach(step: KegelStep?, livePct: Double?): String = when {
+    step == null -> "Pick a routine and press start"
+    step.kind == StepKind.Ready -> "Breathe out, let everything soften"
+    step.kind == StepKind.PushOut -> if ((livePct ?: 0.0) > 30) "Softer, release downward, don't squeeze" else "Good, gentle release"
+    step.kind == StepKind.Relax -> if ((livePct ?: 0.0) > 25) "Let it all go, fully relax" else "Good, fully relaxed"
+    livePct == null -> step.kind.cue
+    else -> {
+        val target = (step.targetPct ?: 50).toDouble()
+        when {
+            livePct < target * 0.7 -> "A little stronger"
+            livePct > target * 1.35 && target < 90 -> "Ease back a touch, steady at ${target.toInt()}%"
+            else -> "Right on target, hold it there"
+        }
     }
 }
 

@@ -180,7 +180,8 @@ object MonitorHub {
                 val resp = _response.value
                 // Arousal and pelvic/EMG tension go together in sexual sessions; don't count them as stress there.
                 val category = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(recorder.active.value?.category)
-                val sexual = category != null && category.sexual && category != com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid
+                // Kegel sets squeeze on purpose: that's training, not tension.
+                val sexual = category != null && ((category.sexual && category != com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid) || category == com.pulsepointlabs.sarahmonitor.session.SessionCategory.Kegel)
                 val st = stressTracker.update(reading.timestampMs, StressInputs(
                     hr = snapshot.heartRate, rmssd = snapshot.rmssdMs,
                     restingHr = restingBaseline?.hr, restingRmssd = restingBaseline?.rmssdMs,
@@ -297,8 +298,8 @@ object MonitorHub {
 
     /** Starts recording a session; live statistics and trends restart with it. */
     /** Starts recording a [category] session; live statistics and trends restart with it. */
-    fun startSession(category: com.pulsepointlabs.sarahmonitor.session.SessionCategory = com.pulsepointlabs.sarahmonitor.session.SessionCategory.last(appContext)) {
-        com.pulsepointlabs.sarahmonitor.session.SessionCategory.remember(appContext, category)
+    fun startSession(category: com.pulsepointlabs.sarahmonitor.session.SessionCategory = com.pulsepointlabs.sarahmonitor.session.SessionCategory.last(appContext), title: String? = null) {
+        if (category.pickable) com.pulsepointlabs.sarahmonitor.session.SessionCategory.remember(appContext, category)
         // The Response board follows the session type.
         when (category) {
             com.pulsepointlabs.sarahmonitor.session.SessionCategory.Masturbation -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Masturbation)
@@ -308,7 +309,7 @@ object MonitorHub {
         }
         scope.launch {
             if (recorder.active.value == null) resetSession()
-            recorder.start(category)
+            recorder.start(category, title)
         }
     }
 
@@ -317,13 +318,13 @@ object MonitorHub {
     }
 
     /** Marks an event at [timestampMs] (the moment the button was pressed). Returns false if not recording. */
-    fun markEvent(timestampMs: Long, types: Set<String>, note: String, checkIn: com.pulsepointlabs.sarahmonitor.session.CheckIn = com.pulsepointlabs.sarahmonitor.session.CheckIn(), onDone: (Boolean) -> Unit = {}) {
+    fun markEvent(timestampMs: Long, types: Set<String>, note: String, checkIn: com.pulsepointlabs.sarahmonitor.session.CheckIn = com.pulsepointlabs.sarahmonitor.session.CheckIn(), extra: Pair<String, org.json.JSONObject>? = null, onDone: (Boolean) -> Unit = {}) {
         // Marked climaxes teach the arousal engine this person's climax HR rise.
         if (recorder.active.value != null && ("orgasm" in types || "ejaculation" in types)) arousal.climaxSample()?.let { ResponseSettings.addClimax(it) }
         arousal.onMarker(timestampMs, types)
         _response.value = arousal.current()
         // Freeze the moment now (not when the save finishes).
-        val snapshot = runCatching { EventSnapshot.capture(timestampMs).toString() }.getOrNull()
+        val snapshot = runCatching { EventSnapshot.capture(timestampMs).apply { extra?.let { put(it.first, it.second) } }.toString() }.getOrNull()
         scope.launch {
             val marker = recorder.addMarker(timestampMs, types, note, checkIn, snapshot)
             if (marker != null) {

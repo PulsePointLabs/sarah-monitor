@@ -17,6 +17,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -125,8 +132,14 @@ fun ReviewChart(
     refLines: List<Pair<Double, String>> = emptyList(),
     showTimeAxis: Boolean = true,
     emptyText: String = "No data in this range",
-    bands: List<ChartBand> = emptyList()
+    bands: List<ChartBand> = emptyList(),
+    /** Fill the height the caller gives (a weighted slot) instead of [height]. */
+    fillHeight: Boolean = false,
+    /** Extra tooltip lines for a moment (the event / flag / episode under it). */
+    describe: ((Long) -> List<Pair<String, Color>>)? = null
 ) {
+    // Hover (mouse / DeX) shows a tooltip at the pointer; on touch it follows the tapped cursor.
+    var hoverX by remember { mutableStateOf<Float?>(null) }
     val vp by rememberUpdatedState(viewport)
     val cursorCb by rememberUpdatedState(onCursor)
     val zoomCb by rememberUpdatedState(onZoom)
@@ -156,10 +169,23 @@ fun ReviewChart(
             val to = lowerBound(s.timestamps, viewport.endMs + 1)
             (from until to).map { s.values[it] }.filter { !it.isNaN() }
         }
-        Box(Modifier.fillMaxWidth().height(height)) {
+        androidx.compose.foundation.layout.BoxWithConstraints(if (fillHeight) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth().height(height)) {
+            val widthPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
             Canvas(
                 Modifier
                     .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val e = awaitPointerEvent()
+                                when (e.type) {
+                                    PointerEventType.Move, PointerEventType.Enter -> if (e.changes.none { it.pressed }) hoverX = e.changes.first().position.x
+                                    PointerEventType.Exit -> hoverX = null
+                                    else -> Unit
+                                }
+                            }
+                        }
+                    }
                     .pointerInput(Unit) {
                         detectTapGestures { pos -> cursorCb(timeAt(pos.x, size.width.toFloat(), vp)) }
                     }
@@ -189,6 +215,33 @@ fun ReviewChart(
             }
             if (visibleValues.isEmpty()) {
                 Text(emptyText, color = MonitorColors.dim, fontSize = 13.sp, modifier = Modifier.align(Alignment.Center))
+            }
+            // Tooltip: at the hovered point, else at the cursor.
+            val tipT = hoverX?.let { timeAt(it, widthPx, viewport) } ?: cursorMs?.takeIf { it in viewport.startMs..viewport.endMs }
+            if (tipT != null) {
+                val lines = buildList {
+                    add(clockLabel(tipT, seconds = true) to MonitorColors.text)
+                    series.forEach { s -> s.valueAt(tipT, maxOf(s.gapMs, 5_000L))?.let { v -> add("${s.label} ${if (decimals == 0) "%.0f".format(v) else "%.${decimals}f".format(v)}" to s.color) } }
+                    describe?.invoke(tipT)?.let { addAll(it) }
+                }
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                val gutter = with(density) { GUTTER_DP.dp.toPx() }
+                val x = hoverX ?: (gutter + (tipT - viewport.startMs).toFloat() / viewport.spanMs.toFloat() * (widthPx - gutter))
+                // Fixed width so it can be placed exactly: right of the point, or left of it near the right edge.
+                val tipW = with(density) { 210.dp.toPx() }
+                val gap = with(density) { 10.dp.toPx() }
+                val left = (if (x + gap + tipW <= widthPx) x + gap else x - gap - tipW).coerceIn(0f, (widthPx - tipW).coerceAtLeast(0f))
+                Column(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .offset { androidx.compose.ui.unit.IntOffset(left.toInt(), 4) }
+                        .width(210.dp)
+                        .background(Color(0xF00B1520), RoundedCornerShape(6.dp))
+                        .border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    lines.forEach { (text, color) -> Text(text, color = color, fontSize = 11.sp, fontWeight = if (color == MonitorColors.text) FontWeight.Bold else FontWeight.Normal, lineHeight = 13.sp) }
+                }
             }
         }
     }
@@ -251,7 +304,9 @@ private fun DrawScope.drawChart(
         drawRect(b.color.copy(alpha = if (b.selected) 0.95f else 0.65f), Offset(x0, top), Size(x1 - x0, 3f * density))
     }
     // Grid + y labels (drawn inside the plot so stacked charts share the same x scale exactly).
-    niceTicks(lo, hi, 4).forEach { v ->
+    // As many ticks as fit without labels touching (about one per 1.8 label heights).
+    val tickCount = ((bottom - top) / (labelPx * 1.8f)).toInt().coerceIn(1, 4)
+    niceTicks(lo, hi, tickCount).forEach { v ->
         val y = yFor(v)
         drawLine(MonitorColors.trendGrid, Offset(left, y), Offset(right, y), strokeWidth = 1f)
         drawLabel(com.pulsepointlabs.sarahmonitor.session.SessionAnalysis.num(v, if (span < 4 && decimals > 0) 1 else 0), left + 3f * density, y - 3f * density, MonitorColors.dim.toArgb(), labelSp)
