@@ -144,7 +144,9 @@ class LocalEars(
 
     @SuppressLint("MissingPermission") // checked by HandsFree before start()
     private suspend fun loop(model: org.vosk.Model) {
-        val route = MicRoute.open(context)
+        // The phone's own mic unless asked otherwise: a headset mic would put the headset in call-quality mode
+        // for the whole session (music and Sarah's voice would sound like a phone call).
+        val route = MicRoute.open(context, useHeadset = HandsFreeSettings.headsetMic.value)
         val source = if (route.headset) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION
         val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val rec = AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, CHUNK * 2 * 4))

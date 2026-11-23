@@ -20,6 +20,8 @@ object HandsFreeSettings {
     val enabled = MutableStateFlow(false)
     /** Sarah says back what she logged ("Logged: resistance, 3 out of 10"). */
     val sayBack = MutableStateFlow(true)
+    /** Listen through a Bluetooth headset's mic. Off by default: it switches the headset to call-quality audio. */
+    val headsetMic = MutableStateFlow(false)
 
     @Synchronized
     fun load(c: Context) {
@@ -28,9 +30,11 @@ object HandsFreeSettings {
         prefs = p
         enabled.value = p.getBoolean("enabled", false)
         sayBack.value = p.getBoolean("say_back", true)
+        headsetMic.value = p.getBoolean("headset_mic", false)
     }
     fun setEnabled(v: Boolean) { enabled.value = v; prefs?.edit()?.putBoolean("enabled", v)?.apply() }
     fun setSayBack(v: Boolean) { sayBack.value = v; prefs?.edit()?.putBoolean("say_back", v)?.apply() }
+    fun setHeadsetMic(v: Boolean) { headsetMic.value = v; prefs?.edit()?.putBoolean("headset_mic", v)?.apply() }
 }
 
 /** What a spoken note turned into. [bucket] is the kind of observation (sensation, procedure step, …). */
@@ -194,6 +198,10 @@ class HandsFree(
             else -> prepareAndStart()
         }
     }
+
+    /** Re-open the mic (after changing which mic to use). */
+    @Synchronized
+    fun restart() { val w = wanted; stop("Switching microphone…"); sync(w) }
 
     /** Dictation in the Mark event panel needs the mic: step aside while it runs. */
     @Synchronized

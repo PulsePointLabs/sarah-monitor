@@ -36,6 +36,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -127,6 +128,7 @@ fun ReviewScreen(
 ) {
     val context = LocalContext.current
     val dao = MonitorHub.recorder.dao
+    val liveSession by MonitorHub.session.collectAsState()
     val scope = rememberCoroutineScope()
     var reload by remember { mutableIntStateOf(0) }
     var data by remember { mutableStateOf<SessionData?>(null) }
@@ -299,7 +301,9 @@ fun ReviewScreen(
             onRename = { renaming = true },
             onAskAi = { SessionExport.askAi(context, d) },
             onCsv = { onExportCsv(SessionExport.fileStem(d) + ".csv", SessionExport.csv(d)) },
-            onDelete = { confirmDelete = true }
+            onDelete = { confirmDelete = true },
+            // Continue recording into this session (only when nothing else is recording).
+            onResume = if (!d.session.active && liveSession == null) ({ MonitorHub.resumeSession(sessionId) { s -> if (s != null) { onMessage("Continuing \"${s.title}\""); reload++ } } }) else null
         )
         BoxWithConstraints(Modifier.fillMaxSize()) {
             if (maxWidth >= 900.dp && maxHeight >= 500.dp) {
@@ -403,7 +407,7 @@ fun ReviewScreen(
 }
 
 @Composable
-private fun ReviewHeader(d: SessionData, onBack: () -> Unit, onRename: () -> Unit, onAskAi: () -> Unit, onCsv: () -> Unit, onDelete: () -> Unit) {
+private fun ReviewHeader(d: SessionData, onBack: () -> Unit, onRename: () -> Unit, onAskAi: () -> Unit, onCsv: () -> Unit, onDelete: () -> Unit, onResume: (() -> Unit)? = null) {
     val start = Instant.ofEpochMilli(d.session.startTimeMs).atZone(ZoneId.systemDefault())
     BoxWithConstraints(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
         val narrow = maxWidth < 600.dp
@@ -422,16 +426,20 @@ private fun ReviewHeader(d: SessionData, onBack: () -> Unit, onRename: () -> Uni
                         fontSize = 12.sp
                     )
                 }
-                if (!narrow) Actions(onAskAi, onCsv, onDelete)
+                if (!narrow) Actions(onAskAi, onCsv, onDelete, onResume)
             }
-            if (narrow) Row(Modifier.padding(start = 8.dp)) { Actions(onAskAi, onCsv, onDelete) }
+            if (narrow) Row(Modifier.padding(start = 8.dp)) { Actions(onAskAi, onCsv, onDelete, onResume) }
         }
     }
 }
 
 @Composable
-private fun Actions(onAskAi: () -> Unit, onCsv: () -> Unit, onDelete: () -> Unit) {
+private fun Actions(onAskAi: () -> Unit, onCsv: () -> Unit, onDelete: () -> Unit, onResume: (() -> Unit)?) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (onResume != null) androidx.compose.material3.Button(
+            onClick = onResume,
+            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MonitorColors.pelvic, contentColor = MonitorColors.background)
+        ) { Text("↻ Continue", fontSize = 13.sp, fontWeight = FontWeight.Bold) }
         OutlinedButton(onClick = onAskAi) { Text("✦ Ask AI", fontSize = 13.sp) }
         OutlinedButton(onClick = onCsv) { Text("Export CSV", fontSize = 13.sp) }
         TextButton(onClick = onDelete) { Text("Delete", color = MonitorColors.alarm, fontSize = 13.sp) }

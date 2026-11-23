@@ -100,6 +100,20 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         }
     }
 
+    /**
+     * Picks a stopped session back up: recording continues into it (the time in between shows as a gap), with
+     * its type, devices and events intact and whatever the app has gained since.
+     */
+    suspend fun resume(id: String): SessionEntity? = mutex.withLock {
+        if (_active.value != null) return null
+        val s = withContext(Dispatchers.IO) { dao.getSession(id) } ?: return null
+        val live = s.copy(endTimeMs = null)
+        withContext(Dispatchers.IO) { dao.upsertSession(live) }
+        synchronized(lock) { hr.clear(); rr.clear(); pelvic.clear(); emg.clear(); ecgTs.clear(); ecgUv.clear(); ecgChunks.clear(); lastEcgTs = Long.MIN_VALUE }
+        _active.value = live
+        live
+    }
+
     /** Saves a session's details (live or past) without racing the summary refresh. */
     suspend fun updateDetails(id: String, json: String?) = withContext(Dispatchers.IO) { mutex.withLock { dao.setDetails(id, json) } }
 

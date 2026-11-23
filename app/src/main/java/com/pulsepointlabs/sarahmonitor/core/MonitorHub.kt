@@ -396,6 +396,25 @@ object MonitorHub {
         }
     }
 
+    /** Continues a stopped session (see [SessionRecorder.resume]). */
+    fun resumeSession(id: String, onDone: (SessionEntity?) -> Unit = {}) {
+        if (recorder.active.value != null) return onDone(null)
+        scope.launch {
+            resetSession()
+            val s = recorder.resume(id)
+            if (s != null) {
+                _sessionDetails.value = com.pulsepointlabs.sarahmonitor.session.SessionDetails.parse(s.details)
+                when (com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(s.category)) {
+                    com.pulsepointlabs.sarahmonitor.session.SessionCategory.Masturbation -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Masturbation)
+                    com.pulsepointlabs.sarahmonitor.session.SessionCategory.Sexual -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Sexual)
+                    com.pulsepointlabs.sarahmonitor.session.SessionCategory.Exploration -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Exploration)
+                    else -> Unit
+                }
+            }
+            launch(Dispatchers.Main) { onDone(s) }
+        }
+    }
+
     fun stopSession(onStopped: (SessionEntity?) -> Unit = {}) {
         scope.launch {
             val s = recorder.stop()

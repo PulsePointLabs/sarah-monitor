@@ -254,7 +254,7 @@ fun VoiceSection(onMessage: (String) -> Unit) {
             autoStop = if (it < 1f) 0f else (it * 2).toInt() / 2f
             VoiceSettings.setAutoStopSeconds(context, autoStop)
         }
-        SettingRow("Use Bluetooth headset mic") { SettingSwitch(headset) { headset = it; VoiceSettings.setPreferHeadsetMic(context, it) } }
+        SettingRow("Dictate through the headset mic", "Switches the headset to call-quality audio while you dictate") { SettingSwitch(headset) { headset = it; VoiceSettings.setPreferHeadsetMic(context, it) } }
         var tidy by remember { mutableStateOf(VoiceSettings.tidyWithClaude(context)) }
         SettingRow("Tidy punctuation with Claude", "Same words, cleaner punctuation (Anthropic key)") { SettingSwitch(tidy) { tidy = it; VoiceSettings.setTidyWithClaude(context, it) } }
         androidx.compose.material3.HorizontalDivider(color = MonitorColors.panelBorder)
@@ -264,6 +264,10 @@ fun VoiceSection(onMessage: (String) -> Unit) {
         SettingRow("Hands-free Sarah", "Say \"Sarah, …\" while recording. The phone listens for her name; only what follows is sent") { SettingSwitch(hf) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setEnabled(it) } }
         if (hf) {
             SettingRow("Say back what she logged") { SettingSwitch(sayBack) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setSayBack(it) } }
+            val hfHeadset by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.headsetMic.collectAsState()
+            SettingRow("Listen through the headset mic", if (hfHeadset) "Headset audio is call quality while listening" else "Phone mic: music and Sarah stay crisp") {
+                SettingSwitch(hfHeadset) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setHeadsetMic(it); com.pulsepointlabs.sarahmonitor.core.MonitorHub.handsFree.restart() }
+            }
             Text((if (hfStatus.listening) "● " else "○ ") + hfStatus.message, color = if (hfStatus.listening) MonitorColors.good else MonitorColors.label, fontSize = 13.sp)
             hfStatus.lastLogged?.let { Text("Last: $it", color = MonitorColors.text, fontSize = 13.sp) }
         }

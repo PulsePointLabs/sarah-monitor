@@ -137,6 +137,7 @@ interface SessionDao {
     @Query("UPDATE sessions SET title = :title WHERE id = :id") suspend fun setTitle(id: String, title: String)
     @Query("UPDATE sessions SET markerCount = :count WHERE id = :id") suspend fun setMarkerCount(id: String, count: Int)
     @Query("SELECT * FROM sessions WHERE endTimeMs IS NULL ORDER BY startTimeMs DESC LIMIT 1") suspend fun getActiveSession(): SessionEntity?
+    @Query("SELECT * FROM sessions WHERE endTimeMs IS NOT NULL ORDER BY endTimeMs DESC LIMIT 1") suspend fun latestFinished(): SessionEntity?
     @Query("DELETE FROM sessions WHERE id = :id") suspend fun deleteSession(id: String)
 
     @Insert suspend fun insertHr(rows: List<HrSampleEntity>)

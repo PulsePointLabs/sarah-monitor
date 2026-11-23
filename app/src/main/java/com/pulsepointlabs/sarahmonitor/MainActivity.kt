@@ -464,6 +464,9 @@ private fun MonitorScreen(
     if (chooseCategory) StartSessionDialog(onStart = { cat ->
         chooseCategory = false
         if (cat.sexual) setupFor = cat else MonitorHub.startSession(cat)
+    }, onResume = { s ->
+        chooseCategory = false
+        MonitorHub.resumeSession(s.id) { r -> if (r != null) onMessage("Continuing \"${r.title}\"") }
     }, onDismiss = { chooseCategory = false })
     setupFor?.let { cat ->
         com.pulsepointlabs.sarahmonitor.review.SessionDetailsDialog(
@@ -897,15 +900,39 @@ private fun AddGlucoseDialog(onDismiss: () -> Unit, onMessage: (String) -> Unit)
 
 /** Pick what this recording is; tap to start. The last choice is highlighted. */
 @Composable
-private fun StartSessionDialog(onStart: (com.pulsepointlabs.sarahmonitor.session.SessionCategory) -> Unit, onDismiss: () -> Unit) {
+internal fun StartSessionDialog(
+    onStart: (com.pulsepointlabs.sarahmonitor.session.SessionCategory) -> Unit,
+    onResume: (com.pulsepointlabs.sarahmonitor.session.SessionEntity) -> Unit,
+    onDismiss: () -> Unit
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val last = remember { com.pulsepointlabs.sarahmonitor.session.SessionCategory.last(context) }
+    // The most recent session, if it stopped within the last day: it can be continued instead of starting over.
+    val recent by androidx.compose.runtime.produceState<com.pulsepointlabs.sarahmonitor.session.SessionEntity?>(null) {
+        value = withContext(kotlinx.coroutines.Dispatchers.IO) { MonitorHub.recorder.dao.latestFinished() }
+            ?.takeIf { (it.endTimeMs ?: 0L) > System.currentTimeMillis() - 24 * 3_600_000L && com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(it.category)?.pickable != false }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = MonitorColors.panel,
         title = { Text("Start recording", color = MonitorColors.text, fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                recent?.let { r ->
+                    val mins = ((System.currentTimeMillis() - (r.endTimeMs ?: 0L)) / 60_000L).toInt()
+                    Column(
+                        Modifier.fillMaxWidth().background(MonitorColors.pelvic.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
+                            .border(1.dp, MonitorColors.pelvic.copy(alpha = 0.8f), RoundedCornerShape(12.dp)).clickable { onResume(r) }
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
+                        Text("↻ Continue last session", color = MonitorColors.pelvic, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            r.title + " · stopped " + when { mins < 1 -> "just now"; mins < 60 -> "$mins min ago"; else -> "${mins / 60} h ${mins % 60} min ago" },
+                            color = MonitorColors.label, fontSize = 13.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                    Text("or start a new one", color = MonitorColors.label, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+                }
                 com.pulsepointlabs.sarahmonitor.session.SessionCategory.entries.filter { it.pickable }.forEach { c ->
                     val on = c == last
                     val color = if (c.sexual && c != com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid) Color(0xFFFF7AB6) else if (c == com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid) MonitorColors.pnn50 else MonitorColors.hr
