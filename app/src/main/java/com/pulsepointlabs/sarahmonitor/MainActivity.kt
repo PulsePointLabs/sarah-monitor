@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Hearing
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.LayersClear
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -581,7 +582,8 @@ internal fun TopBar(
     var menu by remember { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         // Three widths: full desktop bar (DeX), medium (tablet / phone landscape) and narrow (phone portrait).
-        val full = maxWidth >= 1150.dp
+        // Full labelled bar only when everything fits (tabs, record, mark, Sarah, overlays, sensors, card tools).
+        val full = maxWidth >= 1360.dp
         val narrow = maxWidth < 600.dp
         // Phone-sized windows use the fit-to-screen board (no free arranging).
         val fit = com.pulsepointlabs.sarahmonitor.ui.isCompactWindow()
@@ -605,7 +607,7 @@ internal fun TopBar(
                     Spacer(Modifier.weight(1f))
                     RecordButton(recording, now, compact = false, onClick = onRecord)
                     MarkButton(enabled = recording != null, compact = false, onClick = onMark)
-                    HandsFreeToggle()
+                    ListenButton(labelled = false)
                     OverlayToggle()
                     moreMenu()
                 }
@@ -620,7 +622,7 @@ internal fun TopBar(
             Spacer(Modifier.weight(1f))
             RecordButton(recording, now, compact = false, onClick = onRecord)
             MarkButton(enabled = recording != null, compact = !full, onClick = onMark)
-            HandsFreeToggle()
+            ListenButton(labelled = true)
             OverlayToggle()
             if (full) {
                 DevicePill("H10", h10, onDevices)
@@ -636,13 +638,35 @@ internal fun TopBar(
     }
 }
 
-/** Lit while hands-free Sarah is listening; tap to turn hands-free off (or on). Shown once it's been switched on. */
+/**
+ * Hands-free Sarah, always in the top bar: off (outline), on and waiting for a recording (amber), listening
+ * (filled). Tap to switch. With a label on wider screens; the icon alone on a phone.
+ */
 @Composable
-private fun HandsFreeToggle() {
+private fun ListenButton(labelled: Boolean) {
     val enabled by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.enabled.collectAsState()
     val status by MonitorHub.handsFree.status.collectAsState()
-    if (!enabled) return
-    BarIcon(Icons.Default.Hearing, "Hands-free: ${status.message}", { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setEnabled(false) }, highlighted = status.listening)
+    val color = when {
+        status.listening -> MonitorColors.pelvic
+        enabled -> MonitorColors.warn
+        else -> MonitorColors.label
+    }
+    val label = when {
+        status.listening -> "Sarah listening"
+        enabled -> "Sarah: on"
+        else -> "Sarah"
+    }
+    Row(
+        Modifier.height(BAR_BUTTON_H)
+            .background(if (status.listening) color.copy(alpha = 0.18f) else Color.Transparent, RoundedCornerShape(8.dp))
+            .border(1.dp, color.copy(alpha = if (enabled) 0.9f else 0.5f), RoundedCornerShape(8.dp))
+            .clickable { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setEnabled(!enabled) }
+            .padding(horizontal = if (labelled) 10.dp else 7.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Icon(if (enabled) Icons.Default.Hearing else Icons.Default.MicOff, contentDescription = "Hands-free Sarah: ${status.message}", tint = color, modifier = Modifier.size(18.dp))
+        if (labelled) Text(label, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
 }
 
 /** Quick on/off for the floating overlays on this screen (phone or DeX each remember their own). */

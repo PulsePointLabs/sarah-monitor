@@ -23,6 +23,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Icon
@@ -241,7 +243,10 @@ fun SessionDetailsDialog(
             }
             Spacer(Modifier.size(8.dp))
             BoxWithConstraints(Modifier.fillMaxSize()) {
-                val before: @Composable () -> Unit = { if (showPre) Block("Before", MonitorColors.sdnn) { FieldsForm(DetailForms.pre, d.pre, MonitorColors.sdnn) { d = d.copy(pre = it) } } }
+                val before: @Composable () -> Unit = {
+                    if (mode == DetailsMode.Setup) HandsFreeRow()
+                    if (showPre) Block("Before", MonitorColors.sdnn) { FieldsForm(DetailForms.pre, d.pre, MonitorColors.sdnn) { d = d.copy(pre = it) } }
+                }
                 val after: @Composable () -> Unit = { if (showPost) Block("After", MonitorColors.good) { FieldsForm(DetailForms.post(category), d.post, MonitorColors.good) { d = d.copy(post = it) } } }
                 val devices: @Composable () -> Unit = { if (showGear) Block("Devices & products", deviceColor) { GearEditor(d.gear, DetailForms.gearFor(category), lastGear) { d = d.copy(gear = it) } } }
                 if (maxWidth >= 900.dp) {
@@ -298,5 +303,24 @@ fun DetailsCard(details: SessionDetails, category: SessionCategory?, onEdit: () 
                 v.path
             ))
         }
+    }
+}
+
+/** Setup: switch hands-free Sarah on for this session, right where you start it. */
+@Composable
+private fun HandsFreeRow() {
+    val on by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.enabled.collectAsState()
+    val c = MonitorColors.pelvic
+    Row(
+        Modifier.fillMaxWidth().background(c.copy(alpha = if (on) 0.12f else 0.05f), RoundedCornerShape(12.dp)).border(1.dp, c.copy(alpha = if (on) 0.7f else 0.3f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Icon(androidx.compose.material.icons.Icons.Default.Hearing, contentDescription = null, tint = if (on) c else MonitorColors.label, modifier = Modifier.size(24.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Hands-free Sarah", color = MonitorColors.text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Say \"Sarah, …\" to log without touching", color = MonitorColors.label, fontSize = 12.sp)
+        }
+        Switch(checked = on, onCheckedChange = { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setEnabled(it) }, colors = SwitchDefaults.colors(checkedTrackColor = c, checkedThumbColor = Color.White))
     }
 }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
@@ -38,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -127,6 +129,13 @@ fun MarkEventDialog(
         )
     }
     var note by remember { mutableStateOf(editing?.note ?: "") }
+    // Live dictation: the raw words as they stream in, and Claude's punctuated version of the part it has seen.
+    var liveRaw by remember { mutableStateOf("") }
+    var polished by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var tidyBusy by remember { mutableStateOf(false) }
+    // Matched without trailing punctuation: when you keep talking, the end of the earlier text can change ("." → ",").
+    fun stem(t: String) = t.trimEnd { it in ".,…!?;: " }
+    fun shown(raw: String): String = polished?.let { (src, out) -> stem(src).let { k -> if (raw.startsWith(k)) stem(out) + raw.removePrefix(k) else null } } ?: raw
     var status by remember { mutableStateOf("") }
     val last = remember { if (editing == null) MarkerPreferences.last(context) else null }
     val recognizer = remember { VoiceNoteRecognizer(context) }
@@ -158,7 +167,8 @@ fun MarkEventDialog(
         scope.launch {
             val before = note
             status = "Finishing…"
-            val text = tidied(realtime.finish())
+            val raw = realtime.finish()
+            val text = if (polished?.first == raw) polished!!.second else tidied(raw)
             listening = false; level = 0f
             if (text.isNotBlank()) note = text
             status = if (text.isNotBlank() && text.trim() != before.trim()) "Transcribed ✓" else realtime.lastProblem ?: "No speech recognized"
@@ -203,9 +213,10 @@ fun MarkEventDialog(
                 if (listening) { stopRealtime(); return }
                 listening = true
                 MonitorHub.audio.listenCue(true)
+                liveRaw = note; polished = null
                 realtime.start(
                     VoiceSettings.apiKey(context), note,
-                    onText = { t -> ui { note = t } },
+                    onText = { t -> ui { liveRaw = t; note = shown(t) } },
                     onStatus = { t -> ui { status = t } },
                     onLevel = { l -> ui { level = l } },
                     onError = { t -> ui { status = t; listening = false; level = 0f } },
@@ -239,6 +250,23 @@ fun MarkEventDialog(
             }
         }
     }
+    // While you dictate, Claude re-punctuates everything said so far once the words pause for a moment, so
+    // sentences flow (the transcriber only sees one phrase at a time). Your words are never changed.
+    LaunchedEffect(liveRaw, listening) {
+        val src = liveRaw
+        if (!listening || engine != VoiceSettings.Engine.Realtime || src.isBlank() || polished?.first == src) return@LaunchedEffect
+        if (!VoiceSettings.tidyWithClaude(context) || !com.pulsepointlabs.sarahmonitor.core.ClaudeText.available) return@LaunchedEffect
+        kotlinx.coroutines.delay(700)
+        if (tidyBusy) return@LaunchedEffect
+        // Runs outside this effect so new words arriving don't cancel it; it applies only if still a prefix.
+        tidyBusy = true
+        scope.launch {
+            try {
+                val out = com.pulsepointlabs.sarahmonitor.core.TranscriptTidy.tidy(src)
+                if (out != null && liveRaw.startsWith(stem(src))) { polished = src to out; note = shown(liveRaw) }
+            } finally { tidyBusy = false }
+        }
+    }
     // No activity behind an overlay panel to ask for permission from.
     val micPermission = if (inOverlay) null else rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { if (it) listen() else status = "Microphone permission needed" }
 
@@ -268,15 +296,24 @@ fun MarkEventDialog(
                 var tab by remember { mutableStateOf(groups.firstOrNull { g -> MarkerTypes.inGroup(g).any { it.id in types } } ?: groups.first()) }
                 if (groups.size > 1) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     groups.forEach { g ->
+                        // Badge = how many types are picked on that tab, so picks on other tabs aren't forgotten.
                         val n = MarkerTypes.inGroup(g).count { it.id in types }
                         val on = g == tab
-                        Text(
-                            (if (g == MarkerTypes.Group.Procedure) "Procedure" else g.title) + if (n > 0) " · $n" else "",
-                            color = if (on) MonitorColors.background else MonitorColors.text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            modifier = Modifier.weight(1f).background(if (on) MonitorColors.text else Color.Transparent, RoundedCornerShape(8.dp))
-                                .border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(8.dp)).clickable { tab = g }.padding(vertical = 7.dp)
-                        )
+                        Row(
+                            Modifier.weight(1f).heightIn(min = 34.dp).background(if (on) MonitorColors.text else Color.Transparent, RoundedCornerShape(8.dp))
+                                .border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(8.dp)).clickable { tab = g },
+                            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(if (g == MarkerTypes.Group.Procedure) "Procedure" else g.title, color = if (on) MonitorColors.background else MonitorColors.text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                            if (n > 0) androidx.compose.foundation.layout.Box(
+                                Modifier.size(18.dp).background(MonitorColors.pelvic, androidx.compose.foundation.shape.CircleShape), contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "$n", color = MonitorColors.background, fontWeight = FontWeight.Bold,
+                                    style = androidx.compose.ui.text.TextStyle(fontSize = 11.sp, lineHeight = 11.sp, platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false))
+                                )
+                            }
+                        }
                     }
                 }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

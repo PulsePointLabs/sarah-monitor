@@ -52,7 +52,8 @@ object ClaudeText {
 /** Claude tidies dictated text: punctuation and capitals only, the same words in the same order. */
 object TranscriptTidy {
     private const val SYSTEM = """You fix the punctuation and capitalisation of dictated notes from a physiology lab (a paramedic logging his own body during sessions).
-Rules: keep every word and their order; you may remove only filler sounds (um, uh, er); fix obvious split-word errors; keep "…" where it appears (it marks a thinking pause); use commas, full stops and question marks naturally; keep medical and device terms (Foley, French, glans, meatus, sphincter, HRV, Howl, OBS) as written.
+The text was transcribed in pieces at every pause, so it has full stops and capitals where the speaker only paused for breath. Punctuate it the way the speaker meant it, as natural flowing speech: join pieces that belong to one thought into one sentence; start a new sentence only where a new thought starts.
+Rules: keep every word and their order; you may remove only filler sounds (um, uh, er); fix obvious split-word errors; keep "…" only for a real trailing-off or hesitation; use commas, full stops and question marks naturally; keep medical and device terms (Foley, French, glans, meatus, sphincter, HRV, Howl, OBS) as written.
 Reply with the corrected text only. No quotes, no comments."""
 
     private val FILLERS = setOf("um", "uh", "er", "erm", "hmm")

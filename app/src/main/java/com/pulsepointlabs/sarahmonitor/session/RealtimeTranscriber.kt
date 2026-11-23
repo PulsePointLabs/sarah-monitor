@@ -244,12 +244,15 @@ class RealtimeTranscriber(private val context: android.content.Context) {
                 onText(VoiceTextNormalizer.normalize(assembler.text(), fixStrayCaps = false))
                 onUtterance?.let { cb -> event.optString("transcript").trim().takeIf { it.isNotEmpty() }?.let { cb(it, itemStart[id] ?: System.currentTimeMillis()) } }
                 if (continuous) { assembler.remove(id); itemStart.remove(id) }
+                // The fallback model takes a text prompt: give it the words so far, so it knows a sentence is still going.
+                else if (model == FALLBACK_MODEL) socket?.send(sessionUpdate(model, assembler.text().takeLast(300)).toString())
                 onStatus("Listening…")
                 if (!active && !assembler.pending()) finished?.complete(Unit)
             }
             "conversation.item.input_audio_transcription.failed" -> {
+                // A tiny noisy fragment can fail on its own; only worth mentioning if nothing has come through.
                 lastProblem = "Live: " + event.optJSONObject("error")?.optString("message").orEmpty().ifBlank { "a phrase couldn't be transcribed" }
-                onStatus(lastProblem!!)
+                if (!gotText) onStatus(lastProblem!!) else onStatus("Listening…")
                 if (!active && !assembler.pending()) finished?.complete(Unit)
             }
             "error" -> {
@@ -318,7 +321,8 @@ class RealtimeTranscriber(private val context: android.content.Context) {
                 // Optional: finish by itself once you've stopped talking for the set time.
                 if (autoStopMs > 0 && everSpoke && silentMs >= autoStopMs) { silentMs = Int.MIN_VALUE / 2; onAutoStop() }
                 // Our own turn detection for the live model (it has none): commit after 0.7 s of quiet.
-                if (ready && model == LIVE_MODEL && spoke && quietMs >= 700) {
+                // 1 s (1.2 s hands-free) so a thinking pause doesn't cut a sentence in two.
+                if (ready && model == LIVE_MODEL && spoke && quietMs >= (if (continuous) 1_200 else 1_000)) {
                     socket?.send("""{"type":"input_audio_buffer.commit"}""")
                     spoke = false
                 }
@@ -412,7 +416,7 @@ class RealtimeTranscriber(private val context: android.content.Context) {
         )
 
         /** session.update for a transcription session (GA Realtime API). */
-        fun sessionUpdate(model: String): JSONObject {
+        fun sessionUpdate(model: String, context: String = ""): JSONObject {
             val transcription = JSONObject().put("model", model)
             val input = JSONObject()
                 .put("format", JSONObject().put("type", "audio/pcm").put("rate", SAMPLE_RATE))
@@ -421,7 +425,7 @@ class RealtimeTranscriber(private val context: android.content.Context) {
                 transcription.put("languages", JSONArray().put("en")).put("keywords", JSONArray(KEYWORDS))
                 input.put("turn_detection", JSONObject.NULL)
             } else {
-                transcription.put("language", "en").put("prompt", WhisperTranscriber.PROMPT)
+                transcription.put("language", "en").put("prompt", (WhisperTranscriber.PROMPT + if (context.isNotBlank()) " Continue from: $context" else "").take(900))
                 input.put("turn_detection", JSONObject().put("type", "server_vad").put("silence_duration_ms", 600))
             }
             input.put("transcription", transcription)
