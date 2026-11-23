@@ -15,8 +15,8 @@ android {
         // 64-bit ARM only (every current Samsung): keeps the offline speech libraries from quadrupling the APK.
         ndk { abiFilters += listOf("arm64-v8a") }
         targetSdk = 35
-        versionCode = 40
-        versionName = "0.24.1"
+        versionCode = 41
+        versionName = "0.24.2"
     }
 
     // One signing key for every build (this machine, CI, anyone's PC), kept in the repo, so each
@@ -80,5 +80,18 @@ dependencies {
     ksp("androidx.room:room-compiler:$roomVersion")
 
     testImplementation("junit:junit:4.13.2")
+    // Screenshot harness (app/src/test/.../shot): renders real screens off-device. Only runs with -Pshots.
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.test:core:1.6.1")
     testImplementation("org.json:json:20240303")
+}
+
+// Screenshots: ./gradlew :app:testDebugUnitTest -Pshots --tests "*ShotTest*"  → PNGs in app/build/shots.
+// Normal test runs skip them. ROBOLECTRIC_REPO can point Robolectric at a Maven mirror if needed.
+android.testOptions.unitTests.isIncludeAndroidResources = true
+android.testOptions.unitTests.all {
+    it.maxHeapSize = "3g"
+    System.getenv("ROBOLECTRIC_REPO")?.let { url -> it.systemProperty("robolectric.dependency.repo.url", url) }
+    it.systemProperty("shots.dir", layout.buildDirectory.dir("shots").get().asFile.absolutePath)
+    if (!project.hasProperty("shots")) it.exclude("**/shot/**")
 }
