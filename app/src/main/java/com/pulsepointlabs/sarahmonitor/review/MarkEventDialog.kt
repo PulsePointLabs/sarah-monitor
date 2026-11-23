@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
@@ -87,6 +89,8 @@ fun markerColor(types: String): Color = when (MarkerTypes.split(types).firstOrNu
     "remove" -> Color(0xFFC4B5FD)
     "discomfort" -> Color(0xFFF87171)
     "estim_change" -> Color(0xFFBD94FF)
+    "sensation" -> Color(0xFFF472B6)
+    "finding" -> Color(0xFF67E8F9)
     else -> Color(0xFFE6EEF5)
 }
 
@@ -135,7 +139,18 @@ fun MarkEventDialog(
     var level by remember { mutableStateOf(0f) }
     val scope = rememberCoroutineScope()
     val main = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
-    DisposableEffect(Unit) { onDispose { recognizer.stop(); whisper.cancel(); realtime.release() } }
+    DisposableEffect(Unit) {
+        onDispose {
+            recognizer.stop(); whisper.cancel(); realtime.release()
+            MonitorHub.handsFree.pause(false, MonitorHub.session.value != null)
+        }
+    }
+    /** Claude tidies punctuation (same words) when that's on and a key is saved. */
+    suspend fun tidied(text: String): String {
+        if (!VoiceSettings.tidyWithClaude(context) || !com.pulsepointlabs.sarahmonitor.core.ClaudeText.available || text.isBlank()) return text
+        status = "Tidying punctuation…"
+        return com.pulsepointlabs.sarahmonitor.core.TranscriptTidy.tidy(text) ?: text
+    }
     fun ui(block: () -> Unit) = main.post(block)
     fun stopRealtime(then: (String) -> Unit = {}) {
         if (!realtime.active) return
@@ -143,7 +158,7 @@ fun MarkEventDialog(
         scope.launch {
             val before = note
             status = "Finishing…"
-            val text = realtime.finish()
+            val text = tidied(realtime.finish())
             listening = false; level = 0f
             if (text.isNotBlank()) note = text
             status = if (text.isNotBlank() && text.trim() != before.trim()) "Transcribed ✓" else realtime.lastProblem ?: "No speech recognized"
@@ -158,8 +173,8 @@ fun MarkEventDialog(
         scope.launch {
             runCatching { whisper.stopAndTranscribe(VoiceSettings.apiKey(context)) }
                 .onSuccess { text ->
-                    val clean = VoiceTextNormalizer.normalize(text)
-                    note = VoiceTextNormalizer.normalize(if (note.isBlank()) clean else note.trimEnd() + " " + clean)
+                    val clean = VoiceTextNormalizer.normalize(text, fixStrayCaps = false)
+                    note = tidied(VoiceTextNormalizer.normalize(if (note.isBlank()) clean else note.trimEnd() + " " + clean, fixStrayCaps = false))
                     status = if (clean.isBlank()) "No speech recognized" else "Transcribed ✓"
                 }
                 .onFailure { status = it.message ?: "Transcription failed" }
@@ -167,6 +182,8 @@ fun MarkEventDialog(
         }
     }
     fun listen() {
+        // The mic can serve one listener at a time: hands-free steps aside while you dictate here.
+        MonitorHub.handsFree.pause(true, MonitorHub.session.value != null)
         when (engine) {
             VoiceSettings.Engine.Android -> {
                 if (listening) { recognizer.stop(); MonitorHub.audio.listenCue(false); return }
@@ -228,76 +245,80 @@ fun MarkEventDialog(
     EventFrame(
         inOverlay, onDismiss,
         title = {
-            Column {
-                Text(if (editing == null) "Mark event" else if (editing.id.isEmpty()) "Add event" else "Edit event", color = MonitorColors.text, fontWeight = FontWeight.Bold)
-                Text(
-                    "${clockLabel(pressedAtMs, seconds = true)}" +
-                        if (editing == null) "  ·  HR ${heart.heartRate ?: "--"}  ·  load ${heart.load.score ?: "--"}  ·  pressure ${fmt(pelvic.aboveRestKpa, 1)} kPa" else "",
-                    color = MonitorColors.label,
-                    fontSize = 13.sp
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(if (editing == null) "Mark event" else if (editing.id.isEmpty()) "Add event" else "Edit event", color = MonitorColors.text, fontWeight = FontWeight.Bold)
+                    Text(clockLabel(pressedAtMs, seconds = true), color = MonitorColors.label, fontSize = 13.sp)
+                }
+                last?.let { l ->
+                    // One tap repeats the previous event (types and note).
+                    Text(
+                        "↻ Repeat last", color = MonitorColors.pelvic, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.border(1.dp, MonitorColors.pelvic.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                            .clickable { onSave(l.types, l.note, com.pulsepointlabs.sarahmonitor.session.CheckIn()) }.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
             }
         },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                last?.let { l ->
-                    Text(
-                        "↻ Repeat last: ${l.label}",
-                        color = MonitorColors.pelvic,
-                        fontSize = 14.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, MonitorColors.pelvic.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                            .clickable { onSave(l.types, l.note, com.pulsepointlabs.sarahmonitor.session.CheckIn()) }
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                    )
+                // What the sensors read at this moment, so you can agree or disagree with them.
+                if (editing == null) RightNow(checkIn.stressFeedback) { checkIn = checkIn.copy(stressFeedback = it) }
+                // Event types in tabs (one per group this session uses); a dot marks tabs with something picked.
+                var tab by remember { mutableStateOf(groups.firstOrNull { g -> MarkerTypes.inGroup(g).any { it.id in types } } ?: groups.first()) }
+                if (groups.size > 1) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    groups.forEach { g ->
+                        val n = MarkerTypes.inGroup(g).count { it.id in types }
+                        val on = g == tab
+                        Text(
+                            (if (g == MarkerTypes.Group.Procedure) "Procedure" else g.title) + if (n > 0) " · $n" else "",
+                            color = if (on) MonitorColors.background else MonitorColors.text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.weight(1f).background(if (on) MonitorColors.text else Color.Transparent, RoundedCornerShape(8.dp))
+                                .border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(8.dp)).clickable { tab = g }.padding(vertical = 7.dp)
+                        )
+                    }
                 }
-                groups.forEach { group ->
-                    if (groups.size > 1) Text(group.title, color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        MarkerTypes.inGroup(group).forEach { type ->
-                            val on = type.id in types
-                            val color = markerColor(type.id)
-                            Text(
-                                (if (on) "✓ " else "") + type.label,
-                                color = if (on) MonitorColors.background else color,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .heightIn(min = 40.dp)
-                                    .background(if (on) color else color.copy(alpha = 0.08f), RoundedCornerShape(20.dp))
-                                    .border(1.dp, color.copy(alpha = 0.7f), RoundedCornerShape(20.dp))
-                                    .clickable { types = if (on && types.size > 1) types - type.id else types + type.id }
-                                    .padding(horizontal = 14.dp, vertical = 9.dp)
-                            )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MarkerTypes.inGroup(tab).forEach { type ->
+                        val on = type.id in types
+                        val color = markerColor(type.id)
+                        Text(
+                            (if (on) "✓ " else "") + type.label,
+                            color = if (on) MonitorColors.background else color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                            modifier = Modifier
+                                .heightIn(min = 34.dp)
+                                .background(if (on) color else color.copy(alpha = 0.08f), RoundedCornerShape(17.dp))
+                                .border(1.dp, color.copy(alpha = 0.6f), RoundedCornerShape(17.dp))
+                                .clickable { types = if (on && types.size > 1) types - type.id else types + type.id }
+                                .padding(horizontal = 11.dp, vertical = 7.dp)
+                        )
+                    }
+                }
+                // Device and check-in as two compact dropdowns.
+                val gear = MonitorHub.sessionDetails.collectAsState().value.gear
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (editing == null && gear.isNotEmpty()) {
+                        DropField("Device", gear.firstOrNull { it.id == checkIn.gearId }?.label ?: "None", Color(0xFF93C5FD), Modifier.weight(1f)) { close ->
+                            (listOf<com.pulsepointlabs.sarahmonitor.session.GearItem?>(null) + gear).forEach { g ->
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(g?.label ?: "None", color = if (g?.id == checkIn.gearId) Color(0xFF93C5FD) else MonitorColors.text, fontSize = 14.sp) },
+                                    onClick = { checkIn = checkIn.copy(gearId = g?.id); close() }
+                                )
+                            }
+                        }
+                    }
+                    DropField("How you are", checkIn.label ?: "Add a check-in", MonitorColors.rmssd, Modifier.weight(1f)) { _ ->
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp).widthIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            CheckInPicker(checkIn) { checkIn = it.copy(gearId = checkIn.gearId, stressFeedback = checkIn.stressFeedback) }
                         }
                     }
                 }
-                // Which device this is about (only while recording, when the session lists devices).
-                val gear = com.pulsepointlabs.sarahmonitor.core.MonitorHub.sessionDetails.collectAsState().value.gear
-                if (editing == null && gear.isNotEmpty()) {
-                    Text("Device", color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        gear.forEach { g ->
-                            val on = checkIn.gearId == g.id
-                            val c = Color(0xFF93C5FD)
-                            Text(
-                                (if (on) "✓ " else "") + g.label, color = if (on) MonitorColors.background else c, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.background(if (on) c else c.copy(alpha = 0.08f), RoundedCornerShape(16.dp)).border(1.dp, c.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
-                                    .clickable { checkIn = checkIn.copy(gearId = if (on) null else g.id) }.padding(horizontal = 12.dp, vertical = 7.dp)
-                            )
-                        }
-                    }
-                }
-                CheckInPicker(checkIn) { checkIn = it }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = note,
                         onValueChange = { note = it },
-                        label = { Text("Note (optional)") },
+                        label = { Text("Note") },
                         modifier = Modifier.weight(1f),
                         maxLines = 4
                     )
@@ -326,7 +347,7 @@ fun MarkEventDialog(
                     status = "Transcribing with Whisper…"
                     scope.launch {
                         val text = runCatching { whisper.stopAndTranscribe(VoiceSettings.apiKey(context)) }.getOrNull()
-                        val clean = text?.let { VoiceTextNormalizer.normalize(it) }.orEmpty()
+                        val clean = text?.let { VoiceTextNormalizer.normalize(it, fixStrayCaps = false) }.orEmpty()
                         onSave(types, if (clean.isBlank()) note else if (note.isBlank()) clean else note.trimEnd() + " " + clean, checkIn)
                     }
                 }
@@ -358,6 +379,7 @@ fun EventFrame(
     }
     Column(
         Modifier
+            .widthIn(max = 720.dp)
             .fillMaxWidth()
             .heightIn(max = 720.dp)
             .background(MonitorColors.panel, RoundedCornerShape(22.dp))
@@ -374,6 +396,75 @@ fun EventFrame(
 
 /** "How are you?" — feeling 1–5 and stress 0–10. Tap to pick, tap again to clear. Both optional. */
 @OptIn(ExperimentalLayoutApi::class)
+/** A compact dropdown: label + current value; [content] fills the menu (call close() to shut it). */
+@Composable
+private fun DropField(label: String, value: String, color: Color, modifier: Modifier, content: @Composable (close: () -> Unit) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    androidx.compose.foundation.layout.Box(modifier) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 44.dp).background(color.copy(alpha = 0.06f), RoundedCornerShape(10.dp))
+                .border(1.dp, color.copy(alpha = 0.45f), RoundedCornerShape(10.dp)).clickable { open = true }.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(label, color = MonitorColors.label, fontSize = 11.sp)
+                Text(value, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = color)
+        }
+        androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = MonitorColors.panel) { content { open = false } }
+    }
+}
+
+/**
+ * The live read at the moment of the event: stress (with its trend and your verdict), heart, load, HRV,
+ * breathing, pelvic and arousal phase. Saved with the event either way; the verdict helps tune the estimate.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RightNow(feedback: String?, onFeedback: (String?) -> Unit) {
+    val heart by MonitorHub.heart.collectAsState()
+    val stress by MonitorHub.stress.collectAsState()
+    val response by MonitorHub.response.collectAsState()
+    val pelvic by MonitorHub.pelvic.collectAsState()
+    val recent by MonitorHub.recent.collectAsState()
+    fun arrow(m: com.pulsepointlabs.sarahmonitor.core.Metric): String { val t = recent.trend(m); return if (t > 0.25) " ↑" else if (t < -0.25) " ↓" else "" }
+    @Composable
+    fun chip(label: String, value: String, color: Color) = Row(
+        Modifier.background(color.copy(alpha = 0.1f), RoundedCornerShape(7.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("$label ", color = MonitorColors.label, fontSize = 12.sp)
+        Text(value, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    }
+    Column(
+        Modifier.fillMaxWidth().background(Color(0x0DFFFFFF), RoundedCornerShape(10.dp)).padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            stress.score?.let { chip("Stress", "$it ${stress.level?.label?.lowercase() ?: ""}${arrow(com.pulsepointlabs.sarahmonitor.core.Metric.Stress)}", com.pulsepointlabs.sarahmonitor.ui.StressColor) }
+            heart.heartRate?.let { chip("HR", "$it${arrow(com.pulsepointlabs.sarahmonitor.core.Metric.Hr)}", MonitorColors.hr) }
+            heart.load.score?.let { chip("Load", "$it${arrow(com.pulsepointlabs.sarahmonitor.core.Metric.Load)}", MonitorColors.load) }
+            heart.rmssdMs?.let { chip("HRV", "${fmt(it, 0)} ms", MonitorColors.rmssd) }
+            response.breathsPerMin?.let { chip("Breathing", "${it.toInt()}/min", MonitorColors.pelvic) }
+            pelvic.aboveRestKpa?.let { chip("Pelvic", "${fmt(it, 1)} kPa", MonitorColors.pelvic) }
+            if (response.phase != com.pulsepointlabs.sarahmonitor.response.ResponsePhase.Baseline) chip("Phase", response.phase.label, Color(0xFFFF7AB6))
+        }
+        if (stress.score != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Stress read feels", color = MonitorColors.label, fontSize = 12.sp)
+            listOf("right" to "Right", "high" to "Too high", "low" to "Too low").forEach { (k, l) ->
+                val on = feedback == k
+                Text(
+                    l, color = if (on) MonitorColors.background else com.pulsepointlabs.sarahmonitor.ui.StressColor, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.background(if (on) com.pulsepointlabs.sarahmonitor.ui.StressColor else Color.Transparent, RoundedCornerShape(12.dp))
+                        .border(1.dp, com.pulsepointlabs.sarahmonitor.ui.StressColor.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                        .clickable { onFeedback(if (on) null else k) }.padding(horizontal = 9.dp, vertical = 4.dp)
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun CheckInPicker(value: com.pulsepointlabs.sarahmonitor.session.CheckIn, onChange: (com.pulsepointlabs.sarahmonitor.session.CheckIn) -> Unit) {
     val spectrum = listOf(MonitorColors.alarm, MonitorColors.load, MonitorColors.rmssd, MonitorColors.good, Color(0xFF34D399))

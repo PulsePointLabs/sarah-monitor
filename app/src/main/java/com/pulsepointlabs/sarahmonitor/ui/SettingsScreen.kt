@@ -123,6 +123,7 @@ private fun QuickControls() {
     val announce by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.announce.collectAsState()
     val relax by com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.relax.collectAsState()
     val coach by com.pulsepointlabs.sarahmonitor.response.ResponseSettings.coachOn.collectAsState()
+    val handsFree by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.enabled.collectAsState()
     val I = androidx.compose.material.icons.Icons.Default
     CompositionLocalProvider(LocalCollapsibleSections provides false) {
         SettingsSection("Quick controls", MonitorColors.text, icon = I.ToggleOn) {
@@ -134,6 +135,7 @@ private fun QuickControls() {
             QuickRow(I.Campaign, StressColor, "Stress announcements", null, announce) { com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.setAnnounce(it) }
             QuickRow(I.SelfImprovement, StressColor, "Relaxation coaching", null, relax) { com.pulsepointlabs.sarahmonitor.core.StressVoiceSettings.setRelax(it) }
             QuickRow(I.RecordVoiceOver, Color(0xFFFF7AB6), "Sarah live", "Sexual sessions", coach) { com.pulsepointlabs.sarahmonitor.response.ResponseSettings.setCoachOn(it) }
+            QuickRow(I.Hearing, MonitorColors.sdnn, "Hands-free Sarah", "Say \"Sarah, …\" to log an event", handsFree) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setEnabled(it) }
         }
     }
 }

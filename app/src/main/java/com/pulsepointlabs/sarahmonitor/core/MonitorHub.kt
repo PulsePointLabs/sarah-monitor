@@ -75,6 +75,10 @@ object MonitorHub {
     val pendingSetup = MutableStateFlow<PendingSetup?>(null)
 
     lateinit var obs: ObsLink; private set
+    lateinit var handsFree: com.pulsepointlabs.sarahmonitor.session.HandsFree; private set
+
+    private fun liveCategory() = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(recorder.active.value?.category)
+        ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid
     private var startedByObs = false
 
     /** OBS started recording: start the prepared (or default) session with the video linked, or link it to the running one. */
@@ -164,6 +168,23 @@ object MonitorHub {
         com.pulsepointlabs.sarahmonitor.vitals.BodyProfile.load(app)
         scale = com.pulsepointlabs.sarahmonitor.vitals.ScaleClient(app) { body.addAll(listOf(it)) }
         recorder = SessionRecorder(app, scope)
+        com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.load(app)
+        handsFree = com.pulsepointlabs.sarahmonitor.session.HandsFree(
+            app, scope,
+            mark = { at, e, raw ->
+                val voice = org.json.JSONObject().put("raw", raw).put("bucket", e.bucket).put("parsed_by", e.parsedBy)
+                    .put("intensity", e.intensity ?: org.json.JSONObject.NULL).put("site", e.site ?: org.json.JSONObject.NULL)
+                markEvent(at, e.types, e.note, com.pulsepointlabs.sarahmonitor.session.CheckIn(gearId = e.gearId), extra = "voice" to voice)
+            },
+            cue = { listening -> audio.listenCue(listening) },
+            speak = { text -> scope.launch { audio.say(text) } },
+            allowedTypes = { liveCategory().let { c -> com.pulsepointlabs.sarahmonitor.session.MarkerTypes.all.filter { it.group in c.groups } } },
+            gear = { _sessionDetails.value.gear }
+        )
+        scope.launch {
+            kotlinx.coroutines.flow.combine(com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.enabled, recorder.active) { _, a -> a != null }
+                .collect { handsFree.sync(it) }
+        }
         ObsSettings.load(app)
         obs = ObsLink(
             scope,
@@ -398,6 +419,7 @@ object MonitorHub {
             EventSnapshot.capture(timestampMs).apply {
                 extra?.let { put(it.first, it.second) }
                 gear?.let { g -> put("gear", org.json.JSONObject().put("id", g.id).put("type", g.type.name).put("label", g.label).put("values", org.json.JSONObject(g.values))) }
+                checkIn.stressFeedback?.let { put("stress_feedback", it) }
             }.toString()
         }.getOrNull()
         scope.launch {

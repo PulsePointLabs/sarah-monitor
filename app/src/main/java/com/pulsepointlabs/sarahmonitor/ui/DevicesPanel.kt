@@ -255,6 +255,18 @@ fun VoiceSection(onMessage: (String) -> Unit) {
             VoiceSettings.setAutoStopSeconds(context, autoStop)
         }
         SettingRow("Use Bluetooth headset mic") { SettingSwitch(headset) { headset = it; VoiceSettings.setPreferHeadsetMic(context, it) } }
+        var tidy by remember { mutableStateOf(VoiceSettings.tidyWithClaude(context)) }
+        SettingRow("Tidy punctuation with Claude", "Same words, cleaner punctuation (Anthropic key)") { SettingSwitch(tidy) { tidy = it; VoiceSettings.setTidyWithClaude(context, it) } }
+        androidx.compose.material3.HorizontalDivider(color = MonitorColors.panelBorder)
+        val hf by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.enabled.collectAsState()
+        val sayBack by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.sayBack.collectAsState()
+        val hfStatus by com.pulsepointlabs.sarahmonitor.core.MonitorHub.handsFree.status.collectAsState()
+        SettingRow("Hands-free Sarah", "While recording, say \"Sarah, …\" and she logs it") { SettingSwitch(hf) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setEnabled(it) } }
+        if (hf) {
+            SettingRow("Say back what she logged") { SettingSwitch(sayBack) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setSayBack(it) } }
+            Text((if (hfStatus.listening) "● " else "○ ") + hfStatus.message, color = if (hfStatus.listening) MonitorColors.good else MonitorColors.label, fontSize = 13.sp)
+            hfStatus.lastLogged?.let { Text("Last: $it", color = MonitorColors.text, fontSize = 13.sp) }
+        }
     }
 }
 

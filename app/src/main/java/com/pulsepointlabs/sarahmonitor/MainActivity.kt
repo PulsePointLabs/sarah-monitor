@@ -57,6 +57,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material.icons.filled.LayersClear
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -604,6 +605,7 @@ internal fun TopBar(
                     Spacer(Modifier.weight(1f))
                     RecordButton(recording, now, compact = false, onClick = onRecord)
                     MarkButton(enabled = recording != null, compact = false, onClick = onMark)
+                    HandsFreeToggle()
                     OverlayToggle()
                     moreMenu()
                 }
@@ -618,6 +620,7 @@ internal fun TopBar(
             Spacer(Modifier.weight(1f))
             RecordButton(recording, now, compact = false, onClick = onRecord)
             MarkButton(enabled = recording != null, compact = !full, onClick = onMark)
+            HandsFreeToggle()
             OverlayToggle()
             if (full) {
                 DevicePill("H10", h10, onDevices)
@@ -631,6 +634,15 @@ internal fun TopBar(
             } else moreMenu()
         }
     }
+}
+
+/** Lit while hands-free Sarah is listening; tap to turn hands-free off (or on). Shown once it's been switched on. */
+@Composable
+private fun HandsFreeToggle() {
+    val enabled by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.enabled.collectAsState()
+    val status by MonitorHub.handsFree.status.collectAsState()
+    if (!enabled) return
+    BarIcon(Icons.Default.Hearing, "Hands-free: ${status.message}", { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setEnabled(false) }, highlighted = status.listening)
 }
 
 /** Quick on/off for the floating overlays on this screen (phone or DeX each remember their own). */

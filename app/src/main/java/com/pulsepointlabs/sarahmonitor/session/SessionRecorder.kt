@@ -193,7 +193,14 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
 }
 
 /** Optional self-report attached to an event: how you feel (1–5) and how stressed (0–10). */
-data class CheckIn(val wellbeing: Int? = null, val selfStress: Int? = null, /** Device this event is about (session details gear id). */ val gearId: String? = null) {
+data class CheckIn(
+    val wellbeing: Int? = null,
+    val selfStress: Int? = null,
+    /** Device this event is about (session details gear id). */
+    val gearId: String? = null,
+    /** Your verdict on the stress estimate at that moment: "right", "high" (reads too high) or "low". */
+    val stressFeedback: String? = null
+) {
     val empty: Boolean get() = wellbeing == null && selfStress == null
     val label: String?
         get() = listOfNotNull(wellbeing?.let { "feeling ${FEELINGS.getOrNull(it - 1) ?: it}" }, selfStress?.let { "stress $it/10" }).joinToString(" · ").ifBlank { null }
@@ -268,7 +275,10 @@ object MarkerTypes {
         Type("adjust", "Adjust / reposition", Group.Procedure),
         Type("remove", "Removal", Group.Procedure),
         Type("discomfort", "Discomfort", Group.Procedure),
-        Type("estim_change", "E-stim change", Group.Procedure)
+        Type("estim_change", "E-stim change", Group.Procedure),
+        // Said or noted in passing during any sexual / exploration session.
+        Type("sensation", "Sensation", Group.Sexual),
+        Type("finding", "Body finding", Group.Sexual)
     )
 
     fun inGroup(group: Group): List<Type> = all.filter { it.group == group }

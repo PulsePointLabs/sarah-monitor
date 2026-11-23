@@ -34,6 +34,10 @@ object VoiceSettings {
     fun autoStopSeconds(context: Context): Float = prefs(context).getFloat("auto_stop", 3f)
     fun setAutoStopSeconds(context: Context, s: Float) = prefs(context).edit().putFloat("auto_stop", s).apply()
 
+    /** After dictation, let Claude tidy punctuation and capitals (same words). Needs the Anthropic key. */
+    fun tidyWithClaude(context: Context): Boolean = prefs(context).getBoolean("tidy_claude", true)
+    fun setTidyWithClaude(context: Context, on: Boolean) = prefs(context).edit().putBoolean("tidy_claude", on).apply()
+
     /** Use a connected Bluetooth headset's microphone when there is one. */
     fun preferHeadsetMic(context: Context): Boolean = prefs(context).getBoolean("headset_mic", true)
     fun setPreferHeadsetMic(context: Context, on: Boolean) = prefs(context).edit().putBoolean("headset_mic", on).apply()
