@@ -77,7 +77,14 @@ object SessionExport {
             appendLine("- Duration: ${SessionAnalysis.durationWords(data.endMs - s.startTimeMs)}")
             if (s.notes.isNotBlank()) appendLine("- Notes: ${oneLine(s.notes)}")
             appendLine("- Data: HR ${data.hr.size} samples, RR ${data.rr.size}, pressure ${data.pelvic.size} samples, events ${data.markers.size}, BP ${data.bp.size}, glucose ${data.glucose.size}")
+            SessionCategory.of(s.category)?.let { appendLine("- Type: ${it.label}") }
             appendLine()
+            val details = SessionDetails.parse(s.details)
+            if (!details.empty) {
+                appendLine("## Session details (as I recorded them)")
+                details.describe(SessionCategory.of(s.category)).forEach { appendLine("- ${oneLine(it)}") }
+                appendLine()
+            }
             appendLine("## Summary")
             SessionAnalysis.plainSummary(data).forEach { appendLine("- $it") }
             appendLine()

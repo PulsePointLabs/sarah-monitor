@@ -75,6 +75,18 @@ fun markerColor(types: String): Color = when (MarkerTypes.split(types).firstOrNu
     "orgasm" -> Color(0xFFFF7AB6)
     "ejaculation" -> Color(0xFFE879F9)
     "resolution" -> Color(0xFFA5B4FC)
+    "prep" -> Color(0xFF94A3B8)
+    "insert", "seated" -> Color(0xFF60A5FA)
+    "resistance", "adjust" -> Color(0xFFFBBF24)
+    "balloon" -> Color(0xFF38BDF8)
+    "urine" -> Color(0xFFFDE047)
+    "instill", "instill_end" -> Color(0xFF4ADE80)
+    "hold" -> Color(0xFF2DD4BF)
+    "urge" -> Color(0xFFF97316)
+    "release" -> Color(0xFFA3E635)
+    "remove" -> Color(0xFFC4B5FD)
+    "discomfort" -> Color(0xFFF87171)
+    "estim_change" -> Color(0xFFBD94FF)
     else -> Color(0xFFE6EEF5)
 }
 
@@ -259,6 +271,23 @@ fun MarkEventDialog(
                                     .border(1.dp, color.copy(alpha = 0.7f), RoundedCornerShape(20.dp))
                                     .clickable { types = if (on && types.size > 1) types - type.id else types + type.id }
                                     .padding(horizontal = 14.dp, vertical = 9.dp)
+                            )
+                        }
+                    }
+                }
+                // Which device this is about (only while recording, when the session lists devices).
+                val gear = com.pulsepointlabs.sarahmonitor.core.MonitorHub.sessionDetails.collectAsState().value.gear
+                if (editing == null && gear.isNotEmpty()) {
+                    Text("Device", color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        gear.forEach { g ->
+                            val on = checkIn.gearId == g.id
+                            val c = Color(0xFF93C5FD)
+                            Text(
+                                (if (on) "✓ " else "") + g.label, color = if (on) MonitorColors.background else c, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.background(if (on) c else c.copy(alpha = 0.08f), RoundedCornerShape(16.dp)).border(1.dp, c.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+                                    .clickable { checkIn = checkIn.copy(gearId = if (on) null else g.id) }.padding(horizontal = 12.dp, vertical = 7.dp)
                             )
                         }
                     }

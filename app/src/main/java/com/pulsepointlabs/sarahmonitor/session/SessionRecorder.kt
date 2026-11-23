@@ -51,10 +51,10 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    suspend fun start(category: SessionCategory = SessionCategory.General, title: String? = null): SessionEntity = mutex.withLock {
+    suspend fun start(category: SessionCategory = SessionCategory.General, title: String? = null, details: String? = null): SessionEntity = mutex.withLock {
         _active.value?.let { return it }
         val now = System.currentTimeMillis()
-        val session = SessionEntity(id = UUID.randomUUID().toString(), title = title ?: defaultTitle(now), startTimeMs = now, category = category.name)
+        val session = SessionEntity(id = UUID.randomUUID().toString(), title = title ?: defaultTitle(now), startTimeMs = now, category = category.name, details = details)
         withContext(Dispatchers.IO) { dao.upsertSession(session) }
         synchronized(lock) { hr.clear(); rr.clear(); pelvic.clear(); emg.clear(); ecgTs.clear(); ecgUv.clear(); ecgChunks.clear(); lastEcgTs = Long.MIN_VALUE }
         _active.value = session
@@ -88,13 +88,20 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         }
         flushEcg(force = true, sessionId = session.id)
         flush(session.id)
+        val endedAt = System.currentTimeMillis()
         return withContext(Dispatchers.IO) {
-            val ended = (dao.getSession(session.id) ?: session).copy(endTimeMs = System.currentTimeMillis())
-            val summarized = SessionAnalysis.summarize(ended, dao.getHr(ended.id), dao.getRr(ended.id), dao.getPelvic(ended.id), dao.getMarkers(ended.id).size)
-            dao.upsertSession(summarized)
-            summarized
+            // Read-modify-write under the lock, so a details edit at the same moment isn't lost.
+            mutex.withLock {
+                val ended = (dao.getSession(session.id) ?: session).copy(endTimeMs = endedAt)
+                val summarized = SessionAnalysis.summarize(ended, dao.getHr(ended.id), dao.getRr(ended.id), dao.getPelvic(ended.id), dao.getMarkers(ended.id).size)
+                dao.upsertSession(summarized)
+                summarized
+            }
         }
     }
+
+    /** Saves a session's details (live or past) without racing the summary refresh. */
+    suspend fun updateDetails(id: String, json: String?) = withContext(Dispatchers.IO) { mutex.withLock { dao.setDetails(id, json) } }
 
     fun onHeart(snapshot: HeartSnapshot, rrRows: List<RrSampleEntity>, stress: Int? = null, breathsPerMin: Double? = null) {
         val session = _active.value ?: return
@@ -186,7 +193,7 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
 }
 
 /** Optional self-report attached to an event: how you feel (1–5) and how stressed (0–10). */
-data class CheckIn(val wellbeing: Int? = null, val selfStress: Int? = null) {
+data class CheckIn(val wellbeing: Int? = null, val selfStress: Int? = null, /** Device this event is about (session details gear id). */ val gearId: String? = null) {
     val empty: Boolean get() = wellbeing == null && selfStress == null
     val label: String?
         get() = listOfNotNull(wellbeing?.let { "feeling ${FEELINGS.getOrNull(it - 1) ?: it}" }, selfStress?.let { "stress $it/10" }).joinToString(" · ").ifBlank { null }
@@ -202,8 +209,8 @@ enum class SessionCategory(val label: String, val groups: List<MarkerTypes.Group
     General("General", listOf(MarkerTypes.Group.General)),
     Masturbation("Masturbation", listOf(MarkerTypes.Group.Sexual)),
     Sexual("Sexual activity", listOf(MarkerTypes.Group.Sexual)),
-    Exploration("Body exploration", listOf(MarkerTypes.Group.Sexual)),
-    Hybrid("Hybrid (general + sexual)", listOf(MarkerTypes.Group.General, MarkerTypes.Group.Sexual)),
+    Exploration("Body exploration", listOf(MarkerTypes.Group.Procedure, MarkerTypes.Group.Sexual)),
+    Hybrid("Hybrid (general + sexual)", listOf(MarkerTypes.Group.General, MarkerTypes.Group.Sexual, MarkerTypes.Group.Procedure)),
     /** Started automatically by a Kegel set (not offered in the record chooser). */
     Kegel("Kegel set", listOf(MarkerTypes.Group.General));
 
@@ -225,7 +232,7 @@ enum class SessionCategory(val label: String, val groups: List<MarkerTypes.Group
 
 /** Event types: SarahVS's general set plus sexual-response types, shown in two groups. */
 object MarkerTypes {
-    enum class Group(val title: String) { General("General"), Sexual("Sexual") }
+    enum class Group(val title: String) { General("General"), Sexual("Sexual"), Procedure("Procedure steps") }
 
     data class Type(val id: String, val label: String, val group: Group)
 
@@ -245,7 +252,23 @@ object MarkerTypes {
         Type("ejaculation", "Ejaculation", Group.Sexual),
         Type("resolution", "Resolution", Group.Sexual),
         Type("catheter", "Catheter", Group.Sexual),
-        Type("enema", "Enema", Group.Sexual)
+        Type("enema", "Enema", Group.Sexual),
+        // Procedure steps (body exploration): the device timeline, step by step.
+        Type("prep", "Prep / lube", Group.Procedure),
+        Type("insert", "Insertion start", Group.Procedure),
+        Type("resistance", "Resistance", Group.Procedure),
+        Type("seated", "Fully inserted", Group.Procedure),
+        Type("balloon", "Balloon inflated", Group.Procedure),
+        Type("urine", "Urine return", Group.Procedure),
+        Type("instill", "Instillation start", Group.Procedure),
+        Type("instill_end", "Instillation end", Group.Procedure),
+        Type("hold", "Retention / hold", Group.Procedure),
+        Type("urge", "Urge / cramp", Group.Procedure),
+        Type("release", "Release / expel", Group.Procedure),
+        Type("adjust", "Adjust / reposition", Group.Procedure),
+        Type("remove", "Removal", Group.Procedure),
+        Type("discomfort", "Discomfort", Group.Procedure),
+        Type("estim_change", "E-stim change", Group.Procedure)
     )
 
     fun inGroup(group: Group): List<Type> = all.filter { it.group == group }

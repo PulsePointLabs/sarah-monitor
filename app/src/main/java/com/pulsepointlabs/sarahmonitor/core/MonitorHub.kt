@@ -65,6 +65,50 @@ object MonitorHub {
     lateinit var coach: SarahCoach; private set
     lateinit var stressVoice: StressVoice; private set
 
+    /** Details (check-in, devices, video) of the session being recorded. */
+    private val _sessionDetails = MutableStateFlow(com.pulsepointlabs.sarahmonitor.session.SessionDetails())
+    val sessionDetails: StateFlow<com.pulsepointlabs.sarahmonitor.session.SessionDetails> = _sessionDetails
+    /** Set when a session stops that should get a wrap-up (sexual / exploration): the stopped session's id. */
+    val wrapUp = MutableStateFlow<String?>(null)
+    /** Setup prepared ahead of an OBS recording: the session starts with it when OBS starts recording. */
+    data class PendingSetup(val category: com.pulsepointlabs.sarahmonitor.session.SessionCategory, val details: com.pulsepointlabs.sarahmonitor.session.SessionDetails)
+    val pendingSetup = MutableStateFlow<PendingSetup?>(null)
+
+    lateinit var obs: ObsLink; private set
+    private var startedByObs = false
+
+    /** OBS started recording: start the prepared (or default) session with the video linked, or link it to the running one. */
+    private fun obsStarted(at: Long) {
+        val video = com.pulsepointlabs.sarahmonitor.session.VideoLink(startedAtMs = at)
+        if (recorder.active.value == null) {
+            val prepared = pendingSetup.value
+            pendingSetup.value = null
+            startedByObs = true
+            startSession(prepared?.category ?: ObsSettings.category.value, details = (prepared?.details ?: com.pulsepointlabs.sarahmonitor.session.SessionDetails()).copy(video = video))
+        } else updateVideo { video }
+    }
+
+    private fun updateVideo(onDone: () -> Unit = {}, change: (com.pulsepointlabs.sarahmonitor.session.VideoLink?) -> com.pulsepointlabs.sarahmonitor.session.VideoLink?) {
+        val id = recorder.active.value?.id ?: return onDone()
+        saveDetails(id, _sessionDetails.value.copy(video = change(_sessionDetails.value.video)), onDone)
+    }
+
+    private fun obsStopped(at: Long, path: String?) {
+        val stop = startedByObs || ObsSettings.autoStop.value
+        startedByObs = false
+        // Save the video end first, then stop, so the two writes can't cross.
+        updateVideo(onDone = { if (stop && recorder.active.value != null) stopSession() }) { it?.copy(stoppedAtMs = at, path = path ?: it.path) }
+    }
+
+    /** Saves details on any session (live or past); the live one updates everywhere at once. */
+    fun saveDetails(sessionId: String, details: com.pulsepointlabs.sarahmonitor.session.SessionDetails, onDone: () -> Unit = {}) {
+        if (recorder.active.value?.id == sessionId) _sessionDetails.value = details
+        scope.launch {
+            recorder.updateDetails(sessionId, details.toJson())
+            launch(Dispatchers.Main) { onDone() }
+        }
+    }
+
     val emgProcessor = com.pulsepointlabs.sarahmonitor.emg.EmgProcessor()
     /** Arduino + MyoWare EMG over USB. */
     lateinit var emgClient: com.pulsepointlabs.sarahmonitor.emg.EmgClient; private set
@@ -120,6 +164,19 @@ object MonitorHub {
         com.pulsepointlabs.sarahmonitor.vitals.BodyProfile.load(app)
         scale = com.pulsepointlabs.sarahmonitor.vitals.ScaleClient(app) { body.addAll(listOf(it)) }
         recorder = SessionRecorder(app, scope)
+        ObsSettings.load(app)
+        obs = ObsLink(
+            scope,
+            onStart = ::obsStarted,
+            onPause = { t -> updateVideo { v -> v?.copy(pauses = v.pauses + (t to null)) } },
+            onResume = { t -> updateVideo { v -> v?.copy(pauses = v.pauses.mapIndexed { i, p -> if (i == v.pauses.lastIndex && p.second == null) p.first to t else p }) } },
+            onStop = ::obsStopped
+        )
+        scope.launch { kotlinx.coroutines.flow.combine(ObsSettings.enabled, ObsSettings.url) { _, _ -> Unit }.collect { obs.sync() } }
+        // A recording still running after a restart: bring its details back.
+        scope.launch {
+            recorder.active.collect { s -> if (s != null && _sessionDetails.value.empty) _sessionDetails.value = com.pulsepointlabs.sarahmonitor.session.SessionDetails.parse(s.details) }
+        }
         val baselineStore = LoadBaselineStore(app)
         restingBaseline = baselineStore.load()
         heartEngine = HeartEngine(restingBaseline) { b -> restingBaseline = b; baselineStore.save(b) }
@@ -298,7 +355,12 @@ object MonitorHub {
 
     /** Starts recording a session; live statistics and trends restart with it. */
     /** Starts recording a [category] session; live statistics and trends restart with it. */
-    fun startSession(category: com.pulsepointlabs.sarahmonitor.session.SessionCategory = com.pulsepointlabs.sarahmonitor.session.SessionCategory.last(appContext), title: String? = null) {
+    fun startSession(
+        category: com.pulsepointlabs.sarahmonitor.session.SessionCategory = com.pulsepointlabs.sarahmonitor.session.SessionCategory.last(appContext),
+        title: String? = null,
+        details: com.pulsepointlabs.sarahmonitor.session.SessionDetails? = null
+    ) {
+        if (recorder.active.value == null) _sessionDetails.value = details ?: com.pulsepointlabs.sarahmonitor.session.SessionDetails()
         if (category.pickable) com.pulsepointlabs.sarahmonitor.session.SessionCategory.remember(appContext, category)
         // The Response board follows the session type.
         when (category) {
@@ -309,12 +371,19 @@ object MonitorHub {
         }
         scope.launch {
             if (recorder.active.value == null) resetSession()
-            recorder.start(category, title)
+            recorder.start(category, title, details?.takeIf { !it.empty }?.toJson())
         }
     }
 
     fun stopSession(onStopped: (SessionEntity?) -> Unit = {}) {
-        scope.launch { onStopped(recorder.stop()) }
+        scope.launch {
+            val s = recorder.stop()
+            // Sexual / exploration sessions (not Kegel sets) get a wrap-up check-in.
+            val cat = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(s?.category)
+            if (s != null && cat != null && cat.sexual) wrapUp.value = s.id
+            _sessionDetails.value = com.pulsepointlabs.sarahmonitor.session.SessionDetails()
+            onStopped(s)
+        }
     }
 
     /** Marks an event at [timestampMs] (the moment the button was pressed). Returns false if not recording. */
@@ -324,7 +393,13 @@ object MonitorHub {
         arousal.onMarker(timestampMs, types)
         _response.value = arousal.current()
         // Freeze the moment now (not when the save finishes).
-        val snapshot = runCatching { EventSnapshot.capture(timestampMs).apply { extra?.let { put(it.first, it.second) } }.toString() }.getOrNull()
+        val gear = checkIn.gearId?.let { id -> _sessionDetails.value.gear.firstOrNull { it.id == id } }
+        val snapshot = runCatching {
+            EventSnapshot.capture(timestampMs).apply {
+                extra?.let { put(it.first, it.second) }
+                gear?.let { g -> put("gear", org.json.JSONObject().put("id", g.id).put("type", g.type.name).put("label", g.label).put("values", org.json.JSONObject(g.values))) }
+            }.toString()
+        }.getOrNull()
         scope.launch {
             val marker = recorder.addMarker(timestampMs, types, note, checkIn, snapshot)
             if (marker != null) {
@@ -352,7 +427,7 @@ object MonitorHub {
             com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid -> {
                 val sexualEvent = recentEvents().any { e ->
                     System.currentTimeMillis() - e.timestampMs < 20 * 60_000L &&
-                        com.pulsepointlabs.sarahmonitor.session.MarkerTypes.all.any { it.id in e.types && it.group == com.pulsepointlabs.sarahmonitor.session.MarkerTypes.Group.Sexual }
+                        com.pulsepointlabs.sarahmonitor.session.MarkerTypes.all.any { it.id in e.types && it.group != com.pulsepointlabs.sarahmonitor.session.MarkerTypes.Group.General }
                 }
                 // Phase alone isn't enough (stress raises HR too), so only the climax-specific phases count.
                 val nearClimax = resp.phase in setOf(com.pulsepointlabs.sarahmonitor.response.ResponsePhase.Approaching, com.pulsepointlabs.sarahmonitor.response.ResponsePhase.Climax, com.pulsepointlabs.sarahmonitor.response.ResponsePhase.BackingOff)

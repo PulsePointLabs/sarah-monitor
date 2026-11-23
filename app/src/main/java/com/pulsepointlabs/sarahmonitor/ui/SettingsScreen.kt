@@ -65,6 +65,7 @@ fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, e
             PageSection(6) { StressVoiceSection() },
             PageSection(7) { com.pulsepointlabs.sarahmonitor.response.CoachSettingsSection() },
             PageSection(5) { VoiceSection(onMessage) },
+            PageSection(6) { ObsSection() },
             PageSection(6) { ApiKeysSection(onMessage) },
             PageSection(3) { Column { extra() } }
         ),

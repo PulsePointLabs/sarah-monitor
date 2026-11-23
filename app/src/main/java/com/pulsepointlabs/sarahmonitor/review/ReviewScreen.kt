@@ -171,6 +171,7 @@ fun ReviewScreen(
     var editing by remember { mutableStateOf<MarkerEntity?>(null) }
     var addingAt by remember { mutableStateOf<Long?>(null) }
     var renaming by remember { mutableStateOf(false) }
+    var editingDetails by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
     val chartMarkers = d.markers.map { ChartMarker(it.timestampMs, markerColor(it.types), it.id == selectedMarker) }
@@ -223,7 +224,7 @@ fun ReviewScreen(
     fun saveMarker(marker: MarkerEntity) = scope.launch {
         withContext(Dispatchers.IO) {
             dao.upsertMarker(marker)
-            dao.getSession(sessionId)?.let { dao.upsertSession(it.copy(markerCount = dao.getMarkers(sessionId).size)) }
+            dao.setMarkerCount(sessionId, dao.getMarkers(sessionId).size)
         }
         reload++
     }
@@ -277,6 +278,7 @@ fun ReviewScreen(
     }
     val details: @Composable ColumnScope.() -> Unit = {
         SummaryCard(d, flags)
+        DetailsCard(com.pulsepointlabs.sarahmonitor.session.SessionDetails.parse(d.session.details), category) { editingDetails = true }
         episodesCard()
         flagsCard()
         EventsCard(
@@ -286,7 +288,7 @@ fun ReviewScreen(
             onAdd = { addingAt = cursor ?: d.endMs }
         )
         NotesCard(d.session.notes) { notes ->
-            scope.launch { withContext(Dispatchers.IO) { dao.upsertSession(d.session.copy(notes = notes)) }; reload++ }
+            scope.launch { withContext(Dispatchers.IO) { dao.setNotes(sessionId, notes) }; reload++ }
         }
     }
 
@@ -311,12 +313,13 @@ fun ReviewScreen(
             } else {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SummaryCard(d, flags)
+                    DetailsCard(com.pulsepointlabs.sarahmonitor.session.SessionDetails.parse(d.session.details), category) { editingDetails = true }
                     charts()
                     episodesCard()
                     flagsCard()
                     EventsCard(d, selectedMarker, onFocus = ::focus, onEdit = { editing = it }, onAdd = { addingAt = cursor ?: d.endMs })
                     NotesCard(d.session.notes) { notes ->
-                        scope.launch { withContext(Dispatchers.IO) { dao.upsertSession(d.session.copy(notes = notes)) }; reload++ }
+                        scope.launch { withContext(Dispatchers.IO) { dao.setNotes(sessionId, notes) }; reload++ }
                     }
                 }
             }
@@ -332,7 +335,7 @@ fun ReviewScreen(
                 scope.launch {
                     withContext(Dispatchers.IO) {
                         dao.deleteMarker(m.id)
-                        dao.getSession(sessionId)?.let { dao.upsertSession(it.copy(markerCount = dao.getMarkers(sessionId).size)) }
+                        dao.setMarkerCount(sessionId, dao.getMarkers(sessionId).size)
                     }
                     reload++
                 }
@@ -354,6 +357,14 @@ fun ReviewScreen(
             category = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(data?.session?.category) ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid
         )
     }
+    if (editingDetails) {
+        SessionDetailsDialog(
+            mode = DetailsMode.Edit, category = category,
+            initial = com.pulsepointlabs.sarahmonitor.session.SessionDetails.parse(d.session.details),
+            onDismiss = { editingDetails = false },
+            onSave = { nd -> editingDetails = false; MonitorHub.saveDetails(sessionId, nd) { reload++ } }
+        )
+    }
     if (renaming) {
         var title by remember { mutableStateOf(d.session.title) }
         AlertDialog(
@@ -363,7 +374,7 @@ fun ReviewScreen(
             text = { OutlinedTextField(title, { title = it }, singleLine = true) },
             confirmButton = {
                 TextButton(onClick = {
-                    scope.launch { withContext(Dispatchers.IO) { dao.upsertSession(d.session.copy(title = title.ifBlank { d.session.title })) }; reload++ }
+                    scope.launch { withContext(Dispatchers.IO) { dao.setTitle(sessionId, title.ifBlank { d.session.title }) }; reload++ }
                     renaming = false
                 }) { Text("Save") }
             },

@@ -36,7 +36,9 @@ data class SessionEntity(
     /** Up to 48 comma-separated HR values for the list sparkline. */
     val hrSparkline: String = "",
     /** [SessionCategory] name; null for sessions recorded before categories existed. */
-    val category: String? = null
+    val category: String? = null,
+    /** JSON [SessionDetails]: check-ins, devices used, wrap-up and the linked video. */
+    val details: String? = null
 ) {
     val durationMs: Long get() = (endTimeMs ?: System.currentTimeMillis()) - startTimeMs
     val active: Boolean get() = endTimeMs == null
@@ -129,6 +131,11 @@ interface SessionDao {
     @Query("SELECT * FROM sessions ORDER BY startTimeMs DESC") fun observeSessions(): Flow<List<SessionEntity>>
     @Query("SELECT * FROM sessions WHERE id = :id") fun observeSession(id: String): Flow<SessionEntity?>
     @Query("SELECT * FROM sessions WHERE id = :id") suspend fun getSession(id: String): SessionEntity?
+    // Targeted updates, so editing one thing never writes back a stale copy of the rest of the row.
+    @Query("UPDATE sessions SET details = :details WHERE id = :id") suspend fun setDetails(id: String, details: String?)
+    @Query("UPDATE sessions SET notes = :notes WHERE id = :id") suspend fun setNotes(id: String, notes: String)
+    @Query("UPDATE sessions SET title = :title WHERE id = :id") suspend fun setTitle(id: String, title: String)
+    @Query("UPDATE sessions SET markerCount = :count WHERE id = :id") suspend fun setMarkerCount(id: String, count: Int)
     @Query("SELECT * FROM sessions WHERE endTimeMs IS NULL ORDER BY startTimeMs DESC LIMIT 1") suspend fun getActiveSession(): SessionEntity?
     @Query("DELETE FROM sessions WHERE id = :id") suspend fun deleteSession(id: String)
 
@@ -164,7 +171,7 @@ interface SessionDao {
 
 @Database(
     entities = [SessionEntity::class, HrSampleEntity::class, RrEntity::class, PelvicSampleEntity::class, EcgChunkEntity::class, MarkerEntity::class, EmgSampleEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class SessionDatabase : RoomDatabase() {
@@ -172,6 +179,13 @@ abstract class SessionDatabase : RoomDatabase() {
 
     companion object {
         @Volatile private var instance: SessionDatabase? = null
+
+        /** 0.20.0: structured session details (check-ins, devices, wrap-up, video link). */
+        val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `details` TEXT")
+            }
+        }
 
         /** 0.15.0: snapshot of everything live when an event is marked. */
         val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
@@ -206,7 +220,7 @@ abstract class SessionDatabase : RoomDatabase() {
         }
         fun get(context: Context): SessionDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, SessionDatabase::class.java, "sarah_monitor_sessions.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build().also { instance = it }
         }
     }

@@ -80,6 +80,7 @@ object EventSnapshot {
     fun describe(json: String?): String? {
         val o = json?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return null
         val parts = mutableListOf<String>()
+        o.optJSONObject("gear")?.let { parts += "device: " + it.optString("label") }
         o.optJSONObject("stress")?.let { parts += "stress ${it.optInt("score")}" + (if (it.optBoolean("moving")) " (moving)" else "") }
         if (o.has("breaths_per_min")) parts += "breathing ${o.optDouble("breaths_per_min").roundToInt()}/min"
         o.optJSONObject("response")?.let { r -> if (r.optInt("approach") > 0 || r.optString("phase") != "Baseline") parts += "${r.optString("phase").lowercase()} · approach ${r.optInt("approach")}" }

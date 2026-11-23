@@ -304,3 +304,51 @@ private fun KeyField(name: String, powers: String, saved: String, hint: String, 
         if (saved.isNotBlank()) TextButton(onClick = onRemove) { Text("Remove", color = MonitorColors.alarm) }
     }
 }
+
+/** OBS link: sessions start and stop with OBS recording, and the video is linked for later sync. */
+@Composable
+fun ObsSection() {
+    val enabled by com.pulsepointlabs.sarahmonitor.core.ObsSettings.enabled.collectAsState()
+    val url by com.pulsepointlabs.sarahmonitor.core.ObsSettings.url.collectAsState()
+    val password by com.pulsepointlabs.sarahmonitor.core.ObsSettings.password.collectAsState()
+    val autoStop by com.pulsepointlabs.sarahmonitor.core.ObsSettings.autoStop.collectAsState()
+    val category by com.pulsepointlabs.sarahmonitor.core.ObsSettings.category.collectAsState()
+    val status by com.pulsepointlabs.sarahmonitor.core.MonitorHub.obs.status.collectAsState()
+    var urlDraft by remember(url) { mutableStateOf(url) }
+    var pwDraft by remember(password) { mutableStateOf(password) }
+    val pink = Color(0xFFFF7AB6)
+    SettingsSection("OBS recording", pink, icon = androidx.compose.material.icons.Icons.Default.Videocam) {
+        SettingRow("Start sessions with OBS", "Recording starts the session; stopping ends it") {
+            SettingSwitch(enabled) { com.pulsepointlabs.sarahmonitor.core.ObsSettings.setEnabled(it) }
+        }
+        if (enabled) {
+            Text(
+                (if (status.connected) "● " else "○ ") + status.message + if (status.recording) (if (status.paused) " · paused" else " · recording") else "",
+                color = if (status.connected) MonitorColors.good else MonitorColors.warn, fontSize = 13.sp, fontWeight = FontWeight.Bold
+            )
+            androidx.compose.material3.OutlinedTextField(
+                value = urlDraft, onValueChange = { urlDraft = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                label = { Text("OBS address") }, placeholder = { Text("192.168.1.10:4455") }
+            )
+            androidx.compose.material3.OutlinedTextField(
+                value = pwDraft, onValueChange = { pwDraft = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                label = { Text("WebSocket password") }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("In OBS: Tools → WebSocket Server Settings.", color = MonitorColors.label, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    com.pulsepointlabs.sarahmonitor.core.ObsSettings.setUrl(com.pulsepointlabs.sarahmonitor.core.ObsSettings.normalize(urlDraft))
+                    com.pulsepointlabs.sarahmonitor.core.ObsSettings.setPassword(pwDraft)
+                    com.pulsepointlabs.sarahmonitor.core.MonitorHub.obs.reconnect()
+                }) { Text(if (urlDraft != url || pwDraft != password) "Save & connect" else "Reconnect") }
+            }
+            SettingRow("End the session when OBS stops") { SettingSwitch(autoStop) { com.pulsepointlabs.sarahmonitor.core.ObsSettings.setAutoStop(it) } }
+            Text("If OBS starts without a prepared setup, record as", color = MonitorColors.text, fontSize = 14.sp)
+            ChoiceRow {
+                com.pulsepointlabs.sarahmonitor.session.SessionCategory.entries.filter { it.pickable }.forEach { c ->
+                    ChoiceChip(c.label, c == category, pink) { com.pulsepointlabs.sarahmonitor.core.ObsSettings.setCategory(c) }
+                }
+            }
+        }
+    }
+}

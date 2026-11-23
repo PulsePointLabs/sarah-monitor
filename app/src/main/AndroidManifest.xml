@@ -35,6 +35,7 @@
     <uses-permission android:name="android.permission.health.READ_BASAL_METABOLIC_RATE" />
 
     <application
+        android:networkSecurityConfig="@xml/network_security_config"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"

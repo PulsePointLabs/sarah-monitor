@@ -359,6 +359,12 @@ private fun MonitorScreen(
     var confirmReset by remember { mutableStateOf(false) }
     var confirmStop by remember { mutableStateOf(false) }
     var chooseCategory by remember { mutableStateOf(false) }
+    // Sexual / exploration sessions open the setup sheet first (check-in + devices).
+    var setupFor by remember { mutableStateOf<com.pulsepointlabs.sarahmonitor.session.SessionCategory?>(null) }
+    val pending by MonitorHub.pendingSetup.collectAsState()
+    var pendingAsk by remember { mutableStateOf(false) }
+    val wrapUpId by MonitorHub.wrapUp.collectAsState()
+    val obsOn by com.pulsepointlabs.sarahmonitor.core.ObsSettings.enabled.collectAsState()
     var markAt by remember { mutableStateOf<Long?>(null) }
     val session by MonitorHub.session.collectAsState()
     val focus = remember { FocusRequester() }
@@ -401,7 +407,7 @@ private fun MonitorScreen(
                 recording = session,
                 arranging = arranging,
                 onScreen = { screen = it; reviewId = null },
-                onRecord = { if (session == null) chooseCategory = true else confirmStop = true },
+                onRecord = { if (session != null) confirmStop = true else if (pending != null) pendingAsk = true else chooseCategory = true },
                 onMark = ::mark,
                 onDevices = { screen = Screen.Sensors; reviewId = null },
                 onCards = { showCards = true },
@@ -453,7 +459,48 @@ private fun MonitorScreen(
             onDismiss = { markAt = null }
         )
     }
-    if (chooseCategory) StartSessionDialog(onStart = { cat -> chooseCategory = false; MonitorHub.startSession(cat) }, onDismiss = { chooseCategory = false })
+    if (chooseCategory) StartSessionDialog(onStart = { cat ->
+        chooseCategory = false
+        if (cat.sexual) setupFor = cat else MonitorHub.startSession(cat)
+    }, onDismiss = { chooseCategory = false })
+    setupFor?.let { cat ->
+        com.pulsepointlabs.sarahmonitor.review.SessionDetailsDialog(
+            mode = com.pulsepointlabs.sarahmonitor.review.DetailsMode.Setup, category = cat,
+            initial = com.pulsepointlabs.sarahmonitor.session.LastSetup.gearFor(context, cat),
+            onDismiss = { setupFor = null },
+            onSave = { d -> setupFor = null; com.pulsepointlabs.sarahmonitor.session.LastSetup.remember(context, cat, d); MonitorHub.startSession(cat, details = d) },
+            onArmObs = if (obsOn) { d ->
+                setupFor = null
+                com.pulsepointlabs.sarahmonitor.session.LastSetup.remember(context, cat, d)
+                MonitorHub.pendingSetup.value = MonitorHub.PendingSetup(cat, d)
+                onMessage("Ready: the session starts when OBS starts recording.")
+            } else null
+        )
+    }
+    if (pendingAsk) pending?.let { p ->
+        AlertDialog(
+            onDismissRequest = { pendingAsk = false },
+            containerColor = MonitorColors.panel,
+            title = { Text("Waiting for OBS", color = MonitorColors.text) },
+            text = { Text("${p.category.label} is set up and starts when OBS starts recording.", color = MonitorColors.label) },
+            confirmButton = { TextButton(onClick = { pendingAsk = false; MonitorHub.pendingSetup.value = null; MonitorHub.startSession(p.category, details = p.details) }) { Text("Start now") } },
+            dismissButton = { TextButton(onClick = { pendingAsk = false; MonitorHub.pendingSetup.value = null }) { Text("Cancel setup", color = MonitorColors.alarm) } }
+        )
+    }
+    // Wrap-up after a sexual / exploration session stops.
+    wrapUpId?.let { id ->
+        var loaded by remember(id) { mutableStateOf<com.pulsepointlabs.sarahmonitor.session.SessionEntity?>(null) }
+        LaunchedEffect(id) { loaded = withContext(kotlinx.coroutines.Dispatchers.IO) { MonitorHub.recorder.dao.getSession(id) } }
+        loaded?.let { s ->
+            com.pulsepointlabs.sarahmonitor.review.SessionDetailsDialog(
+                mode = com.pulsepointlabs.sarahmonitor.review.DetailsMode.WrapUp,
+                category = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(s.category),
+                initial = com.pulsepointlabs.sarahmonitor.session.SessionDetails.parse(s.details),
+                onDismiss = { MonitorHub.wrapUp.value = null },
+                onSave = { d -> MonitorHub.saveDetails(id, d) { MonitorHub.wrapUp.value = null; reviewId = id; screen = Screen.Sessions } }
+            )
+        }
+    }
     if (confirmStop) {
         AlertDialog(
             onDismissRequest = { confirmStop = false },
@@ -658,6 +705,17 @@ private val BAR_BUTTON_H = 32.dp
 @Composable
 private fun RecordButton(recording: com.pulsepointlabs.sarahmonitor.session.SessionEntity?, now: Long, compact: Boolean, onClick: () -> Unit) {
     val active = recording != null
+    val armed = !active && MonitorHub.pendingSetup.collectAsState().value != null
+    if (armed) {
+        // Set up and waiting for OBS to start recording.
+        val pink = Color(0xFFFF7AB6)
+        Box(
+            Modifier.height(BAR_BUTTON_H).background(pink.copy(alpha = 0.15f), RoundedCornerShape(8.dp)).border(1.dp, pink, RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick).padding(horizontal = 10.dp),
+            contentAlignment = Alignment.Center
+        ) { Text("◉ OBS ready", color = pink, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+        return
+    }
     Row(
         Modifier
             .height(BAR_BUTTON_H)
