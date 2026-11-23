@@ -171,10 +171,22 @@ object MonitorHub {
         com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.load(app)
         handsFree = com.pulsepointlabs.sarahmonitor.session.HandsFree(
             app, scope,
-            mark = { at, e, raw ->
-                val voice = org.json.JSONObject().put("raw", raw).put("bucket", e.bucket).put("parsed_by", e.parsedBy)
+            mark = { at, e, raw, heardBy ->
+                val voice = org.json.JSONObject().put("raw", raw).put("bucket", e.bucket).put("parsed_by", e.parsedBy).put("heard_by", heardBy)
                     .put("intensity", e.intensity ?: org.json.JSONObject.NULL).put("site", e.site ?: org.json.JSONObject.NULL)
                 markEvent(at, e.types, e.note, com.pulsepointlabs.sarahmonitor.session.CheckIn(gearId = e.gearId), extra = "voice" to voice)
+                // Show what she understood and how she filed it.
+                val filed = com.pulsepointlabs.sarahmonitor.session.MarkerTypes.label(e.types) + " · " + e.bucket.replace('_', ' ') +
+                    (e.intensity?.let { " · $it/10" } ?: "")
+                val how = when {
+                    heardBy == "offline" && e.parsedBy != "claude" -> "\n(offline: no network for the transcript or Claude)"
+                    heardBy == "offline" -> "\n(phone's own transcript)"
+                    e.parsedBy != "claude" -> "\n(sorted by keywords: Claude ${com.pulsepointlabs.sarahmonitor.core.ClaudeText.lastProblem ?: "unavailable"})"
+                    else -> ""
+                }
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(appContext, "✓ Sarah logged: $filed\n“${e.note}”$how", android.widget.Toast.LENGTH_LONG).show()
+                }
             },
             cue = { listening -> audio.listenCue(listening) },
             speak = { text -> scope.launch { audio.say(text) } },

@@ -82,7 +82,8 @@ object VoiceCommand {
 
     // Plain keyword reading, used without an Anthropic key (or if Claude can't be reached).
     private val RULES: List<Pair<Regex, Pair<String, String>>> = listOf(
-        Regex("\\b(lube|lubric|prep(?:ping|ped)?|clean(?:ing)?|betadine|swab)") to ("prep" to "procedure_step"),
+        // Word endings matter: "prepped" is a prep step, "the lab is prepared" isn't.
+        Regex("\\b(lube\\b|lubric|prep(?:ping|ped|aring|are|s)?\\b|clean(?:ing|ed)?\\b|betadine|swab)") to ("prep" to "procedure_step"),
         Regex("\\b(resistance|resisting|tight(?:ness)?|stuck)") to ("resistance" to "procedure_step"),
         Regex("\\b(fully (?:in|inserted|seated)|all the way in|in the bladder|seated)") to ("seated" to "procedure_step"),
         Regex("\\b(insert(?:ing|ed|ion)?|advanc(?:e|ing|ed)|going in)") to ("insert" to "procedure_step"),
@@ -162,7 +163,8 @@ data class HandsFreeStatus(val listening: Boolean = false, val message: String =
 class HandsFree(
     private val context: Context,
     private val scope: CoroutineScope,
-    private val mark: (atMs: Long, event: SpokenEvent, raw: String) -> Unit,
+    /** [heardBy] = "cloud" (OpenAI transcript) or "offline" (the phone's own). */
+    private val mark: (atMs: Long, event: SpokenEvent, raw: String, heardBy: String) -> Unit,
     /** true = "listening" tone, false = "logged" tone. */
     private val cue: (Boolean) -> Unit,
     private val speak: (String) -> Unit,
@@ -241,7 +243,7 @@ class HandsFree(
         scope.launch {
             val key = VoiceSettings.apiKey(context)
             val heard = if (key.isNotBlank() && pcm.isNotEmpty()) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                val wav = com.pulsepointlabs.sarahmonitor.audio.BeatSynth.wav(pcm, LocalEars.RATE)
+                val wav = com.pulsepointlabs.sarahmonitor.audio.BeatSynth.wav(LocalEars.normalized(pcm), LocalEars.RATE)
                 runCatching { WhisperTranscriber.transcribe(wav, key, "phrase.wav", "audio/wav", "gpt-4o-transcribe") }
                     .recoverCatching { WhisperTranscriber.transcribe(wav, key, "phrase.wav", "audio/wav", "whisper-1") }
                     .getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
@@ -250,17 +252,17 @@ class HandsFree(
             val text = heard ?: offline
             val command = VoiceCommand.commandFrom(heard, offline)
             if (command.isBlank()) { _status.value = _status.value.copy(message = "Listening for \"Sarah…\""); return@launch }
-            handle(command, at, text)
+            handle(command, at, text, if (heard != null) "cloud" else "offline")
         }
     }
 
-    private suspend fun handle(command: String, at: Long, raw: String) {
+    private suspend fun handle(command: String, at: Long, raw: String, heardBy: String) {
         val allowed = allowedTypes()
         val ids = allowed.map { it.id }.toSet()
         val g = gear()
         val event = ClaudeText.ask(VoiceCommand.claudePrompt(allowed, g), command, maxTokens = 400)?.let { VoiceCommand.parseClaude(it, ids, g) }
             ?: VoiceCommand.parseLocal(command, ids, g)
-        mark(at, event, raw)
+        mark(at, event, raw, heardBy)
         cue(false)
         if (HandsFreeSettings.sayBack.value) speak(event.confirm)
         _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = event.note)

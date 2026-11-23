@@ -20,6 +20,9 @@ object ClaudeText {
     private var clientKey = ""
 
     val available: Boolean get() = ResponseSettings.apiKey.value.isNotBlank()
+    /** Why the last call returned nothing (shown in status lines instead of failing silently). */
+    @Volatile var lastProblem: String? = null
+        private set
 
     @Synchronized
     private fun client(key: String): AnthropicClient {
@@ -31,21 +34,27 @@ object ClaudeText {
     }
 
     /** One system + user turn; returns the text, or null on no key / refusal / error. */
-    suspend fun ask(system: String, user: String, maxTokens: Long = 600L, model: String = FAST_MODEL): String? = withContext(Dispatchers.IO) {
+    suspend fun ask(system: String, user: String, maxTokens: Long = 1_500L, model: String = FAST_MODEL): String? = withContext(Dispatchers.IO) {
         val key = ResponseSettings.apiKey.value
-        if (key.isBlank()) return@withContext null
+        if (key.isBlank()) { lastProblem = "no Anthropic key"; return@withContext null }
         runCatching {
             val params = MessageCreateParams.builder()
                 .model(model)
-                .maxTokens(maxTokens)
+                // Room for the answer even if the model writes more than expected (short jobs, so it stays cheap).
+                .maxTokens(maxOf(maxTokens, 1_500L))
+                // Short mechanical jobs: no thinking (it could otherwise use up the budget and leave no answer).
+                .thinking(com.anthropic.models.beta.messages.BetaThinkingConfigDisabled.builder().build())
                 .outputConfig(BetaOutputConfig.builder().effort(BetaOutputConfig.Effort.LOW).build())
                 .systemOfBetaTextBlockParams(listOf(BetaTextBlockParam.builder().text(system).cacheControl(BetaCacheControlEphemeral.builder().build()).build()))
                 .addUserMessage(user)
                 .build()
             val response = client(key).beta().messages().create(params)
-            if (response.stopReason().orElse(null) == BetaStopReason.REFUSAL) return@runCatching null
-            response.content().mapNotNull { it.text().orElse(null)?.text() }.joinToString("").trim().ifBlank { null }
-        }.getOrNull()
+            val stop = response.stopReason().orElse(null)
+            if (stop == BetaStopReason.REFUSAL) { lastProblem = "declined"; return@runCatching null }
+            val text = response.content().mapNotNull { it.text().orElse(null)?.text() }.joinToString("").trim().ifBlank { null }
+            lastProblem = if (text == null) "empty reply ($stop)" else null
+            text
+        }.onFailure { lastProblem = it.message?.take(120) ?: it.javaClass.simpleName }.getOrNull()
     }
 }
 

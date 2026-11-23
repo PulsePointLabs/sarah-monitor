@@ -46,6 +46,22 @@ class HandsFreeTest {
         assertFalse(resist.confirm.contains("Sarah", ignoreCase = true))
     }
 
+    @Test fun yourPorchSentenceIsNotAPrepStep() {
+        val e = VoiceCommand.parseLocal("the lab is prepared, relaxing on the porch prior to starting the session", hybrid, listOf(foley))
+        assertFalse("types ${e.types}", "prep" in e.types)
+        assertEquals(setOf("event"), e.types)
+        assertTrue("prep" in VoiceCommand.parseLocal("prepping the glans with betadine", hybrid, listOf(foley)).types)
+        assertTrue("prep" in VoiceCommand.parseLocal("applying lube to the catheter tip", hybrid, listOf(foley)).types)
+    }
+
+    @Test fun quietClipIsBoosted() {
+        val quiet = ShortArray(1600) { (if (it % 2 == 0) 1500 else -1500).toShort() }
+        val loud = com.pulsepointlabs.sarahmonitor.session.LocalEars.normalized(quiet)
+        assertEquals(12_000, loud.maxOf { it.toInt() })       // capped at ×8
+        val ok = ShortArray(10) { 20_000 }
+        assertEquals(23_000, com.pulsepointlabs.sarahmonitor.session.LocalEars.normalized(ok).max().toInt())
+    }
+
     @Test fun tidyKeepsYourWords() {
         assertTrue(TranscriptTidy.sameWords("um i was relaxing and then prepping the lab", "I was relaxing, and then prepping the lab."))
         assertFalse(TranscriptTidy.sameWords("I was relaxing and then prepping the lab", "I was relaxing before the procedure started."))

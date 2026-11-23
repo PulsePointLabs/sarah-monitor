@@ -126,6 +126,14 @@ class LocalEars(
         private val WAKE = Regex("^(?:(?:ok|okay|hey|hi|so)\\s+)?(sarah|sara|sera|serra|zara)\\b", RegexOption.IGNORE_CASE)
 
         fun startsWithWake(text: String) = WAKE.containsMatchIn(text.trim())
+
+        /** Brings a quiet clip up to a healthy level (peaks near −3 dBFS, at most ×8) before transcription. */
+        fun normalized(pcm: ShortArray): ShortArray {
+            val peak = pcm.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: return pcm
+            if (peak < 50) return pcm
+            val gain = (23_000.0 / peak).coerceIn(1.0, 8.0)
+            return ShortArray(pcm.size) { (pcm[it] * gain).toInt().coerceIn(-32768, 32767).toShort() }
+        }
         /** True when the phrase was only the wake word. */
         fun wakeOnly(text: String) = WAKE.find(text.trim())?.let { text.trim().substring(it.range.last + 1).isBlank() } ?: false
     }
@@ -159,6 +167,7 @@ class LocalEars(
         val pcm = ShortArray(CHUNK)
         val bytes = ByteArray(CHUNK * 2)
         var noiseFloor = -50.0
+        var speechDb = -30.0                  // typical level of your speech, for the automatic gain
         var quietMs = 1_000
         var onsetSample = 0L
         var utteranceStart: Long? = null      // onset of the speech the recogniser is currently hearing
@@ -170,14 +179,19 @@ class LocalEars(
             while (scope.isActive && running) {
                 val n = rec.read(pcm, 0, CHUNK)
                 if (n <= 0) continue
-                ring.write(pcm, n)
-                for (i in 0 until n) { bytes[2 * i] = (pcm[i].toInt() and 0xff).toByte(); bytes[2 * i + 1] = (pcm[i].toInt() shr 8).toByte() }
                 // Voice activity: clearly above the room's noise floor.
                 var sum = 0.0
                 for (i in 0 until n) { val s = pcm[i] / 32768.0; sum += s * s }
                 val db = 10 * kotlin.math.log10(sum / n + 1e-12)
                 noiseFloor = if (db < noiseFloor) db else noiseFloor * 0.995 + db * 0.005
-                val speaking = db > maxOf(noiseFloor + 12, -45.0)
+                val speaking = db > maxOf(noiseFloor + 10, -50.0)
+                // Automatic gain: a phone mic a few feet away is quiet, so speech is lifted toward −22 dBFS
+                // (at most ×8) before the recogniser and the clip buffer see it.
+                if (speaking) speechDb = speechDb * 0.9 + db * 0.1
+                val gain = Math.pow(10.0, (-22.0 - speechDb) / 20.0).coerceIn(1.0, 8.0)
+                if (gain > 1.01) for (i in 0 until n) pcm[i] = (pcm[i] * gain).toInt().coerceIn(-32768, 32767).toShort()
+                ring.write(pcm, n)
+                for (i in 0 until n) { bytes[2 * i] = (pcm[i].toInt() and 0xff).toByte(); bytes[2 * i + 1] = (pcm[i].toInt() shr 8).toByte() }
                 if (speaking) {
                     if (quietMs >= 300) onsetSample = ring.written - n
                     quietMs = 0
