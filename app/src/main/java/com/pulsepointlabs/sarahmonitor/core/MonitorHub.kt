@@ -77,8 +77,15 @@ object MonitorHub {
     lateinit var obs: ObsLink; private set
     lateinit var handsFree: com.pulsepointlabs.sarahmonitor.session.HandsFree; private set
 
-    private fun liveCategory() = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(recorder.active.value?.category)
-        ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid
+    /**
+     * Recording, or prepared and waiting for OBS to start. Everything you hear (beep, alerts, Sarah live, stress
+     * voice) treats the two the same, so nothing goes quiet while you settle in before pressing Record in OBS.
+     */
+    private fun liveOrArmed() = recorder.active.value != null || pendingSetup.value != null
+    /** The running session's kind, or the prepared one's while waiting for OBS. */
+    fun currentCategory() = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(recorder.active.value?.category)
+        ?: pendingSetup.value?.category
+    private fun liveCategory() = currentCategory() ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid
     private var startedByObs = false
 
     /** OBS started recording: start the prepared (or default) session with the video linked, or link it to the running one. */
@@ -225,7 +232,7 @@ object MonitorHub {
         heartEngine = HeartEngine(restingBaseline) { b -> restingBaseline = b; baselineStore.save(b) }
         // A session prepared and waiting for OBS counts as recording: beeps and alerts shouldn't go quiet while you
         // settle in before pressing Record in OBS.
-        audio = AudioEngine(app) { recorder.active.value != null || pendingSetup.value != null }
+        audio = AudioEngine(app) { liveOrArmed() }
         BpPosition.load(app)
         com.pulsepointlabs.sarahmonitor.sleep.PositionCalibration.load(app)
         sleepStore = com.pulsepointlabs.sarahmonitor.sleep.SleepStore(app)
@@ -265,7 +272,7 @@ object MonitorHub {
         ResponseSettings.load(app)
         arousal.setProfile(ResponseSettings.profile.value)
         scope.launch { ResponseSettings.profile.collect { arousal.setProfile(it) } }
-        coach = SarahCoach({ _response.value }, { recorder.active.value != null }, { audio.say(it) }, scope)
+        coach = SarahCoach({ _response.value }, { liveOrArmed() }, { audio.say(it) }, scope)
         coach.start()
         stressVoice = StressVoice({ audio.say(it) }, scope)
         audio.h10Connected = { h10.state.value == ConnectionState.Connected || h10.state.value == ConnectionState.Stale }
@@ -281,7 +288,7 @@ object MonitorHub {
                 _response.value = arousal.onHeart(reading.timestampMs, snapshot.heartRate, snapshot.rmssdMs, snapshot.load.score)
                 val resp = _response.value
                 // Arousal and pelvic/EMG tension go together in sexual sessions; don't count them as stress there.
-                val category = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(recorder.active.value?.category)
+                val category = currentCategory()
                 // Kegel sets squeeze on purpose: that's training, not tension.
                 val sexual = category != null && ((category.sexual && category != com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid) || category == com.pulsepointlabs.sarahmonitor.session.SessionCategory.Kegel)
                 val st = stressTracker.update(reading.timestampMs, StressInputs(
@@ -485,8 +492,7 @@ object MonitorHub {
      * hybrid session it pauses while things look sexual (a sexual event in the last 20 min, or near climax).
      */
     private fun stressQuietReason(category: com.pulsepointlabs.sarahmonitor.session.SessionCategory?, resp: com.pulsepointlabs.sarahmonitor.response.ResponseState): String? {
-        val rec = recorder.active.value != null
-        if (!rec && StressVoiceSettings.onlyRecording.value) return "Waiting for a recording"
+        if (!liveOrArmed() && StressVoiceSettings.onlyRecording.value) return "Waiting for a recording"
         return when (category) {
             null, com.pulsepointlabs.sarahmonitor.session.SessionCategory.General -> null
             com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid -> {

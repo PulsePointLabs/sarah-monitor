@@ -188,7 +188,7 @@ class SarahCoach(
 
     /** Sarah's sexual-session voice stays out of general and Kegel sessions. */
     private fun generalSession() =
-        com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(com.pulsepointlabs.sarahmonitor.core.MonitorHub.session.value?.category)?.sexual == false
+        com.pulsepointlabs.sarahmonitor.core.MonitorHub.currentCategory()?.sexual == false
 
     private fun client(key: String): AnthropicClient {
         if (client == null || clientKey != key) {
