@@ -52,6 +52,7 @@ import com.pulsepointlabs.sarahmonitor.ui.BigReading
 import com.pulsepointlabs.sarahmonitor.ui.CardTitle
 import com.pulsepointlabs.sarahmonitor.ui.LocalCardScale
 import com.pulsepointlabs.sarahmonitor.ui.MonitorColors
+import com.pulsepointlabs.sarahmonitor.ui.StatChip
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.abs
@@ -106,30 +107,58 @@ fun PhaseCard() {
     val exploring = ctx == SessionContext.Exploration
     val (label, base) = if (exploring) explorationState(st) else st.phase.label to phaseColor(st.phase)
     val color by animateColorAsState(base, tween(600), label = "phaseColor")
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        CardTitle(if (exploring) "Response" else "Phase", color) {
+    com.pulsepointlabs.sarahmonitor.ui.FitColumn(Modifier.fillMaxSize()) {
+        fixed { CardTitle(if (exploring) "Response" else "Phase", color) {
             st.phaseSinceMs?.let { Text(mmss(now - it), color = MonitorColors.label, fontSize = s.sp(11f), fontFamily = FontFamily.Monospace) }
-        }
-        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-            Text(label, color = color, fontSize = s.sp(36f), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-        }
+        } }
+        // The phase name sized to the space it has (big on a big card), never cut off.
+        flex(minDp = 34f) { androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            val byWidth = maxWidth.value / (label.length.coerceAtLeast(6) * 0.62f)
+            val sizeDp = minOf(byWidth, maxHeight.value * 0.62f, 64f).coerceAtLeast(14f)
+            Text(label, color = color, fontSize = with(androidx.compose.ui.platform.LocalDensity.current) { sizeDp.dp.toSp() }, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, textAlign = TextAlign.Center)
+        } }
         st.candidate?.takeIf { !exploring }?.let { c ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            fixed { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Climax?", color = ClimaxPink, fontSize = s.sp(14f), fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 Pill("Yes", ClimaxPink, true) { MonitorHub.confirmClimax() }
                 Pill("No", MonitorColors.label, false) { MonitorHub.dismissClimax() }
-            }
+            } }
         }
-        Row(Modifier.fillMaxWidth()) {
+        fixed(drop = 1) { com.pulsepointlabs.sarahmonitor.ui.ChipGrid(Modifier.fillMaxWidth()) {
             if (exploring) {
-                Stat("HR change", st.hrDelta?.let { "%+d".format(it) } ?: "--", MonitorColors.hr, Modifier.weight(1f))
-                Stat("Peak", st.peakHr?.roundToInt()?.toString() ?: "--", MonitorColors.hr, Modifier.weight(1f))
-                Stat("Load", st.load?.toString() ?: "--", MonitorColors.load, Modifier.weight(1f))
+                StatChip("HR change", st.hrDelta?.let { "%+d".format(it) } ?: "--", MonitorColors.hr)
+                StatChip("Peak", st.peakHr?.roundToInt()?.toString() ?: "--", MonitorColors.hr)
+                StatChip("Load", st.load?.toString() ?: "--", MonitorColors.load)
             } else {
-                Stat("Edges", "${st.edges}", MonitorColors.pnn50, Modifier.weight(1f))
-                Stat("Climaxes", "${st.climaxes}", ClimaxPink, Modifier.weight(1f))
-                Stat("Build", if (st.buildSeconds > 0) mmss(st.buildSeconds * 1000L) else "--", MonitorColors.good, Modifier.weight(1f))
-                Stat("Plateau", if (st.plateauSeconds > 0) mmss(st.plateauSeconds * 1000L) else "--", MonitorColors.rmssd, Modifier.weight(1f))
+                StatChip("Edges", "${st.edges}", MonitorColors.pnn50)
+                StatChip("Climaxes", "${st.climaxes}", ClimaxPink)
+                StatChip("Build", if (st.buildSeconds > 0) mmss(st.buildSeconds * 1000L) else "--", MonitorColors.good)
+                StatChip("Plateau", if (st.plateauSeconds > 0) mmss(st.plateauSeconds * 1000L) else "--", MonitorColors.rmssd)
+            }
+        } }
+    }
+}
+
+/** A pill showing the current choice ("Session: Masturbation ▾"); tap for the list. */
+@Composable
+private fun MenuPill(title: String, current: String, options: List<String>, modifier: Modifier = Modifier, onPick: (Int) -> Unit) {
+    val s = LocalCardScale.current
+    var open by remember { androidx.compose.runtime.mutableStateOf(false) }
+    Box(modifier) {
+        Row(
+            Modifier.fillMaxWidth().border(1.dp, ClimaxPink, RoundedCornerShape(14.dp)).clickable { open = true }.padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(title, color = MonitorColors.label, fontSize = s.sp(11f), maxLines = 1, softWrap = false)
+            Text(current, color = ClimaxPink, fontSize = s.sp(13f), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text("▾", color = ClimaxPink, fontSize = s.sp(13f))
+        }
+        androidx.compose.material3.DropdownMenu(open, { open = false }, containerColor = MonitorColors.panel) {
+            options.forEachIndexed { i, o ->
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(o, color = if (o == current) ClimaxPink else MonitorColors.text, fontWeight = if (o == current) FontWeight.Bold else FontWeight.Normal) },
+                    onClick = { open = false; onPick(i) }
+                )
             }
         }
     }
@@ -238,8 +267,17 @@ fun MatrixCard() {
     }
 }
 
-private fun DrawScope.series(points: List<Pair<Long, Double?>>, t0: Long, t1: Long, lo: Double, hi: Double, color: Color, width: Float, top: Float, h: Float, dashed: Boolean = false) {
+private fun DrawScope.series(raw: List<Pair<Long, Double?>>, t0: Long, t1: Long, lo: Double, hi: Double, color: Color, width: Float, top: Float, h: Float, dashed: Boolean = false) {
     val span = (hi - lo).takeIf { it > 1e-6 } ?: 1.0
+    // Many more points than pixels turns a line into a solid zig-zag: average into buckets about 3 px wide.
+    val buckets = (size.width / (3f * density)).toInt().coerceAtLeast(20)
+    val points = if (raw.size <= buckets) raw else {
+        val bucketMs = ((t1 - t0) / buckets).coerceAtLeast(1)
+        raw.groupBy { (it.first - t0) / bucketMs }.toSortedMap().map { (_, g) ->
+            val vs = g.mapNotNull { it.second }
+            g.first().first to (if (vs.isEmpty()) null else vs.average())
+        }
+    }
     val p = Path()
     var started = false
     points.forEach { (t, v) ->
@@ -275,8 +313,12 @@ fun ResponseTimelineCard() {
             val band = minOf(size.height * 0.14f, 16.dp.toPx())
             val h = size.height - band - 4f
             fun x(t: Long) = (t - t0).toFloat() / (t1 - t0) * size.width
-            pts.zipWithNext().forEach { (a, b) ->
-                drawRect(phaseColor(a.phase).copy(alpha = 0.8f), Offset(x(a.timestampMs), size.height - band), Size((x(b.timestampMs) - x(a.timestampMs)).coerceAtLeast(1f), band))
+            // Phase band: the most common phase in each ~3 px slice, so brief flickers don't turn it into noise.
+            val slices = (size.width / (3f * density)).toInt().coerceAtLeast(20)
+            val sliceMs = ((t1 - t0) / slices).coerceAtLeast(1)
+            pts.groupBy { (it.timestampMs - t0) / sliceMs }.forEach { (i, g) ->
+                val phase = g.groupingBy { it.phase }.eachCount().maxBy { it.value }.key
+                drawRect(phaseColor(phase).copy(alpha = 0.8f), Offset(x(t0 + i * sliceMs), size.height - band), Size(x(t0 + (i + 1) * sliceMs) - x(t0 + i * sliceMs) + 0.5f, band))
             }
             if (exploring) {
                 val d = pts.map { p -> p.timestampMs to (if (p.hr != null && p.baseline != null) p.hr - p.baseline else null) }
@@ -366,20 +408,19 @@ fun SarahLiveCard() {
     val last by MonitorHub.coach.last.collectAsState()
     val status by MonitorHub.coach.status.collectAsState()
     val s = LocalCardScale.current
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(s.dp(5f))) {
-        CardTitle("Sarah", ClimaxPink) { Pill(if (on) "On" else "Off", ClimaxPink, on) { ResponseSettings.setCoachOn(!on) } }
-        Text(
+    com.pulsepointlabs.sarahmonitor.ui.FitColumn(Modifier.fillMaxSize(), gap = 5.dp) {
+        fixed { CardTitle("Sarah", ClimaxPink) { Pill(if (on) "On" else "Off", ClimaxPink, on) { ResponseSettings.setCoachOn(!on) } } }
+        flex(minDp = 20f) { Text(
             last?.let { "“$it”" } ?: status, color = if (last != null) MonitorColors.text else MonitorColors.label,
-            fontSize = s.sp(if (last != null) 15f else 12f), maxLines = 3, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth().weight(1f)
-        )
-        com.pulsepointlabs.sarahmonitor.ui.ChoiceRow {
-            SessionContext.entries.forEach { c -> Pill(c.label, ClimaxPink, c == ctx) { ResponseSettings.setContext(c) } }
-        }
-        com.pulsepointlabs.sarahmonitor.ui.ChoiceRow {
-            CoachMode.entries.forEach { m -> Pill(m.label, ClimaxPink, m == mode) { ResponseSettings.setMode(m) } }
+            fontSize = s.sp(if (last != null) 15f else 12f), maxLines = 4, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxSize()
+        ) }
+        // Session type and how she talks: one tidy row each, choices in a menu (no stack of pills).
+        fixed { MenuPill("Session", ctx.label, SessionContext.entries.map { it.label }, Modifier.fillMaxWidth()) { i -> ResponseSettings.setContext(SessionContext.entries[i]) } }
+        fixed(drop = 1) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            MenuPill("Style", mode.label, CoachMode.entries.map { it.label }, Modifier.weight(1f)) { i -> ResponseSettings.setMode(CoachMode.entries[i]) }
             Pill("▶ Ask", ClimaxPink, false) { MonitorHub.coach.askNow() }
-        }
+        } }
     }
 }
 

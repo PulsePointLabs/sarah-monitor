@@ -175,6 +175,9 @@ object FitLayout {
 
     fun span(type: CardType, units: Int) = if (type in wideTypes) minOf(2, units) else 1
 
+    /** Relative row height a card needs on a phone (its design height, kept within a sensible band). */
+    fun rowNeed(type: CardType): Float = designSize(type).second.coerceIn(170f, 300f)
+
     fun rows(cards: List<CardType>, units: Int): List<List<CardType>> {
         val left = cards.toMutableList()
         val rows = mutableListOf<List<CardType>>()

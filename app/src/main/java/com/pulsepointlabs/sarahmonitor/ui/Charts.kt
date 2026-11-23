@@ -57,10 +57,14 @@ fun EcgSweep(samples: List<EcgSample>, modifier: Modifier = Modifier) {
             if (latest != state.lastLatestTs) {
                 state.lastLatestTs = latest
                 val lag = (System.currentTimeMillis() - latest).toFloat()
+                // How far behind real time to draw, so packets arriving in bursts still sweep smoothly. Capped:
+                // after a Bluetooth stall the old rule kept a multi-second delay for a long time, and the sweep
+                // then drew only the last second or so of the buffer (a sliver at each edge of the screen).
+                val capped = lag.coerceIn(0f, 1_200f)
                 state.lagMs = when {
-                    state.lagMs.isNaN() -> lag
-                    lag > state.lagMs -> lag
-                    else -> state.lagMs * 0.97f + lag * 0.03f
+                    state.lagMs.isNaN() -> capped
+                    capped > state.lagMs -> capped
+                    else -> state.lagMs * 0.8f + capped * 0.2f
                 }
             }
         }
@@ -208,7 +212,9 @@ fun TrendChart(
             val span = max(1e-6, hi - lo)
             fun xFor(t: Long) = left + (t - startMs).toFloat() / max(1L, endMs - startMs).toFloat() * (right - left)
             fun yFor(v: Double) = bottom - ((v - lo) / span).toFloat() * (bottom - top)
-            val ticks = niceTicks(lo, hi, 4)
+            // As many gridlines as fit with a label's height of clear space between them (no stacked "10 8 5 3 0").
+            val fit = ((bottom - top) / (labelPx * 2.2f)).toInt().coerceIn(1, 4)
+            val ticks = niceTicks(lo, hi, fit)
             ticks.forEach { v ->
                 val y = yFor(v)
                 drawLine(MonitorColors.trendGrid, Offset(left, y), Offset(right, y), strokeWidth = 1f)
@@ -275,7 +281,7 @@ fun PelvicWaveform(
             val lo = floor(minV * 2) / 2
             fun xFor(t: Long) = left + (t - start).toFloat() / windowMs.toFloat() * (right - left)
             fun yFor(v: Double) = bottom - ((v - lo) / (hi - lo)).toFloat() * (bottom - top)
-            niceTicks(lo, hi, 4).forEach { v ->
+            niceTicks(lo, hi, ((bottom - top) / (labelPx * 2.2f)).toInt().coerceIn(1, 4)).forEach { v ->
                 val y = yFor(v)
                 drawLine(MonitorColors.trendGrid, Offset(left, y), Offset(right, y), strokeWidth = 1f)
                 drawLabel("%.1f".format(v), left - 4f * density, y + labelPx * 0.35f, MonitorColors.label.toArgb(), labelSp, alignRight = true)

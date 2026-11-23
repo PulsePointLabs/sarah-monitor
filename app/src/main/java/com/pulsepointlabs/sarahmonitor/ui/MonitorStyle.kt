@@ -155,9 +155,12 @@ fun CardTitle(label: String, color: Color, unit: String = "", modifier: Modifier
         Box(Modifier.size(width = 4.dp, height = s.dp(15f)).background(color, RoundedCornerShape(2.dp)))
         // The title always gets its full width; status text on the right gives way (ellipsis) instead.
         Text(label, color = color, fontSize = s.sp(14f), fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+        // Status on the right is shown whole or not at all: never a chopped "Conn…".
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                CompositionLocalProvider(androidx.compose.material3.LocalTextStyle provides androidx.compose.material3.LocalTextStyle.current.copy(textAlign = androidx.compose.ui.text.style.TextAlign.End)) { trailing() }
+            FitOrHide {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    CompositionLocalProvider(androidx.compose.material3.LocalTextStyle provides androidx.compose.material3.LocalTextStyle.current.copy(textAlign = androidx.compose.ui.text.style.TextAlign.End)) { trailing() }
+                }
             }
         }
         if (unit.isNotBlank()) UnitTag(unit, color)
@@ -184,16 +187,29 @@ fun StatChip(label: String, value: String, accent: Color = MonitorColors.text, t
     val s = LocalCardScale.current
     // tint: the chip's background takes the value's colour (green low → red high).
     val bg by androidx.compose.animation.animateColorAsState(tint?.copy(alpha = 0.26f) ?: Color(0x1FFFFFFF), androidx.compose.animation.core.tween(500), label = "chip-bg")
-    Row(
-        Modifier
-            .background(bg, RoundedCornerShape(6.dp))
-            .border(1.dp, tint?.copy(alpha = 0.6f) ?: Color(0x1AFFFFFF), RoundedCornerShape(6.dp))
-            .padding(horizontal = s.dp(6f), vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Text(label, color = if (tint != null) MonitorColors.text.copy(alpha = 0.75f) else MonitorColors.label, fontSize = s.sp(11f), maxLines = 1)
-        Text(value, color = if (tint != null) MonitorColors.text else accent, fontSize = s.sp(13f), fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, maxLines = 1)
+    val chrome = Modifier
+        .background(bg, RoundedCornerShape(6.dp))
+        .border(1.dp, tint?.copy(alpha = 0.6f) ?: Color(0x1AFFFFFF), RoundedCornerShape(6.dp))
+    val labelColor = if (tint != null) MonitorColors.text.copy(alpha = 0.75f) else MonitorColors.label
+    val valueColor = if (tint != null) MonitorColors.text else accent
+    // Never shrink text to fit: narrow chips put the label above the value instead (see ChipGrid).
+    if (LocalChipStacked.current) {
+        androidx.compose.foundation.layout.Column(
+            chrome.padding(horizontal = 4.dp, vertical = 2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(label, color = labelColor, fontSize = s.sp(11f), maxLines = 1, softWrap = false, lineHeight = s.sp(12f))
+            Text(value, color = valueColor, fontSize = s.sp(13f), fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false, lineHeight = s.sp(15f))
+        }
+    } else {
+        Row(
+            chrome.padding(horizontal = s.dp(6f), vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally)
+        ) {
+            Text(label, color = labelColor, fontSize = s.sp(11f), maxLines = 1, softWrap = false)
+            Text(value, color = valueColor, fontSize = s.sp(13f), fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false)
+        }
     }
 }
 
@@ -250,7 +266,8 @@ fun BigReading(
         val besideSize = min(maxWidth.value / (textEm + leadingEm + arrowEm + (if (trend != null) 1.7f else 0f) + 0.05f), maxHeight.value * 0.9f)
         val belowSize = if (trend == null) 0f else min(maxWidth.value / (textEm + leadingEm + arrowEm + 0.05f), maxHeight.value * 0.9f / 1.4f)
         val below = trend != null && belowSize > besideSize * 1.15f
-        val sizeDp = min(if (below) belowSize else besideSize, maxSizeDp).coerceAtLeast(MinTextSp + 6f)
+        // Never bigger than the box (it would spill onto the chips), never below readable unless the box is.
+        val sizeDp = min(if (below) belowSize else besideSize, maxSizeDp).coerceAtLeast(min(MinTextSp + 6f, maxHeight.value * 0.9f))
         val fontSize = with(LocalDensity.current) { sizeDp.dp.toSp() }
         val shown by androidx.compose.animation.animateColorAsState(color, androidx.compose.animation.core.tween(400), label = "reading-color")
         val number: @Composable () -> Unit = {

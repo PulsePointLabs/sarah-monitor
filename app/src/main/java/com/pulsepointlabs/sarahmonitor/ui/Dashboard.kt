@@ -140,7 +140,10 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float)
     val rows = FitLayout.rows(order, units)
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(GAP_DP.dp)) {
         rows.forEach { row ->
-            Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp)) {
+            // Rows get height by what their cards need (a pelvic card with six stats needs more than a phase
+            // name), instead of every row getting the same.
+            val need = row.maxOf { FitLayout.rowNeed(it) }
+            Row(Modifier.fillMaxWidth().weight(need), horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp)) {
                 row.forEach { type -> MonitorCard(type, Modifier.weight(FitLayout.span(type, units).toFloat()).fillMaxHeight()) }
             }
         }
