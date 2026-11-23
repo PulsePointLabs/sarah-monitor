@@ -121,28 +121,32 @@ object VoiceCommand {
         val bucket = hits.firstOrNull()?.second ?: "general"
         val device = gear.firstOrNull { g -> DEVICE_WORDS[g.type]?.containsMatchIn(lower) == true }
             ?: gear.singleOrNull { it.type !in setOf(GearType.Lubricant) }.takeIf { bucket == "procedure_step" }
-        val note = command.trim().replaceFirstChar { it.uppercase() }.let { if (it.last() in ".!?") it else "$it." }
+        val note = verbatim(command)
         val level = intensity(command)
         val what = MarkerTypes.label(types).lowercase()
         return SpokenEvent(types, device?.id, note, bucket, level, null, "Logged: $what" + (level?.let { ", $it out of 10" } ?: "") + ".", "keywords")
     }
 
+    /** His words exactly as heard: only the first letter capitalised and a closing full stop added. Never rewritten. */
+    fun verbatim(command: String): String =
+        command.trim().replaceFirstChar { it.uppercase() }.let { if (it.isEmpty() || it.last() in ".!?…") it else "$it." }
+
     /** Prompt for Claude: map a spoken note to this session's event types and devices. */
     fun claudePrompt(allowed: List<MarkerTypes.Type>, gear: List<GearItem>): String = """
-You turn a short spoken note from a paramedic logging his own body during a physiology session into one structured event.
+You categorise a short spoken note from a paramedic logging his own body during a physiology session. His words are saved verbatim; you only classify them.
 Allowed event types (id: label): ${allowed.joinToString("; ") { "${it.id}: ${it.label}" }}.
 Devices in use (id: label): ${gear.joinToString("; ") { "${it.id}: ${it.label}" }.ifBlank { "none" }}.
 Buckets: ${BUCKETS.joinToString(", ")}.
-Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or null,"bucket":one bucket,"intensity":0-10 or null (only if he gave a number or a clear severity),"site":anatomical site or null,"note":his note as one clean first-person sentence (keep his meaning and words; fix grammar only),"confirm":a spoken confirmation of at most 10 words, no names}.
+Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or null,"bucket":one bucket,"intensity":0-10 or null (only if he gave a number or a clear severity),"site":anatomical site or null,"confirm":a spoken confirmation of at most 10 words, no names}.
 """.trimIndent()
 
-    fun parseClaude(json: String, allowed: Set<String>, gear: List<GearItem>): SpokenEvent? = runCatching {
+    fun parseClaude(json: String, command: String, allowed: Set<String>, gear: List<GearItem>): SpokenEvent? = runCatching {
         val o = JSONObject(json.substring(json.indexOf('{'), json.lastIndexOf('}') + 1))
         val types = (0 until (o.optJSONArray("types")?.length() ?: 0)).map { o.getJSONArray("types").getString(it) }.filter { it in allowed }.toSet()
         if (types.isEmpty()) return null
         val device = o.optString("device").takeIf { id -> gear.any { it.id == id } }
         SpokenEvent(
-            types, device, o.optString("note").trim().ifBlank { return null },
+            types, device, verbatim(command).ifBlank { return null },
             o.optString("bucket").takeIf { it in BUCKETS } ?: "general",
             o.optInt("intensity", -1).takeIf { !o.isNull("intensity") && it in 0..10 },
             o.optString("site").takeIf { it.isNotBlank() && it != "null" },
@@ -260,7 +264,7 @@ class HandsFree(
         val allowed = allowedTypes()
         val ids = allowed.map { it.id }.toSet()
         val g = gear()
-        val event = ClaudeText.ask(VoiceCommand.claudePrompt(allowed, g), command, maxTokens = 400)?.let { VoiceCommand.parseClaude(it, ids, g) }
+        val event = ClaudeText.ask(VoiceCommand.claudePrompt(allowed, g), command, maxTokens = 400)?.let { VoiceCommand.parseClaude(it, command, ids, g) }
             ?: VoiceCommand.parseLocal(command, ids, g)
         mark(at, event, raw, heardBy)
         cue(false)

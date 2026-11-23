@@ -150,13 +150,17 @@ class MainActivity : ComponentActivity() {
         val layoutStore = LayoutStore(this)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(background = MonitorColors.background, surface = MonitorColors.panel, primary = MonitorColors.pelvic)) {
-                MonitorScreen(
-                    layoutStore = layoutStore,
-                    onCsvImport = { csvLauncher.launch(arrayOf("text/*", "application/csv", "application/vnd.ms-excel", "*/*")) },
-                    onHealthConnect = ::requestHealthConnect,
-                    onExportCsv = { name, text -> pendingCsv = text; csvExportLauncher.launch(name) },
-                    onMessage = ::toast
-                )
+                Box(Modifier.fillMaxSize()) {
+                    MonitorScreen(
+                        layoutStore = layoutStore,
+                        onCsvImport = { csvLauncher.launch(arrayOf("text/*", "application/csv", "application/vnd.ms-excel", "*/*")) },
+                        onHealthConnect = ::requestHealthConnect,
+                        onExportCsv = { name, text -> pendingCsv = text; csvExportLauncher.launch(name) },
+                        onMessage = ::toast
+                    )
+                    val notice by MonitorHub.notice.collectAsState()
+                    com.pulsepointlabs.sarahmonitor.ui.NoticeHost(notice, MonitorHub::dismissNotice)
+                }
             }
         }
         handleSharedExport(intent)

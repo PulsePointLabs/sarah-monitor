@@ -66,4 +66,14 @@ class HandsFreeTest {
         assertTrue(TranscriptTidy.sameWords("um i was relaxing and then prepping the lab", "I was relaxing, and then prepping the lab."))
         assertFalse(TranscriptTidy.sameWords("I was relaxing and then prepping the lab", "I was relaxing before the procedure started."))
     }
+
+    /** Claude only files the note; his words are kept exactly, even if Claude sends back a reworded "note". */
+    @Test fun claudeNeverRewritesHisWords() {
+        val said = "beginning to swab the glands and I see that I'm becoming slightly erect"
+        val reply = """{"types":["prep","arousal"],"device":null,"bucket":"procedure_step","intensity":null,"site":"glans","note":"I am beginning to swab the glans.","confirm":"Logged."}"""
+        val e = VoiceCommand.parseClaude(reply, said, hybrid, emptyList())!!
+        assertEquals("Beginning to swab the glands and I see that I'm becoming slightly erect.", e.note)
+        assertFalse(VoiceCommand.claudePrompt(MarkerTypes.all, emptyList()).contains("\"note\""))
+        assertEquals(VoiceCommand.verbatim(said), VoiceCommand.parseLocal(said, hybrid, emptyList()).note)
+    }
 }

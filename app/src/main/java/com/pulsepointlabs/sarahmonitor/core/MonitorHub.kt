@@ -152,6 +152,11 @@ object MonitorHub {
     private val _lastLiveBpAt = MutableStateFlow<Long?>(null)
     val lastLiveBpAt: StateFlow<Long?> = _lastLiveBpAt
 
+    private val _notice = MutableStateFlow<com.pulsepointlabs.sarahmonitor.ui.Notice?>(null)
+    /** The in-app banner currently showing (what Sarah heard and how she filed it). */
+    val notice: StateFlow<com.pulsepointlabs.sarahmonitor.ui.Notice?> = _notice
+    fun dismissNotice(n: com.pulsepointlabs.sarahmonitor.ui.Notice) { _notice.compareAndSet(n, null) }
+
     @Synchronized
     fun init(context: Context) {
         if (initialized) return
@@ -176,7 +181,9 @@ object MonitorHub {
                     .put("intensity", e.intensity ?: org.json.JSONObject.NULL).put("site", e.site ?: org.json.JSONObject.NULL)
                 markEvent(at, e.types, e.note, com.pulsepointlabs.sarahmonitor.session.CheckIn(gearId = e.gearId), extra = "voice" to voice)
                 // Show what she understood and how she filed it.
-                val filed = com.pulsepointlabs.sarahmonitor.session.MarkerTypes.label(e.types) + " · " + e.bucket.replace('_', ' ') +
+                val typeLabel = com.pulsepointlabs.sarahmonitor.session.MarkerTypes.label(e.types)
+                val bucket = e.bucket.replace('_', ' ')
+                val filed = typeLabel + (if (bucket == "general" || typeLabel.contains(bucket, ignoreCase = true)) "" else " · $bucket") +
                     (e.intensity?.let { " · $it/10" } ?: "")
                 val how = when {
                     heardBy == "offline" && e.parsedBy != "claude" -> "\n(offline: no network for the transcript or Claude)"
@@ -184,7 +191,10 @@ object MonitorHub {
                     e.parsedBy != "claude" -> "\n(sorted by keywords: Claude ${com.pulsepointlabs.sarahmonitor.core.ClaudeText.lastProblem ?: "unavailable"})"
                     else -> ""
                 }
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                // In-app banner while the app is in front; the system toast only when it isn't (e.g. OBS in front on DeX).
+                if (com.pulsepointlabs.sarahmonitor.overlay.OverlaySettings.appInFront.value) {
+                    _notice.value = com.pulsepointlabs.sarahmonitor.ui.Notice("Sarah logged", filed, e.note, how.trim().removeSurrounding("(", ")").ifBlank { null })
+                } else android.os.Handler(android.os.Looper.getMainLooper()).post {
                     android.widget.Toast.makeText(appContext, "✓ Sarah logged: $filed\n“${e.note}”$how", android.widget.Toast.LENGTH_LONG).show()
                 }
             },

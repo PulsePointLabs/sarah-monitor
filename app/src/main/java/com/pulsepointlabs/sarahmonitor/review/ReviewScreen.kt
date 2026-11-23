@@ -223,6 +223,12 @@ fun ReviewScreen(
         cursor = marker.timestampMs
         viewport = viewport.centeredOn(marker.timestampMs, minOf(viewport.spanMs, 4 * 60_000L), fullStart, fullEnd)
     }
+    fun deleteMarker(m: MarkerEntity) {
+        scope.launch {
+            withContext(Dispatchers.IO) { dao.deleteMarker(m.id); dao.setMarkerCount(sessionId, dao.getMarkers(sessionId).size) }
+            reload++
+        }
+    }
     fun saveMarker(marker: MarkerEntity) = scope.launch {
         withContext(Dispatchers.IO) {
             dao.upsertMarker(marker)
@@ -283,12 +289,7 @@ fun ReviewScreen(
         DetailsCard(com.pulsepointlabs.sarahmonitor.session.SessionDetails.parse(d.session.details), category) { editingDetails = true }
         episodesCard()
         flagsCard()
-        EventsCard(
-            d, selectedMarker,
-            onFocus = ::focus,
-            onEdit = { editing = it },
-            onAdd = { addingAt = cursor ?: d.endMs }
-        )
+        EventsCard(d, selectedMarker, sessionId, onFocus = ::focus, onEdit = { editing = it }, onAdd = { addingAt = cursor ?: d.endMs }, onDelete = ::deleteMarker)
         NotesCard(d.session.notes) { notes ->
             scope.launch { withContext(Dispatchers.IO) { dao.setNotes(sessionId, notes) }; reload++ }
         }
@@ -321,7 +322,7 @@ fun ReviewScreen(
                     charts()
                     episodesCard()
                     flagsCard()
-                    EventsCard(d, selectedMarker, onFocus = ::focus, onEdit = { editing = it }, onAdd = { addingAt = cursor ?: d.endMs })
+                    EventsCard(d, selectedMarker, sessionId, onFocus = ::focus, onEdit = { editing = it }, onAdd = { addingAt = cursor ?: d.endMs }, onDelete = ::deleteMarker)
                     NotesCard(d.session.notes) { notes ->
                         scope.launch { withContext(Dispatchers.IO) { dao.setNotes(sessionId, notes) }; reload++ }
                     }
@@ -335,16 +336,7 @@ fun ReviewScreen(
             pressedAtMs = m.timestampMs,
             editing = m,
             onSave = { types, note, checkIn -> saveMarker(m.copy(types = MarkerTypes.join(types), label = MarkerTypes.label(types), note = note.trim(), wellbeing = checkIn.wellbeing, selfStress = checkIn.selfStress)); editing = null },
-            onDelete = {
-                scope.launch {
-                    withContext(Dispatchers.IO) {
-                        dao.deleteMarker(m.id)
-                        dao.setMarkerCount(sessionId, dao.getMarkers(sessionId).size)
-                    }
-                    reload++
-                }
-                editing = null
-            },
+            onDelete = { deleteMarker(m); editing = null },
             onDismiss = { editing = null },
             category = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(data?.session?.category) ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid
         )
@@ -558,48 +550,161 @@ private fun Value(label: String, value: String?, color: Color) {
     }
 }
 
+/** A metric at a moment, with its change over the minute before: 0–3 arrows by how sharp the change was. */
+private data class EventMetric(val label: String, val value: String, val color: Color, val delta: Double, val scale: Double, val higherIsWorse: Boolean)
+
+/** Readings at an event from the recording itself (so older events get them too), vs the minute before. */
+private fun eventMetrics(d: SessionData, t: Long, snapshot: String?, sexual: Boolean): List<EventMetric> {
+    val at = d.hr.minByOrNull { kotlin.math.abs(it.timestampMs - t) }?.takeIf { kotlin.math.abs(it.timestampMs - t) < 10_000L } ?: return emptyList()
+    val before = d.hr.filter { it.timestampMs in (t - 90_000L)..(t - 30_000L) }
+    fun avg(f: (com.pulsepointlabs.sarahmonitor.session.HrSampleEntity) -> Double?) = before.mapNotNull(f).takeIf { it.isNotEmpty() }?.average()
+    val out = mutableListOf<EventMetric>()
+    out += EventMetric("HR", "${at.bpm}", com.pulsepointlabs.sarahmonitor.ui.hrBandColor(at.bpm.toDouble()) ?: MonitorColors.hr, at.bpm - (avg { it.bpm.toDouble() } ?: at.bpm.toDouble()), 6.0, true)
+    at.rmssdMs?.let { r -> out += EventMetric("RMSSD", SessionAnalysis.num(r), MonitorColors.rmssd, r - (avg { it.rmssdMs } ?: r), 4.0, false) }
+    at.stress?.let { v -> out += EventMetric("Stress", "$v", com.pulsepointlabs.sarahmonitor.ui.percentBandColor(v) ?: com.pulsepointlabs.sarahmonitor.ui.StressColor, v - (avg { it.stress?.toDouble() } ?: v.toDouble()), 6.0, true) }
+    at.load?.let { v -> out += EventMetric("Load", "$v", com.pulsepointlabs.sarahmonitor.ui.percentBandColor(v) ?: MonitorColors.load, v - (avg { it.load?.toDouble() } ?: v.toDouble()), 8.0, true) }
+    at.breathsPerMin?.let { v -> out += EventMetric("Breathing", "${v.toInt()}/min", MonitorColors.pelvic, v - (avg { it.breathsPerMin } ?: v), 2.5, true) }
+    d.pelvic.minByOrNull { kotlin.math.abs(it.timestampMs - t) }?.takeIf { kotlin.math.abs(it.timestampMs - t) < 2_000L }?.aboveRestKpa?.let { k ->
+        out += EventMetric("Pelvic", "${SessionAnalysis.num(k)} kPa", MonitorColors.pelvic, 0.0, 1.0, true)
+    }
+    // Arousal phase only belongs on sexual sessions.
+    if (sexual) runCatching { org.json.JSONObject(snapshot ?: "").optJSONObject("response") }.getOrNull()?.let { r ->
+        val phase = r.optString("phase")
+        if (phase.isNotBlank() && (phase != "Baseline" || r.optInt("approach") > 0))
+            out += EventMetric("Phase", phase.lowercase() + " · " + r.optInt("approach"), MonitorColors.load, 0.0, 1.0, true)
+    }
+    return out
+}
+
+/** Chip like the overlays: value in its colour, then ↑ / ↑↑ / ↑↑↑ (red when the change is the bad direction). */
 @Composable
-private fun EventsCard(d: SessionData, selected: String?, onFocus: (MarkerEntity) -> Unit, onEdit: (MarkerEntity) -> Unit, onAdd: () -> Unit) {
-    Section("Events (${d.markers.size})", trailing = { TextButton(onClick = onAdd) { Text("+ Add at cursor", fontSize = 13.sp) } }) {
-        if (d.markers.isEmpty()) Text("No events.", color = MonitorColors.label, fontSize = 13.sp)
-        d.markers.forEach { m ->
-            val ctx = remember(m, d) { SessionAnalysis.markerContext(m, d) }
-            val color = markerColor(m.types)
-            val isSelected = m.id == selected
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(if (isSelected) color.copy(alpha = 0.12f) else Color.Transparent, RoundedCornerShape(8.dp))
-                    .border(1.dp, if (isSelected) color.copy(alpha = 0.6f) else MonitorColors.panelBorder, RoundedCornerShape(8.dp))
-                    .clickable { onFocus(m) }
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Box(Modifier.padding(top = 5.dp).size(10.dp).background(color, CircleShape))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(m.label, color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        Text("${clockLabel(m.timestampMs, seconds = true)} · +${SessionAnalysis.elapsed(m.timestampMs - d.session.startTimeMs)}", color = MonitorColors.label, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                    }
-                    if (m.note.isNotBlank()) Text(m.note, color = MonitorColors.text, fontSize = 13.sp)
-                    com.pulsepointlabs.sarahmonitor.session.CheckIn.of(m).label?.let { Text("Check-in: $it", color = com.pulsepointlabs.sarahmonitor.ui.StressColor, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
-                    com.pulsepointlabs.sarahmonitor.core.EventSnapshot.describe(m.snapshot)?.let { Text("At that moment: $it", color = MonitorColors.label, fontSize = 12.sp) }
-                    val facts = listOfNotNull(
-                        d.hr.minByOrNull { kotlin.math.abs(it.timestampMs - m.timestampMs) }?.takeIf { kotlin.math.abs(it.timestampMs - m.timestampMs) < 5_000L }?.stress?.let { "est. stress $it" },
-                        ctx.hrAt?.let { "HR $it" },
-                        ctx.rmssdAt?.let { "RMSSD ${SessionAnalysis.num(it)}" },
-                        ctx.pressureAt?.let { "pressure ${SessionAnalysis.num(it)} kPa" },
-                        ctx.peakPressureNext30s?.let { "peak next 30 s ${SessionAnalysis.num(it)} kPa" },
-                        listOfNotNull(
-                            ctx.delta1Min?.let { "${SessionAnalysis.signed(it)} at 1 min" },
-                            ctx.delta5Min?.let { "${SessionAnalysis.signed(it)} at 5 min" }
-                        ).takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "HR change ")
-                    )
-                    if (facts.isNotEmpty()) Text(facts.joinToString(" · "), color = MonitorColors.label, fontSize = 12.sp)
-                }
-                IconButton(onClick = { onEdit(m) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Edit, contentDescription = "Edit event", tint = MonitorColors.label, modifier = Modifier.size(16.dp)) }
+private fun MetricChip(m: EventMetric) {
+    val n = (kotlin.math.abs(m.delta) / m.scale).let { when { it >= 3 -> 3; it >= 1.5 -> 2; it >= 0.6 -> 1; else -> 0 } }
+    val up = m.delta > 0
+    val arrowColor = if (up == m.higherIsWorse) MonitorColors.alarm else MonitorColors.good
+    Row(
+        Modifier.background(m.color.copy(alpha = 0.12f), RoundedCornerShape(7.dp)).border(1.dp, m.color.copy(alpha = 0.35f), RoundedCornerShape(7.dp))
+            .padding(horizontal = 7.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(m.label + " ", color = MonitorColors.label, fontSize = 11.sp)
+        Text(m.value, color = m.color, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+        if (n > 0) Text(" " + (if (up) "↑" else "↓").repeat(n), color = arrowColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** Heart rate (and RMSSD, faint) around an event, with the moment marked. */
+@Composable
+private fun EventSpark(d: SessionData, t: Long, spanMs: Long, color: Color, modifier: Modifier) {
+    val win = d.hr.filter { it.timestampMs in (t - spanMs)..(t + spanMs) }
+    Canvas(modifier) {
+        if (win.size < 2) return@Canvas
+        fun x(ts: Long) = (ts - (t - spanMs)).toFloat() / (2 * spanMs) * size.width
+        fun line(values: List<Double?>, c: Color, w: Float) {
+            val v = values.filterNotNull(); if (v.size < 2) return
+            val lo = v.min(); val hi = v.max().let { if (it - lo < 1) lo + 1 else it }
+            val path = Path(); var started = false
+            win.forEachIndexed { i, s -> val y = values[i] ?: return@forEachIndexed
+                val px = x(s.timestampMs); val py = size.height - ((y - lo) / (hi - lo)).toFloat() * (size.height - 4f) - 2f
+                if (!started) path.moveTo(px, py) else path.lineTo(px, py); started = true }
+            drawPath(path, c, style = Stroke(width = w, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+        line(win.map { it.rmssdMs }, MonitorColors.rmssd.copy(alpha = 0.45f), 1.2f * density)
+        line(win.map { it.bpm.toDouble() }, MonitorColors.hr, 1.6f * density)
+        drawLine(color, Offset(x(t), 0f), Offset(x(t), size.height), strokeWidth = 1.5f * density)
+    }
+}
+
+private fun isVoice(m: MarkerEntity) = m.snapshot?.contains("\"voice\"") == true
+
+/** Events, split by how they were made: marked by you, or heard by Sarah ("Sarah, …"). */
+@Composable
+private fun EventsCard(
+    d: SessionData, selected: String?, sessionId: String,
+    onFocus: (MarkerEntity) -> Unit, onEdit: (MarkerEntity) -> Unit, onAdd: () -> Unit, onDelete: (MarkerEntity) -> Unit
+) {
+    var filter by remember { mutableStateOf(0) }
+    val voice = d.markers.filter(::isVoice)
+    val manual = d.markers.filterNot(::isVoice)
+    val shown = when (filter) { 1 -> manual; 2 -> voice; else -> d.markers }
+    var open by remember { mutableStateOf<String?>(null) }
+    var confirmDelete by remember { mutableStateOf<MarkerEntity?>(null) }
+    val sexual = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(d.session.category)
+        .let { it != null && it.sexual && it != com.pulsepointlabs.sarahmonitor.session.SessionCategory.Exploration }
+    Section("Events", trailing = { TextButton(onClick = onAdd) { Text("+ Add at cursor", fontSize = 13.sp) } }) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("All" to d.markers.size, "Marked" to manual.size, "Sarah heard" to voice.size).forEachIndexed { i, (label, n) ->
+                val on = filter == i
+                Text(
+                    "$label · $n", color = if (on) MonitorColors.background else MonitorColors.text, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.weight(1f).background(if (on) MonitorColors.text else Color.Transparent, RoundedCornerShape(8.dp))
+                        .border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(8.dp)).clickable { filter = i }.padding(vertical = 6.dp)
+                )
             }
         }
+        if (shown.isEmpty()) Text(if (filter == 2) "Nothing heard yet. Say \"Sarah, …\" during a recording." else "No events.", color = MonitorColors.label, fontSize = 13.sp)
+        shown.forEach { m ->
+            val color = markerColor(m.types)
+            val expanded = open == m.id
+            val isSel = m.id == selected
+            val metrics = remember(m, d.hr.size) { eventMetrics(d, m.timestampMs, m.snapshot, sexual) }
+            Column(
+                Modifier.fillMaxWidth()
+                    .background(if (isSel || expanded) color.copy(alpha = 0.08f) else Color.Transparent, RoundedCornerShape(10.dp))
+                    .border(1.dp, if (isSel || expanded) color.copy(alpha = 0.6f) else MonitorColors.panelBorder, RoundedCornerShape(10.dp))
+                    .clickable { open = if (expanded) null else m.id; onFocus(m) }
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.size(10.dp).background(color, CircleShape))
+                    Text(m.label, color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (isVoice(m)) Text("🎙", fontSize = 12.sp)
+                    Text("${clockLabel(m.timestampMs, seconds = true)} · +${SessionAnalysis.elapsed(m.timestampMs - d.session.startTimeMs)}", color = MonitorColors.label, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                }
+                if (m.note.isNotBlank()) Text(m.note, color = MonitorColors.text, fontSize = 13.sp, lineHeight = 18.sp)
+                com.pulsepointlabs.sarahmonitor.session.CheckIn.of(m).label?.let { Text("Check-in: $it", color = com.pulsepointlabs.sarahmonitor.ui.StressColor, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                if (metrics.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) { metrics.forEach { MetricChip(it) } }
+                if (!expanded) EventSpark(d, m.timestampMs, 120_000L, color, Modifier.fillMaxWidth().height(36.dp))
+                if (expanded) {
+                    // The moment in detail: pick a window, graphs around it, the ECG at that second.
+                    var span by remember(m.id) { mutableStateOf(2 * 60_000L) }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Window ±", color = MonitorColors.label, fontSize = 12.sp)
+                        listOf(30_000L to "30 s", 60_000L to "1 min", 120_000L to "2 min", 300_000L to "5 min", 600_000L to "10 min").forEach { (ms, l) ->
+                            val on = span == ms
+                            Text(l, color = if (on) MonitorColors.background else MonitorColors.label, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.background(if (on) MonitorColors.label else Color.Transparent, RoundedCornerShape(6.dp))
+                                    .border(1.dp, MonitorColors.label.copy(alpha = 0.4f), RoundedCornerShape(6.dp)).clickable { span = ms }.padding(horizontal = 7.dp, vertical = 3.dp))
+                        }
+                    }
+                    val from = m.timestampMs - span; val to = m.timestampMs + span
+                    val win = d.hr.filter { it.timestampMs in from..to }
+                    val ts = win.map { it.timestampMs }.toLongArray()
+                    MiniTraces(listOfNotNull(
+                        com.pulsepointlabs.sarahmonitor.session.InsightTrace("Heart rate", "bpm", ts, win.map { it.bpm.toDouble() }.toDoubleArray()),
+                        com.pulsepointlabs.sarahmonitor.session.InsightTrace("RMSSD", "ms", ts, win.map { it.rmssdMs ?: Double.NaN }.toDoubleArray()).takeIf { win.any { it.rmssdMs != null } },
+                        com.pulsepointlabs.sarahmonitor.session.InsightTrace("Stress", "", ts, win.map { it.stress?.toDouble() ?: Double.NaN }.toDoubleArray()).takeIf { win.any { it.stress != null } },
+                        d.pelvic.filter { it.timestampMs in from..to }.takeIf { it.isNotEmpty() }?.let { p -> com.pulsepointlabs.sarahmonitor.session.InsightTrace("Pelvic", "kPa", p.map { it.timestampMs }.toLongArray(), p.map { it.aboveRestKpa ?: Double.NaN }.toDoubleArray()) }
+                    ), from, to, m.timestampMs - 1_000L, m.timestampMs + 1_000L, color)
+                    if (d.hasEcg) EcgAtCursor(sessionId, m.timestampMs)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { confirmDelete = m }) { Text("Delete", color = MonitorColors.alarm, fontSize = 13.sp) }
+                        TextButton(onClick = { onEdit(m) }) { Text("Edit", fontSize = 13.sp) }
+                    }
+                }
+            }
+        }
+    }
+    confirmDelete?.let { m ->
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null }, containerColor = MonitorColors.panel,
+            title = { Text("Delete this event?", color = MonitorColors.text) },
+            text = { Text("${m.label} at ${clockLabel(m.timestampMs, seconds = true)}" + if (m.note.isNotBlank()) ": “${m.note.take(80)}”" else "", color = MonitorColors.label) },
+            confirmButton = { TextButton(onClick = { onDelete(m); confirmDelete = null }) { Text("Delete", color = MonitorColors.alarm) } },
+            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Keep") } }
+        )
     }
 }
 
@@ -710,14 +815,16 @@ private fun MiniTraces(traces: List<com.pulsepointlabs.sarahmonitor.session.Insi
         if (vals.size < 2) return@forEachIndexed
         val lo = vals.min(); val hi = vals.max().let { if (it - lo < 1e-6) lo + 1 else it }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.width(58.dp)) {
+            Column(Modifier.width(64.dp)) {
                 Text(tr.label, color = c, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                Text("${SessionAnalysis.num(lo)}–${SessionAnalysis.num(hi)}", color = MonitorColors.label, fontSize = 10.sp, maxLines = 1)
+                fun r(v: Double) = if (hi - lo >= 10) "${kotlin.math.round(v).toInt()}" else SessionAnalysis.num(v)
+                Text("${r(lo)}–${r(hi)}", color = MonitorColors.label, fontSize = 10.sp, maxLines = 1)
             }
             Canvas(Modifier.weight(1f).height(46.dp)) {
                 val span = (toMs - fromMs).coerceAtLeast(1L).toFloat()
                 fun x(t: Long) = (t - fromMs) / span * size.width
                 drawRect(c.copy(alpha = 0.12f), Offset(x(hiStart), 0f), androidx.compose.ui.geometry.Size((x(hiEnd) - x(hiStart)).coerceAtLeast(2f), size.height))
+                if (hiEnd - hiStart <= 2_000L) drawLine(color, Offset(x(hiStart), 0f), Offset(x(hiStart), size.height), 1.5f * density)
                 drawLine(MonitorColors.trendGrid, Offset(0f, size.height), Offset(size.width, size.height), 1f)
                 val path = Path(); var started = false; var lastT = Long.MIN_VALUE
                 for (k in tr.timestamps.indices) {
