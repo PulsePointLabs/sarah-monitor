@@ -223,7 +223,9 @@ object MonitorHub {
         val baselineStore = LoadBaselineStore(app)
         restingBaseline = baselineStore.load()
         heartEngine = HeartEngine(restingBaseline) { b -> restingBaseline = b; baselineStore.save(b) }
-        audio = AudioEngine(app) { recorder.active.value != null }
+        // A session prepared and waiting for OBS counts as recording: beeps and alerts shouldn't go quiet while you
+        // settle in before pressing Record in OBS.
+        audio = AudioEngine(app) { recorder.active.value != null || pendingSetup.value != null }
         BpPosition.load(app)
         com.pulsepointlabs.sarahmonitor.sleep.PositionCalibration.load(app)
         sleepStore = com.pulsepointlabs.sarahmonitor.sleep.SleepStore(app)
