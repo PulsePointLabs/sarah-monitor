@@ -12,9 +12,11 @@ android {
     defaultConfig {
         applicationId = "com.pulsepointlabs.sarahmonitor"
         minSdk = 26
+        // 64-bit ARM only (every current Samsung): keeps the offline speech libraries from quadrupling the APK.
+        ndk { abiFilters += listOf("arm64-v8a") }
         targetSdk = 35
-        versionCode = 31
-        versionName = "0.21.1"
+        versionCode = 32
+        versionName = "0.22.0"
     }
 
     // One signing key for every build (this machine, CI, anyone's PC), kept in the repo, so each
@@ -69,6 +71,8 @@ dependencies {
     implementation("androidx.savedstate:savedstate-ktx:1.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Offline speech for hands-free Sarah: hears "Sarah" on the phone; only what follows goes to OpenAI.
+    implementation("com.alphacephei:vosk-android:0.3.75")
     implementation("com.anthropic:anthropic-java:3.3.0")
     implementation("com.github.mik3y:usb-serial-for-android:3.8.1")
     implementation("androidx.room:room-ktx:$roomVersion")

@@ -56,6 +56,15 @@ object VoiceCommand {
         return t.substring(m.range.last + 1).trim().trimEnd('.').trim()
     }
 
+    /**
+     * The command text: from the cloud transcript when there is one (dropping the wake word, or whatever it was
+     * misheard as, since the phone already heard "Sarah"), otherwise from the offline transcript.
+     */
+    fun commandFrom(cloud: String?, offline: String): String {
+        if (cloud != null) return afterWake(cloud) ?: cloud.replaceFirst(Regex("^\\W*[\\p{L}']+[,.:!?]\\s*"), "").trim().trimEnd('.')
+        return afterWake(offline) ?: offline.trim()
+    }
+
     val BUCKETS = listOf("procedure_step", "sensation", "arousal_change", "near_climax", "climax", "physiological_change", "body_finding", "comfort", "general")
 
     private val NUMBER_WORDS = mapOf("zero" to 0, "one" to 1, "two" to 2, "three" to 3, "four" to 4, "five" to 5, "six" to 6, "seven" to 7, "eight" to 8, "nine" to 9, "ten" to 10)
@@ -141,10 +150,10 @@ Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or nu
 data class HandsFreeStatus(val listening: Boolean = false, val message: String = "Off", val lastLogged: String? = null)
 
 /**
- * Hands-free event logging. While on and a session is recording, the mic streams to live transcription; any
- * phrase that starts with "Sarah" becomes an event at the moment you started saying it. "Sarah" on its own gets a
- * tone and the next phrase is taken as the note. Claude sorts it into the session's event types and devices
- * (plain keyword rules without a key). Never logs anything that wasn't addressed to Sarah.
+ * Hands-free event logging. The phone listens on its own (offline) for "Sarah"; only the phrase that follows is
+ * sent to OpenAI for an accurate, punctuated transcript, and Claude sorts it into the session's event types and
+ * devices (keyword rules without a key). The event is timed to when you started speaking. Without a network the
+ * offline transcript is used, so nothing is lost. Never logs anything that wasn't addressed to Sarah.
  */
 class HandsFree(
     private val context: Context,
@@ -156,27 +165,33 @@ class HandsFree(
     private val allowedTypes: () -> List<MarkerTypes.Type>,
     private val gear: () -> List<GearItem>
 ) {
-    private val transcriber = com.pulsepointlabs.sarahmonitor.session.RealtimeTranscriber(context)
     private val _status = MutableStateFlow(HandsFreeStatus())
     val status: StateFlow<HandsFreeStatus> = _status
-    private var running = false
     private var paused = false
     private var wanted = false
+    private var preparing: Job? = null
     private var restart: Job? = null
-    /** After a bare "Sarah": the next phrase (within 10 s) is the note, timed from when "Sarah" was said. */
-    private var awaitingSince: Long? = null
+    private val ears = LocalEars(
+        context, scope,
+        onPhrase = { pcm, at, offline -> phrase(pcm, at, offline) },
+        onWakeOnly = { cue(true); _status.value = _status.value.copy(message = "Go ahead…") },
+        onProblem = { msg ->
+            _status.value = _status.value.copy(listening = false, message = "Reconnecting… ($msg)")
+            restart?.cancel()
+            restart = scope.launch { delay(3_000L); sync(wanted) }
+        }
+    )
 
-    /** Start/stop to match: enabled, recording, not paused for dictation, key + mic available. */
+    /** Start/stop to match: enabled, recording, not paused for dictation, mic allowed, model ready. */
     @Synchronized
     fun sync(recording: Boolean) {
         wanted = HandsFreeSettings.enabled.value && recording
-        val key = VoiceSettings.apiKey(context)
         val mic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         when {
-            !wanted || paused -> stop(if (!HandsFreeSettings.enabled.value) "Off" else if (paused) "Paused while you dictate" else "Waiting for a recording")
-            key.isBlank() -> stop("Needs the OpenAI key (Settings → API keys)")
+            !wanted || paused -> stop(if (!HandsFreeSettings.enabled.value) "Off" else if (paused) "Paused while you dictate" else "On · listens when you record")
             !mic -> stop("Needs microphone permission")
-            !running -> start(key)
+            ears.active || preparing?.isActive == true -> Unit
+            else -> prepareAndStart()
         }
     }
 
@@ -184,55 +199,62 @@ class HandsFree(
     @Synchronized
     fun pause(on: Boolean, recording: Boolean) { paused = on; sync(recording) }
 
-    private fun start(key: String) {
-        running = true
-        _status.value = HandsFreeStatus(true, "Listening for \"Sarah…\"", _status.value.lastLogged)
-        transcriber.start(
-            key, "",
-            onText = {}, onStatus = {}, onLevel = {},
-            onError = { msg ->
-                // Live sessions end now and then (time limits, network): reconnect while still wanted.
-                synchronized(this) { running = false }
-                _status.value = _status.value.copy(listening = false, message = "Reconnecting… ($msg)")
+    private fun prepareAndStart() {
+        preparing = scope.launch {
+            try {
+                if (!VoskModel.ready(context)) {
+                    _status.value = _status.value.copy(listening = false, message = "Getting Sarah's offline ears (one time, 40 MB)…")
+                    VoskModel.ensure(context) { p -> _status.value = _status.value.copy(message = "Getting Sarah's offline ears… $p%") }
+                }
+                val model = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { VoskModel.load(context) }
+                synchronized(this@HandsFree) {
+                    if (!wanted || paused) return@launch
+                    ears.start(model)
+                }
+                _status.value = _status.value.copy(listening = true, message = "Listening for \"Sarah…\"")
+            } catch (e: Exception) {
+                _status.value = _status.value.copy(listening = false, message = "Couldn't get the offline ears: ${e.message ?: "network"}. Retrying…")
                 restart?.cancel()
-                restart = scope.launch { delay(3_000L); sync(wanted) }
-            },
-            onUtterance = { text, at -> heard(text, at) },
-            continuous = true
-        )
+                restart = scope.launch { delay(30_000L); sync(wanted) }
+            }
+        }
     }
 
     private fun stop(message: String) {
         restart?.cancel()
-        if (running) { running = false; transcriber.stop() }
-        awaitingSince = null
+        preparing?.cancel(); preparing = null
+        ears.stop()
         _status.value = HandsFreeStatus(false, message, _status.value.lastLogged)
     }
 
-    private fun heard(text: String, at: Long) {
-        val command = VoiceCommand.afterWake(text)
-        val waitingFrom = awaitingSince?.takeIf { at - it < 10_000L }
-        when {
-            command == "" -> { awaitingSince = at; cue(true); _status.value = _status.value.copy(message = "Go ahead…") }
-            command != null -> handle(command, at, text)
-            waitingFrom != null -> { awaitingSince = null; handle(text, waitingFrom, text) }
-            else -> Unit // not for Sarah
+    /** A phrase that began with "Sarah": transcribe just this clip, sort it, log it. */
+    private fun phrase(pcm: ShortArray, at: Long, offline: String) {
+        _status.value = _status.value.copy(message = "Writing it down…")
+        scope.launch {
+            val key = VoiceSettings.apiKey(context)
+            val heard = if (key.isNotBlank() && pcm.isNotEmpty()) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val wav = com.pulsepointlabs.sarahmonitor.audio.BeatSynth.wav(pcm, LocalEars.RATE)
+                runCatching { WhisperTranscriber.transcribe(wav, key, "phrase.wav", "audio/wav", "gpt-4o-transcribe") }
+                    .recoverCatching { WhisperTranscriber.transcribe(wav, key, "phrase.wav", "audio/wav", "whisper-1") }
+                    .getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+            } else null
+            // The cloud transcript is better; the offline one keeps it working without a network.
+            val text = heard ?: offline
+            val command = VoiceCommand.commandFrom(heard, offline)
+            if (command.isBlank()) { _status.value = _status.value.copy(message = "Listening for \"Sarah…\""); return@launch }
+            handle(command, at, text)
         }
     }
 
-    private fun handle(command: String, at: Long, raw: String) {
-        if (command.isBlank()) return
+    private suspend fun handle(command: String, at: Long, raw: String) {
         val allowed = allowedTypes()
         val ids = allowed.map { it.id }.toSet()
         val g = gear()
-        _status.value = _status.value.copy(message = "Logging…")
-        scope.launch {
-            val event = ClaudeText.ask(VoiceCommand.claudePrompt(allowed, g), command, maxTokens = 400)?.let { VoiceCommand.parseClaude(it, ids, g) }
-                ?: VoiceCommand.parseLocal(command, ids, g)
-            mark(at, event, raw)
-            cue(false)
-            if (HandsFreeSettings.sayBack.value) speak(event.confirm)
-            _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = event.note)
-        }
+        val event = ClaudeText.ask(VoiceCommand.claudePrompt(allowed, g), command, maxTokens = 400)?.let { VoiceCommand.parseClaude(it, ids, g) }
+            ?: VoiceCommand.parseLocal(command, ids, g)
+        mark(at, event, raw)
+        cue(false)
+        if (HandsFreeSettings.sayBack.value) speak(event.confirm)
+        _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = event.note)
     }
 }

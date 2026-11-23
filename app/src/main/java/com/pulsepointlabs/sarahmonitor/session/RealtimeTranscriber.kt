@@ -52,8 +52,6 @@ class TranscriptAssembler(private val prefix: String = "") {
 
     fun pending(): Boolean = items.keys.any { it !in done && items[it]!!.isNotBlank() }
 
-    /** Forget a finished piece (hands-free listening hands each phrase on and keeps nothing). */
-    fun remove(itemId: String) { items.remove(itemId); done.remove(itemId); gaps.remove(itemId) }
 
     /** True once anything beyond the existing note has been transcribed. */
     fun hasNewText(): Boolean = items.values.any { it.isNotBlank() }
@@ -133,13 +131,10 @@ class RealtimeTranscriber(private val context: android.content.Context) {
     private var route: MicRoute.Route? = null
     private var onAutoStop: () -> Unit = {}
     private var autoStopMs = 0
-    /** Hands-free: each finished phrase with the wall-clock time its speech began. */
-    private var onUtterance: ((text: String, startedAtMs: Long) -> Unit)? = null
     /** Start of each spoken phrase (wall clock) and the silence before it, from our own voice detection. */
     private val speechStarts = ArrayDeque<Pair<Long, Long>>()
     private val itemStart = mutableMapOf<String, Long>()
     @Volatile private var micStartedAtMs = 0L
-    private var continuous = false
     private var lastSpeechEndAudioMs: Long? = null
 
     private lateinit var onText: (String) -> Unit
@@ -150,19 +145,14 @@ class RealtimeTranscriber(private val context: android.content.Context) {
 
     fun start(
         apiKey: String, existingText: String, onText: (String) -> Unit, onStatus: (String) -> Unit, onLevel: (Float) -> Unit, onError: (String) -> Unit,
-        onAutoStop: () -> Unit = {},
-        onUtterance: ((String, Long) -> Unit)? = null,
-        /** Hands-free: never stop on quiet, and don't build up a note. */
-        continuous: Boolean = false
+        onAutoStop: () -> Unit = {}
     ) {
         stop()
         this.apiKey = apiKey
         this.onAutoStop = onAutoStop
-        this.onUtterance = onUtterance
         synchronized(speechStarts) { speechStarts.clear() }
         itemStart.clear(); lastSpeechEndAudioMs = null
-        autoStopMs = if (continuous) 0 else (VoiceSettings.autoStopSeconds(context) * 1000).toInt()
-        this.continuous = continuous
+        autoStopMs = (VoiceSettings.autoStopSeconds(context) * 1000).toInt()
         peakDb = -120.0
         this.onText = onText; this.onStatus = onStatus; this.onLevel = onLevel; this.onError = onError
         assembler = TranscriptAssembler(existingText)
@@ -242,10 +232,8 @@ class RealtimeTranscriber(private val context: android.content.Context) {
                 val id = event.optString("item_id")
                 assembler.completed(id, event.optString("transcript"))
                 onText(VoiceTextNormalizer.normalize(assembler.text(), fixStrayCaps = false))
-                onUtterance?.let { cb -> event.optString("transcript").trim().takeIf { it.isNotEmpty() }?.let { cb(it, itemStart[id] ?: System.currentTimeMillis()) } }
-                if (continuous) { assembler.remove(id); itemStart.remove(id) }
                 // The fallback model takes a text prompt: give it the words so far, so it knows a sentence is still going.
-                else if (model == FALLBACK_MODEL) socket?.send(sessionUpdate(model, assembler.text().takeLast(300)).toString())
+                if (model == FALLBACK_MODEL) socket?.send(sessionUpdate(model, assembler.text().takeLast(300)).toString())
                 onStatus("Listening…")
                 if (!active && !assembler.pending()) finished?.complete(Unit)
             }
@@ -309,7 +297,7 @@ class RealtimeTranscriber(private val context: android.content.Context) {
                 noiseFloor = if (db < noiseFloor) db else noiseFloor * 0.995 + db * 0.005
                 onLevel(((db + 60) / 60).toFloat().coerceIn(0f, 1f))
                 val chunk = buf.copyOf(n)
-                if (!continuous) synchronized(captured) { if (captured.size() < MAX_CAPTURE_BYTES) captured.write(chunk) }
+                synchronized(captured) { if (captured.size() < MAX_CAPTURE_BYTES) captured.write(chunk) }
                 if (ready) sendAudio(chunk) else synchronized(pending) { pending.addLast(chunk); while (pending.size > 300) pending.removeFirst() }
                 val speaking = db > maxOf(noiseFloor + 12, -45.0)
                 // First speech of a new phrase: remember when it began and how long the pause before it was.
@@ -321,8 +309,8 @@ class RealtimeTranscriber(private val context: android.content.Context) {
                 // Optional: finish by itself once you've stopped talking for the set time.
                 if (autoStopMs > 0 && everSpoke && silentMs >= autoStopMs) { silentMs = Int.MIN_VALUE / 2; onAutoStop() }
                 // Our own turn detection for the live model (it has none): commit after 0.7 s of quiet.
-                // 1 s (1.2 s hands-free) so a thinking pause doesn't cut a sentence in two.
-                if (ready && model == LIVE_MODEL && spoke && quietMs >= (if (continuous) 1_200 else 1_000)) {
+                // 1 s, so a thinking pause doesn't cut a sentence in two.
+                if (ready && model == LIVE_MODEL && spoke && quietMs >= 1_000) {
                     socket?.send("""{"type":"input_audio_buffer.commit"}""")
                     spoke = false
                 }

@@ -122,7 +122,8 @@ class WhisperTranscriber(private val context: Context) {
 
         /** Vocabulary hint so Whisper spells the app's terms right. */
         const val PROMPT = "Event note for a physiology monitoring session. Terms: HR, HRV, RMSSD, SDNN, pNN50, " +
-            "CIVET, H10, Omron, BP, glucose, arousal, edging, plateau, orgasm, ejaculation, pelvic floor, kegel."
+            "CIVET, H10, Omron, BP, glucose, arousal, edging, plateau, orgasm, ejaculation, pelvic floor, kegel, " +
+            "Foley, French, catheter, balloon, glans, meatus, sphincter, urethra, instillation, enema, nozzle, castile, Howl, e-stim."
 
         fun transcribe(audio: ByteArray, apiKey: String, fileName: String = "note.m4a", fileType: String = "audio/mp4", model: String = "whisper-1"): String {
             val boundary = "----SarahMonitor" + UUID.randomUUID().toString().replace("-", "")
