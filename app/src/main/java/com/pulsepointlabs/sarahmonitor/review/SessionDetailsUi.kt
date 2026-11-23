@@ -129,7 +129,11 @@ fun FieldEditor(spec: FieldSpec, value: String?, color: Color, onChange: (String
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun FieldsForm(specs: List<FieldSpec>, values: Map<String, String>, color: Color, onChange: (Map<String, String>) -> Unit) {
-    val visible = specs.filter { s -> s.showIf?.let { (k, want) -> values[k] == want } ?: true }
+    val shown = specs.filter { it.applies(values) }
+    val extra = shown.filter { it.more }
+    // "More details" opens by itself when one of those fields already has a value.
+    var showMore by remember { mutableStateOf(extra.any { !values[it.key].isNullOrBlank() }) }
+    val visible = shown.filter { !it.more || showMore }
     fun set(key: String, v: String?) = onChange(if (v == null) values - key else values + (key to v))
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         var i = 0
@@ -146,15 +150,24 @@ fun FieldsForm(specs: List<FieldSpec>, values: Map<String, String>, color: Color
                 i++
             }
         }
+        if (extra.isNotEmpty()) Row(
+            Modifier.clickable { showMore = !showMore }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(if (showMore) "Fewer details" else "More details", color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Icon(if (showMore) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
+        }
     }
 }
 
 /** Devices / products: add from the list, fill in what matters for each, remove. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun GearEditor(items: List<GearItem>, available: List<GearType>, onChange: (List<GearItem>) -> Unit) {
+fun GearEditor(items: List<GearItem>, available: List<GearType>, lastGear: List<GearItem> = emptyList(), onChange: (List<GearItem>) -> Unit) {
     var open by remember { mutableStateOf(items.lastOrNull()?.id) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (items.isEmpty() && lastGear.isNotEmpty()) {
+            Pill("↺ Same as last time: " + lastGear.joinToString(", ") { it.type.label }, false, deviceColor) { onChange(lastGear); open = null }
+        }
         items.forEach { g ->
             val expanded = open == g.id
             Column(
@@ -203,7 +216,9 @@ fun SessionDetailsDialog(
     onDismiss: () -> Unit,
     onSave: (SessionDetails) -> Unit,
     /** Setup only: start when OBS starts recording (shown when the OBS link is on). */
-    onArmObs: ((SessionDetails) -> Unit)? = null
+    onArmObs: ((SessionDetails) -> Unit)? = null,
+    /** Devices from last time, offered as one tap (never pre-filled). */
+    lastGear: List<GearItem> = emptyList()
 ) {
     var d by remember { mutableStateOf(initial) }
     val showPre = mode != DetailsMode.WrapUp
@@ -228,7 +243,7 @@ fun SessionDetailsDialog(
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val before: @Composable () -> Unit = { if (showPre) Block("Before", MonitorColors.sdnn) { FieldsForm(DetailForms.pre, d.pre, MonitorColors.sdnn) { d = d.copy(pre = it) } } }
                 val after: @Composable () -> Unit = { if (showPost) Block("After", MonitorColors.good) { FieldsForm(DetailForms.post(category), d.post, MonitorColors.good) { d = d.copy(post = it) } } }
-                val devices: @Composable () -> Unit = { if (showGear) Block("Devices & products", deviceColor) { GearEditor(d.gear, DetailForms.gearFor(category)) { d = d.copy(gear = it) } } }
+                val devices: @Composable () -> Unit = { if (showGear) Block("Devices & products", deviceColor) { GearEditor(d.gear, DetailForms.gearFor(category), lastGear) { d = d.copy(gear = it) } } }
                 if (maxWidth >= 900.dp) {
                     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) { before(); after() }
@@ -258,7 +273,7 @@ fun DetailsCard(details: SessionDetails, category: SessionCategory?, onEdit: () 
             Text("Nothing recorded yet: how you felt, what you used, how it went.", color = MonitorColors.label, fontSize = 13.sp)
             return@Column
         }
-        fun lines(specs: List<FieldSpec>, values: Map<String, String>) = specs.mapNotNull { f ->
+        fun lines(specs: List<FieldSpec>, values: Map<String, String>) = specs.filter { it.applies(values) }.mapNotNull { f ->
             val v = values[f.key]?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             when (f.kind) {
                 FieldKind.Toggle -> if (v == "true") f.label else null

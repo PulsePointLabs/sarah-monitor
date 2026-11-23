@@ -466,7 +466,8 @@ private fun MonitorScreen(
     setupFor?.let { cat ->
         com.pulsepointlabs.sarahmonitor.review.SessionDetailsDialog(
             mode = com.pulsepointlabs.sarahmonitor.review.DetailsMode.Setup, category = cat,
-            initial = com.pulsepointlabs.sarahmonitor.session.LastSetup.gearFor(context, cat),
+            initial = com.pulsepointlabs.sarahmonitor.session.SessionDetails(),
+            lastGear = com.pulsepointlabs.sarahmonitor.session.LastSetup.lastGear(context, cat),
             onDismiss = { setupFor = null },
             onSave = { d -> setupFor = null; com.pulsepointlabs.sarahmonitor.session.LastSetup.remember(context, cat, d); MonitorHub.startSession(cat, details = d) },
             onArmObs = if (obsOn) { d ->

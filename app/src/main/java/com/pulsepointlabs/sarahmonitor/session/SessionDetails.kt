@@ -12,118 +12,116 @@ import java.util.UUID
 
 enum class FieldKind { Choice, Multi, Number, Text, Toggle, Scale }
 
-/** One form field. [showIf] = (other key, value) that must be set for this field to apply. */
+/**
+ * One form field. The essentials show by default; [more] fields sit behind "More details". [showIf] hides a
+ * field until it applies (ejaculate questions only after a climax with ejaculation, "where?" only with discomfort).
+ */
 data class FieldSpec(
     val key: String,
     val label: String,
     val kind: FieldKind,
     val options: List<String> = emptyList(),
     val unit: String? = null,
-    val showIf: Pair<String, String>? = null,
-    val hint: String? = null
-)
+    val more: Boolean = false,
+    val hint: String? = null,
+    val showIf: ((Map<String, String>) -> Boolean)? = null
+) {
+    fun applies(values: Map<String, String>) = showIf?.invoke(values) ?: true
+}
 
-private fun choice(key: String, label: String, vararg o: String, showIf: Pair<String, String>? = null) = FieldSpec(key, label, FieldKind.Choice, o.toList(), showIf = showIf)
-private fun multi(key: String, label: String, vararg o: String, showIf: Pair<String, String>? = null) = FieldSpec(key, label, FieldKind.Multi, o.toList(), showIf = showIf)
-private fun number(key: String, label: String, unit: String, showIf: Pair<String, String>? = null) = FieldSpec(key, label, FieldKind.Number, unit = unit, showIf = showIf)
-private fun text(key: String, label: String, hint: String? = null, showIf: Pair<String, String>? = null) = FieldSpec(key, label, FieldKind.Text, showIf = showIf, hint = hint)
-private fun toggle(key: String, label: String) = FieldSpec(key, label, FieldKind.Toggle)
-private fun scale(key: String, label: String, hint: String? = null) = FieldSpec(key, label, FieldKind.Scale, hint = hint)
+private fun on(key: String): (Map<String, String>) -> Boolean = { it[key] == "true" }
+private fun eq(key: String, v: String): (Map<String, String>) -> Boolean = { it[key] == v }
+private fun above0(key: String): (Map<String, String>) -> Boolean = { (it[key]?.toIntOrNull() ?: 0) > 0 }
+private fun has(key: String, vararg any: String): (Map<String, String>) -> Boolean = { m -> m[key].orEmpty().split('|').any { it in any } }
 
+private fun choice(key: String, label: String, vararg o: String, more: Boolean = false, showIf: ((Map<String, String>) -> Boolean)? = null) = FieldSpec(key, label, FieldKind.Choice, o.toList(), more = more, showIf = showIf)
+private fun multi(key: String, label: String, vararg o: String, more: Boolean = false, showIf: ((Map<String, String>) -> Boolean)? = null) = FieldSpec(key, label, FieldKind.Multi, o.toList(), more = more, showIf = showIf)
+private fun number(key: String, label: String, unit: String, more: Boolean = false, showIf: ((Map<String, String>) -> Boolean)? = null) = FieldSpec(key, label, FieldKind.Number, unit = unit, more = more, showIf = showIf)
+private fun text(key: String, label: String, hint: String? = null, more: Boolean = false, showIf: ((Map<String, String>) -> Boolean)? = null) = FieldSpec(key, label, FieldKind.Text, more = more, hint = hint, showIf = showIf)
+private fun toggle(key: String, label: String, more: Boolean = false) = FieldSpec(key, label, FieldKind.Toggle, more = more)
+private fun scale(key: String, label: String, hint: String? = null, more: Boolean = false, showIf: ((Map<String, String>) -> Boolean)? = null) = FieldSpec(key, label, FieldKind.Scale, more = more, hint = hint, showIf = showIf)
+
+/** Same five words as the event check-in, so "how you feel" means one thing everywhere. */
+val FEELING = arrayOf("Awful", "Low", "OK", "Good", "Great")
 private val LUBES = arrayOf("Water-based", "Silicone", "Hybrid", "Oil", "Lidocaine gel", "Sterile surgical", "Saliva", "None")
-private val PADS = arrayOf("Glans", "Frenulum", "Penile shaft", "Base of penis", "Scrotum", "Perineum", "Inner thigh", "Lower abdomen", "Buttock", "Anal electrode", "Urethral electrode", "Other")
-private val MATERIALS = arrayOf("Silicone", "TPE", "Glass", "Stainless steel", "ABS plastic", "Other")
+private val PADS = arrayOf("Glans", "Frenulum", "Shaft", "Base", "Scrotum", "Perineum", "Inner thigh", "Lower abdomen", "Buttock", "Anal electrode", "Urethral electrode")
+private val MATERIALS = arrayOf("Silicone", "TPE", "Glass", "Steel", "ABS", "Other")
 
-/** A device or product used in a session, with the details worth recording for it. */
+/** A device or product used in a session: a few key facts up front, the rest under "More details". */
 enum class GearType(val label: String, val lane: Set<Lane>, val fields: List<FieldSpec>) {
     Foley("Foley catheter", setOf(Lane.Exploration), listOf(
         number("size_fr", "Size", "Fr"),
-        choice("material", "Material", "Silicone", "Latex", "Silicone-coated latex", "Hydrophilic-coated", "PVC / vinyl"),
-        choice("tip", "Tip", "Straight", "Coudé", "Council", "Tiemann"),
-        number("balloon_ml", "Balloon fill", "mL"),
-        choice("balloon_fluid", "Balloon filled with", "Sterile water", "Saline", "Air", "Not inflated"),
-        toggle("lube_instilled", "Lubricant instilled into urethra"),
-        choice("lube_type", "Instilled lubricant", *LUBES, showIf = "lube_instilled" to "true"),
-        number("lube_ml", "Amount instilled", "mL", showIf = "lube_instilled" to "true"),
-        choice("lube_method", "Instilled with", "Syringe", "Applicator tip", "Prefilled lube syringe", showIf = "lube_instilled" to "true"),
-        choice("drainage", "Drainage", "Leg bag", "Night bag", "Catheter valve", "Plug / spigot", "Open"),
-        number("depth_cm", "Inserted length", "cm"),
-        text("notes", "Notes")
+        number("balloon_ml", "Balloon", "mL"),
+        choice("material", "Material", "Silicone", "Latex", "Coated latex", "Hydrophilic", "PVC"),
+        toggle("lube_instilled", "Lube instilled into urethra"),
+        choice("lube_type", "Instilled lube", *LUBES, showIf = on("lube_instilled")),
+        number("lube_ml", "Amount", "mL", showIf = on("lube_instilled")),
+        choice("tip", "Tip", "Straight", "Coudé", "Council", more = true),
+        choice("balloon_fluid", "Balloon fluid", "Sterile water", "Saline", "Air", more = true),
+        choice("drainage", "Drainage", "Leg bag", "Night bag", "Valve", "Plug", "Open", more = true),
+        number("depth_cm", "Inserted length", "cm", more = true),
+        text("notes", "Notes", more = true)
     )),
     Sound("Urethral sound", setOf(Lane.Exploration), listOf(
-        choice("style", "Style", "Hegar", "Dittel", "Van Buren", "Rosebud", "Pratt", "Plug / penis plug", "Other"),
+        choice("style", "Style", "Hegar", "Dittel", "Van Buren", "Rosebud", "Plug", "Other"),
         number("size_mm", "Size", "mm"),
-        number("size_fr", "Size", "Fr"),
-        choice("material", "Material", "Stainless steel", "Titanium", "Silicone", "Other"),
-        toggle("lube_instilled", "Lubricant instilled into urethra"),
-        choice("lube_type", "Lubricant", *LUBES),
-        number("lube_ml", "Amount instilled", "mL", showIf = "lube_instilled" to "true"),
-        number("depth_cm", "Depth reached", "cm"),
-        toggle("estim", "Used as an e-stim electrode"),
-        text("notes", "Notes")
+        choice("lube_type", "Lube", *LUBES),
+        choice("material", "Material", "Steel", "Titanium", "Silicone", more = true),
+        number("lube_ml", "Lube instilled", "mL", more = true),
+        number("depth_cm", "Depth reached", "cm", more = true),
+        toggle("estim", "Used as an e-stim electrode", more = true),
+        text("notes", "Notes", more = true)
     )),
     Enema("Enema", setOf(Lane.Exploration), listOf(
-        number("volume_ml", "Volume instilled", "mL"),
-        multi("solution", "Solution", "Plain water", "Saline (isotonic)", "Castile soap", "Mineral oil", "Other additive"),
-        text("additive", "Additive / amount", "e.g. 1 tbsp castile soap per litre"),
-        choice("isotonic", "Tonicity", "Isotonic", "Hypotonic (plain water)", "Hypertonic", "Not sure"),
-        choice("temperature", "Temperature", "Warm", "Body temperature", "Room temperature", "Cool", "Cold"),
-        choice("delivery", "Delivery", "Bag & tube", "Bulb", "Shower / hose", "Syringe", "Other"),
-        choice("nozzle", "Nozzle", "Rigid short", "Rigid long", "Soft flexible", "Deep / colon tube", "Inflatable (single balloon)", "Inflatable (double balloon)", "Bulb tip", "Other"),
-        number("nozzle_depth_cm", "Nozzle depth", "cm"),
-        choice("flow", "Flow", "Slow", "Moderate", "Fast", "Varied"),
-        number("retention_min", "Retention target", "min"),
-        choice("lube_type", "Lubricant", *LUBES),
-        number("rounds", "Rounds", "×"),
-        text("notes", "Comfort / notes")
+        number("volume_ml", "Volume", "mL"),
+        multi("solution", "Solution", "Water", "Saline", "Castile soap", "Other"),
+        text("additive", "How much soap / additive", "e.g. 1 tbsp per litre", showIf = has("solution", "Castile soap", "Other")),
+        choice("temperature", "Temperature", "Warm", "Body temp", "Room temp", "Cool"),
+        choice("nozzle", "Nozzle", "Rigid short", "Rigid long", "Soft flexible", "Deep tube", "Inflatable", "Double balloon", "Bulb tip"),
+        choice("delivery", "Delivery", "Bag", "Bulb", "Shower", "Syringe", more = true),
+        choice("flow", "Flow", "Slow", "Moderate", "Fast", more = true),
+        number("nozzle_depth_cm", "Nozzle depth", "cm", more = true),
+        number("retention_min", "Held for", "min", more = true),
+        number("rounds", "Rounds", "×", more = true),
+        text("notes", "Notes", more = true)
     )),
-    Lubricant("Lubricant", setOf(Lane.Exploration, Lane.Sexual), listOf(
+    Lubricant("Lube", setOf(Lane.Exploration, Lane.Sexual), listOf(
         choice("type", "Type", *LUBES),
-        text("brand", "Brand / product"),
-        choice("amount", "Amount", "Light", "Moderate", "Generous", "Reapplied"),
-        text("notes", "Notes")
+        text("brand", "Product", more = true)
     )),
     Sleeve("Sleeve / stroker", setOf(Lane.Sexual), listOf(
-        choice("material", "Material", "Silicone", "TPE", "Cyberskin", "Other"),
-        text("brand", "Brand / model"),
-        choice("tightness", "Fit", "Loose", "Snug", "Tight"),
-        toggle("warmed", "Warmed"),
-        text("notes", "Notes")
+        text("brand", "Which one"),
+        choice("tightness", "Fit", "Loose", "Snug", "Tight", more = true),
+        toggle("warmed", "Warmed", more = true)
     )),
     AnalToy("Anal toy", setOf(Lane.Sexual, Lane.Exploration), listOf(
-        choice("kind", "Kind", "Plug", "Dilator", "Dildo", "Prostate massager", "Vibrator", "Beads", "Other"),
-        text("size", "Size", "e.g. 3.5 cm diameter / set #4"),
-        choice("material", "Material", *MATERIALS),
-        toggle("vibration", "Vibration on"),
-        choice("lube_type", "Lubricant", *LUBES),
-        text("notes", "Notes")
+        choice("kind", "Kind", "Plug", "Dilator", "Dildo", "Prostate", "Vibrator", "Beads"),
+        text("size", "Size", "e.g. 3.5 cm / #4"),
+        choice("material", "Material", *MATERIALS, more = true),
+        toggle("vibration", "Vibration on", more = true)
     )),
     Vibrator("Vibrator / wand", setOf(Lane.Sexual), listOf(
-        text("model", "Model"),
-        text("placement", "Placement", "e.g. frenulum, perineum"),
-        text("setting", "Setting / pattern"),
-        text("notes", "Notes")
+        text("placement", "Where", "e.g. frenulum, perineum"),
+        text("setting", "Setting", more = true)
     )),
     Estim("E-stim (Howl)", setOf(Lane.Sexual, Lane.Exploration), listOf(
-        multi("pads_a", "Channel A pads", *PADS),
-        multi("pads_b", "Channel B pads", *PADS),
-        choice("electrode_kind", "Electrodes", "Adhesive pads", "Conductive rubber", "Loops / rings", "Insertable", "Mixed"),
+        multi("pads_a", "Channel A", *PADS),
+        multi("pads_b", "Channel B", *PADS),
         text("mode", "Mode / pattern"),
-        number("start_a", "Channel A start", "level"),
-        number("max_a", "Channel A max", "level"),
-        number("start_b", "Channel B start", "level"),
-        number("max_b", "Channel B max", "level"),
-        number("frequency_hz", "Frequency", "Hz"),
-        text("notes", "Notes")
+        number("max_a", "A max", "level"),
+        number("max_b", "B max", "level"),
+        choice("electrode_kind", "Electrodes", "Pads", "Rubber", "Loops", "Insertable", more = true),
+        number("start_a", "A start", "level", more = true),
+        number("start_b", "B start", "level", more = true),
+        number("frequency_hz", "Frequency", "Hz", more = true)
     )),
-    Other("Other device", setOf(Lane.Sexual, Lane.Exploration), listOf(
+    Other("Something else", setOf(Lane.Sexual, Lane.Exploration), listOf(
         text("name", "What it is"),
-        text("details", "Details"),
-        text("notes", "Notes")
+        text("details", "Details", more = true)
     ));
 
-    /** Short summary for lists: "16 Fr Silicone · lube 10 mL". */
-    fun summary(v: Map<String, String>): String = fields.filter { it.key != "notes" && !v[it.key].isNullOrBlank() && it.kind != FieldKind.Toggle }
+    /** Short summary for lists: "16 Fr · 10 mL · Silicone". */
+    fun summary(v: Map<String, String>): String = fields.filter { it.applies(v) && it.key != "notes" && it.kind != FieldKind.Toggle && !v[it.key].isNullOrBlank() }
         .take(4).joinToString(" · ") { f -> v[f.key]!!.replace("|", ", ") + (f.unit?.let { u -> if (u == "×") "×" else " $u" } ?: "") }
 }
 
@@ -139,49 +137,48 @@ fun SessionCategory.lanes(): Set<Lane> = when (this) {
 
 object DetailForms {
     val pre: List<FieldSpec> = listOf(
-        scale("feeling", "How you feel", "0 awful · 10 great"),
+        choice("feeling", "How you feel", *FEELING),
         scale("stress", "Stress", "0 none · 10 extreme"),
-        scale("arousal", "Arousal right now"),
-        scale("energy", "Energy"),
-        choice("hydration", "Hydration", "Low", "OK", "Well hydrated"),
-        choice("last_ejaculation", "Last ejaculation", "Today", "Yesterday", "2–3 days", "4–7 days", "Over a week"),
-        multi("substances", "In the last few hours", "Caffeine", "Nicotine", "Alcohol", "THC", "Medication", "None"),
-        text("purpose", "Plan / what you're exploring"),
-        text("notes", "Notes")
+        scale("arousal", "Arousal"),
+        text("notes", "Notes / plan"),
+        scale("energy", "Energy", more = true),
+        choice("hydration", "Hydration", "Low", "OK", "Good", more = true),
+        choice("last_ejaculation", "Last ejaculation", "Today", "Yesterday", "2–3 days", "4–7 days", "Over a week", more = true),
+        multi("substances", "Last few hours", "Caffeine", "Nicotine", "Alcohol", "THC", "Medication", more = true)
     )
 
+    private val climaxed: (Map<String, String>) -> Boolean = { it["outcome"].orEmpty().startsWith("Climax") }
+
     val postSexual: List<FieldSpec> = listOf(
-        choice("outcome", "Outcome", "Climax with ejaculation", "Climax, no ejaculation (dry)", "Edged, no climax", "Stopped early"),
-        scale("climax_intensity", "Climax intensity"),
+        choice("outcome", "Outcome", "Climax with ejaculation", "Climax, dry", "Edged only", "Stopped early"),
+        scale("climax_intensity", "Climax intensity", showIf = climaxed),
+        choice("ejac_volume", "Volume", "Small", "Moderate", "Large", showIf = eq("outcome", "Climax with ejaculation")),
+        choice("ejac_force", "Force", "Dribble", "Steady", "Spurts", "Strong spurts", showIf = eq("outcome", "Climax with ejaculation")),
+        choice("ejac_consistency", "Consistency", "Watery", "Normal", "Thick", "Gel / clumpy", showIf = eq("outcome", "Climax with ejaculation")),
+        choice("ejac_color", "Colour", "Clear", "White / grey", "Yellowish", "Pink / red", showIf = eq("outcome", "Climax with ejaculation")),
         scale("satisfaction", "Satisfaction"),
-        scale("erection_stability", "Erection stability", "0 couldn't maintain · 10 firm throughout"),
-        choice("ejac_volume", "Ejaculate volume", "None", "Small", "Moderate", "Large"),
-        choice("ejac_consistency", "Consistency", "Watery", "Normal", "Thick", "Clumpy / gel"),
-        choice("ejac_color", "Colour", "Clear", "White / grey", "Yellowish", "Pink or red-tinged"),
-        choice("ejac_force", "Force", "Dribble", "Steady flow", "Spurts", "Strong spurts"),
-        number("contractions", "Contractions felt", "×"),
+        scale("erection_stability", "Erection stability", "0 couldn't keep it · 10 firm throughout"),
         scale("discomfort", "Discomfort"),
-        text("discomfort_where", "Where / what"),
-        scale("feeling_after", "How you feel now"),
-        text("notes", "Notes")
+        text("discomfort_where", "Where / what", showIf = above0("discomfort")),
+        choice("feeling_after", "How you feel now", *FEELING),
+        text("notes", "What you noticed"),
+        number("contractions", "Contractions felt", "×", more = true)
     )
 
     val postExploration: List<FieldSpec> = listOf(
-        choice("result", "How it went", "Completed as planned", "Partly", "Stopped early"),
-        scale("comfort", "Overall comfort", "0 very uncomfortable · 10 completely comfortable"),
+        choice("result", "How it went", "As planned", "Partly", "Stopped early"),
+        scale("comfort", "Comfort", "0 very uncomfortable · 10 completely fine"),
         scale("max_discomfort", "Worst discomfort"),
-        text("discomfort_where", "Where / what"),
-        choice("aftereffects", "After-effects", "None", "Mild irritation", "Burning on urination", "Spotting / blood", "Cramping", "Other"),
-        number("retention_min", "Enema retention achieved", "min"),
-        text("findings", "Findings / what you noticed"),
-        scale("feeling_after", "How you feel now"),
-        text("notes", "Notes")
+        text("discomfort_where", "Where / what", showIf = above0("max_discomfort")),
+        multi("aftereffects", "After-effects", "None", "Irritation", "Burning", "Spotting", "Cramping"),
+        choice("feeling_after", "How you feel now", *FEELING),
+        text("notes", "What you noticed")
     )
 
     val postGeneral: List<FieldSpec> = listOf(
-        scale("feeling_after", "How you feel now"),
+        choice("feeling_after", "How you feel now", *FEELING),
         scale("stress_after", "Stress now"),
-        text("notes", "Notes")
+        text("notes", "What you noticed")
     )
 
     fun post(category: SessionCategory?): List<FieldSpec> {
@@ -242,7 +239,7 @@ data class SessionDetails(
 
     /** Readable lines for exports and Sarah's context. */
     fun describe(category: SessionCategory?): List<String> = buildList {
-        fun fmt(specs: List<FieldSpec>, values: Map<String, String>) = specs.mapNotNull { f ->
+        fun fmt(specs: List<FieldSpec>, values: Map<String, String>) = specs.filter { it.applies(values) }.mapNotNull { f ->
             val v = values[f.key]?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             when (f.kind) {
                 FieldKind.Toggle -> if (v == "true") f.label else null
@@ -281,7 +278,7 @@ data class SessionDetails(
     }
 }
 
-/** Remembers the devices used last time for each session type, so setup starts pre-filled (check-in stays blank). */
+/** Remembers the devices used last time per session type; setup offers them (one tap), never pre-fills. */
 object LastSetup {
     private fun prefs(c: android.content.Context) = c.applicationContext.getSharedPreferences("sarahmonitor_last_setup", android.content.Context.MODE_PRIVATE)
 
@@ -289,8 +286,6 @@ object LastSetup {
         prefs(c).edit().putString(category.name, SessionDetails(gear = d.gear).toJson()).apply()
     }
 
-    fun gearFor(c: android.content.Context, category: SessionCategory): SessionDetails {
-        val last = SessionDetails.parse(prefs(c).getString(category.name, null))
-        return SessionDetails(gear = last.gear.map { it.copy(id = UUID.randomUUID().toString()) })
-    }
+    fun lastGear(c: android.content.Context, category: SessionCategory): List<GearItem> =
+        SessionDetails.parse(prefs(c).getString(category.name, null)).gear.map { it.copy(id = UUID.randomUUID().toString()) }
 }

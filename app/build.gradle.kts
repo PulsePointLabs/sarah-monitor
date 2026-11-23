@@ -13,8 +13,8 @@ android {
         applicationId = "com.pulsepointlabs.sarahmonitor"
         minSdk = 26
         targetSdk = 35
-        versionCode = 28
-        versionName = "0.20.0"
+        versionCode = 29
+        versionName = "0.20.1"
     }
 
     // One signing key for every build (this machine, CI, anyone's PC), kept in the repo, so each
