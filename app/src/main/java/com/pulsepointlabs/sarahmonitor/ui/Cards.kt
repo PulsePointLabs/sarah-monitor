@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -226,7 +228,7 @@ private fun HrvCard() {
                 HrvItem("pNN50", fmt(heart.pnn50Percent), MonitorColors.pnn50, 3, Metric.Pnn50)
             )
             if (wide) {
-                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     items.forEach { HrvValue(it, recent, Modifier.weight(1f).fillMaxSize()) }
                 }
             } else {
@@ -301,20 +303,21 @@ private enum class TrendWindow(val label: String, val ms: Long?) {
 @Composable
 private fun WindowPicker(selected: TrendWindow, onSelect: (TrendWindow) -> Unit) {
     val s = LocalCardScale.current
-    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+    // Real buttons: at least 30 dp tall and 34 dp wide, so they're easy to hit.
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
         TrendWindow.entries.forEach { w ->
             val on = w == selected
-            Text(
-                w.label,
-                color = if (on) MonitorColors.background else MonitorColors.label,
-                fontSize = s.sp(11f),
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .background(if (on) MonitorColors.label else Color.Transparent, RoundedCornerShape(4.dp))
-                    .border(1.dp, MonitorColors.label.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
+            Box(
+                Modifier
+                    .heightIn(min = 30.dp).widthIn(min = 34.dp)
+                    .background(if (on) MonitorColors.label else Color.Transparent, RoundedCornerShape(6.dp))
+                    .border(1.dp, MonitorColors.label.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
                     .clickable { onSelect(w) }
-                    .padding(horizontal = 5.dp, vertical = 1.dp)
-            )
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(w.label, color = if (on) MonitorColors.background else MonitorColors.label, fontSize = s.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+            }
         }
     }
 }
@@ -331,12 +334,13 @@ private fun TrendCardFrame(
     val trends by MonitorHub.trends.collectAsState()
     val end = trends.lastOrNull()?.timestampMs ?: System.currentTimeMillis()
     val start = window.ms?.let { end - it } ?: (trends.firstOrNull()?.timestampMs ?: end - 60_000L)
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        CardTitle(title, color, unit) {
-            current()
+    FitColumn(Modifier.fillMaxSize()) {
+        // The window buttons always stay; the current value beside the title gives way first if space is short.
+        fixed { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CardTitle(title, color, unit, Modifier.weight(1f)) { current() }
             WindowPicker(window) { window = it }
-        }
-        Box(Modifier.fillMaxWidth().weight(1f)) { content(start, end) }
+        } }
+        flex(minDp = 50f) { Box(Modifier.fillMaxSize()) { content(start, end) } }
     }
 }
 

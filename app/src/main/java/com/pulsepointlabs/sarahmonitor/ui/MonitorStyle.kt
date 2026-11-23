@@ -259,7 +259,7 @@ fun BigReading(
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val chars = max(maxChars, value.length).coerceAtLeast(2)
         val leadingEm = if (leading != null) 0.8f else 0f
-        val arrowEm = if (trendStrength != null) 0.42f else 0f
+        val arrowEm = if (trendStrength != null) 0.5f else 0f
         val textEm = chars * 0.6f + 0.1f
         // Two ways to place the trend line: beside the number, or underneath it. Use whichever lets the
         // number be bigger. The choice depends only on the box size, so it doesn't flip as values change.
@@ -267,7 +267,9 @@ fun BigReading(
         val belowSize = if (trend == null) 0f else min(maxWidth.value / (textEm + leadingEm + arrowEm + 0.05f), maxHeight.value * 0.9f / 1.4f)
         val below = trend != null && belowSize > besideSize * 1.15f
         // Never bigger than the box (it would spill onto the chips), never below readable unless the box is.
-        val sizeDp = min(if (below) belowSize else besideSize, maxSizeDp).coerceAtLeast(min(MinTextSp + 6f, maxHeight.value * 0.9f))
+        // Capped by the card's width too, so one tall card doesn't get a giant number next to its neighbours.
+        val cap = min(maxSizeDp, LocalCardScale.current.widthDp * 0.3f)
+        val sizeDp = min(if (below) belowSize else besideSize, cap).coerceAtLeast(min(MinTextSp + 6f, maxHeight.value * 0.9f))
         val fontSize = with(LocalDensity.current) { sizeDp.dp.toSp() }
         val shown by androidx.compose.animation.animateColorAsState(color, androidx.compose.animation.core.tween(400), label = "reading-color")
         val number: @Composable () -> Unit = {
@@ -306,7 +308,7 @@ fun BigReading(
                     )
                 }
                 if (trendStrength != null) {
-                    TrendArrows(trendStrength, Modifier.size((sizeDp * arrowEm).dp, (sizeDp * 0.82f).dp))
+                    TrendArrows(trendStrength, Modifier.padding(start = (sizeDp * 0.08f).dp).size((sizeDp * arrowEm).dp, (sizeDp * 0.82f).dp))
                 }
                 if (trend != null && !below) {
                     TrendLine(trend, trendColor, Modifier.size((sizeDp * 1.7f).dp, (sizeDp * 0.62f).dp).padding(start = (sizeDp * 0.12f).dp))
@@ -340,15 +342,7 @@ fun TrendArrows(strength: Double, modifier: Modifier) {
         val step = h / 3.6f
         val stroke = (w * 0.16f).coerceAtLeast(2f)
         val thresholds = floatArrayOf(0.12f, 0.4f, 0.7f)
-        // Steady: a short dim dash, so you can see the indicator is there and reads "flat".
-        val steady = (1f - mag / 0.12f).coerceIn(0f, 1f)
-        if (steady > 0f) {
-            drawLine(
-                MonitorColors.label.copy(alpha = 0.55f * steady),
-                androidx.compose.ui.geometry.Offset(w * 0.2f, h * 0.5f), androidx.compose.ui.geometry.Offset(w * 0.8f, h * 0.5f),
-                strokeWidth = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round
-            )
-        }
+        // Steady: nothing. (A flat dash beside a number reads as a minus sign: "119-".)
         for (i in 0 until 3) {
             val a = ((mag - thresholds[i]) / 0.15f).coerceIn(0f, 1f)
             if (a <= 0f) continue

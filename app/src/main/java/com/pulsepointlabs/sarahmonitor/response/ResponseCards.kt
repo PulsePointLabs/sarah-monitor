@@ -411,8 +411,8 @@ fun SarahLiveCard() {
     com.pulsepointlabs.sarahmonitor.ui.FitColumn(Modifier.fillMaxSize(), gap = 5.dp) {
         fixed { CardTitle("Sarah", ClimaxPink) { Pill(if (on) "On" else "Off", ClimaxPink, on) { ResponseSettings.setCoachOn(!on) } } }
         flex(minDp = 20f) { Text(
-            last?.let { "“$it”" } ?: status, color = if (last != null) MonitorColors.text else MonitorColors.label,
-            fontSize = s.sp(if (last != null) 15f else 12f), maxLines = 4, overflow = TextOverflow.Ellipsis,
+            last?.let { "“$it”" } ?: if (!on) "Live feedback is off." else status, color = if (last != null) MonitorColors.text else MonitorColors.label,
+            fontSize = s.sp(if (last != null) 15f else 12f), lineHeight = s.sp(if (last != null) 20f else 16f), maxLines = 4, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxSize()
         ) }
         // Session type and how she talks: one tidy row each, choices in a menu (no stack of pills).

@@ -28,11 +28,11 @@ class FitScope {
     fun fixed(drop: Int = 0, content: @Composable () -> Unit) { parts += Part(0f, 0f, drop, content) }
 
     /** Takes a share of the height left over (by [weight]); needs at least [minDp] or lower-priority parts are dropped. */
-    fun flex(weight: Float = 1f, minDp: Float = 34f, drop: Int = 0, content: @Composable () -> Unit) { parts += Part(weight, minDp, drop, content) }
+    fun flex(weight: Float = 1f, minDp: Float = 30f, drop: Int = 0, content: @Composable () -> Unit) { parts += Part(weight, minDp, drop, content) }
 }
 
 @Composable
-fun FitColumn(modifier: Modifier = Modifier, gap: Dp = 3.dp, build: FitScope.() -> Unit) {
+fun FitColumn(modifier: Modifier = Modifier, gap: Dp = 5.dp, build: FitScope.() -> Unit) {
     val parts = FitScope().apply(build).parts
     Layout(
         content = { parts.forEach { p -> Box(propagateMinConstraints = p.flex > 0f) { p.content() } } },
