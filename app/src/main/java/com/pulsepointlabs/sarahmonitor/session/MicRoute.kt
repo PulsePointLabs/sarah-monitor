@@ -1,7 +1,9 @@
 package com.pulsepointlabs.sarahmonitor.session
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
 
@@ -17,7 +19,33 @@ object MicRoute {
 
     private val headsetTypes = setOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 26 /* TYPE_BLE_HEADSET */)
 
-    fun open(context: Context, useHeadset: Boolean = VoiceSettings.preferHeadsetMic(context)): Route {
+    // While any mic is open, other apps' media is paused (YouTube, music…): otherwise the speaker is transcribed
+    // along with you. Taken once for all open mics and given back when the last one closes. Sarah's own voice
+    // and beeps still play (they take short focus of their own and hand it back to this).
+    private val openRoutes = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Route, Boolean>())
+    private var hush: AudioFocusRequest? = null
+
+    @Synchronized
+    private fun hold(context: Context, route: Route) {
+        if (!openRoutes.add(route) || openRoutes.size > 1 || Build.VERSION.SDK_INT < 26) return
+        val am = context.getSystemService(AudioManager::class.java) ?: return
+        hush = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setOnAudioFocusChangeListener { }
+            .build().also { runCatching { am.requestAudioFocus(it) } }
+    }
+
+    @Synchronized
+    private fun letGo(context: Context, route: Route?) {
+        if (route == null || !openRoutes.remove(route) || openRoutes.isNotEmpty()) return
+        hush?.let { h -> runCatching { context.getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(h) } }
+        hush = null
+    }
+
+    fun open(context: Context, useHeadset: Boolean = VoiceSettings.preferHeadsetMic(context)): Route =
+        pick(context, useHeadset).also { hold(context, it) }
+
+    private fun pick(context: Context, useHeadset: Boolean): Route {
         val am = context.getSystemService(AudioManager::class.java) ?: return Route(null, "Phone mic", false)
         if (useHeadset && Build.VERSION.SDK_INT >= 31) {
             val comm = runCatching { am.availableCommunicationDevices.firstOrNull { it.type in headsetTypes } }.getOrNull()
@@ -31,6 +59,7 @@ object MicRoute {
     }
 
     fun close(context: Context, route: Route?) {
+        letGo(context, route)
         if (route?.headset != true || Build.VERSION.SDK_INT < 31) return
         runCatching { context.getSystemService(AudioManager::class.java)?.clearCommunicationDevice() }
     }
