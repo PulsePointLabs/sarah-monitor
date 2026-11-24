@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -87,14 +88,18 @@ fun Dashboard(
     /** Phone layout (portrait or landscape): fit-to-screen rows instead of the free grid. */
     compact: Boolean = false
 ) {
+    // Howl's card is part of the board only while Howl is connected (its saved place is kept).
+    val howlOn = com.pulsepointlabs.sarahmonitor.howl.Howl.state.collectAsStateCompat()
+    val shown = if (howlOn) slots else GridLayoutEngine.compact(slots.map { if (it.type == CardType.Howl) it.copy(visible = false) else it })
+    val keep: (List<CardSlot>) -> Unit = { new -> onChange(if (howlOn) new else new.map { n -> if (n.type == CardType.Howl) slots.firstOrNull { it.type == CardType.Howl } ?: n else n }) }
     BoxWithConstraints(modifier) {
         if (compact) {
-            FitDashboard(slots, maxWidth.value, maxHeight.value, onChange)
+            FitDashboard(shown, maxWidth.value, maxHeight.value, keep)
         } else {
             Column(Modifier.fillMaxSize()) {
                 if (arranging) ArrangeBanner { onArrangingChange(false) }
                 BoxWithConstraints(Modifier.fillMaxSize()) {
-                    GridDashboard(slots, arranging, onArrangingChange, onChange, maxWidth, maxHeight)
+                    GridDashboard(shown, arranging, onArrangingChange, keep, maxWidth, maxHeight)
                 }
             }
         }
@@ -510,3 +515,10 @@ private fun ResizeGrip(modifier: Modifier) {
         }
     }
 }
+
+@Composable
+private fun kotlinx.coroutines.flow.StateFlow<com.pulsepointlabs.sarahmonitor.howl.HowlState>.collectAsStateCompat(): Boolean {
+    val s by this.collectAsState()
+    return s.connected
+}
+

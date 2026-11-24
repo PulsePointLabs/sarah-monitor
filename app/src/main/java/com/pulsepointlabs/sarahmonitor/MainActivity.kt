@@ -425,7 +425,7 @@ private fun MonitorScreen(
         CardActions(
             onAddGlucose = { showAddGlucose = true },
             onImportGlucose = onCsvImport,
-            onOpenDevices = { screen = Screen.Sensors; reviewId = null },
+            onOpenDevices = { screen = Screen.Settings; reviewId = null },
             onMessage = onMessage
         )
     }
@@ -459,7 +459,7 @@ private fun MonitorScreen(
                 onScreen = { screen = it; reviewId = null },
                 onRecord = { if (session != null) confirmStop = true else if (pending != null) pendingAsk = true else chooseCategory = true },
                 onMark = ::mark,
-                onDevices = { screen = Screen.Sensors; reviewId = null },
+                onDevices = { screen = Screen.Settings; reviewId = null },
                 onCards = { showCards = true },
                 onOverlays = { screen = Screen.Settings; reviewId = null },
                 onArrange = { arranging = !arranging },
@@ -496,7 +496,7 @@ private fun MonitorScreen(
                 screen == Screen.Health -> com.pulsepointlabs.sarahmonitor.vitals.HealthScreen(onCsvImport, onHealthConnect, Modifier.fillMaxSize()) { m -> com.pulsepointlabs.sarahmonitor.sleep.SleepScreen(m) }
                 screen == Screen.Sessions -> SessionsScreen(onOpen = { reviewId = it }, modifier = Modifier.fillMaxSize())
                 screen == Screen.Sensors -> SensorsScreen(onHealthConnect, onCsvImport, onMessage, Modifier.fillMaxSize())
-                screen == Screen.Settings -> SettingsScreen(onMessage, Modifier.fillMaxSize())
+                screen == Screen.Settings -> SettingsScreen(onMessage, Modifier.fillMaxSize(), onHealthConnect = onHealthConnect, onCsvImport = onCsvImport)
                 else -> Dashboard(
                     slots = if (compact) fitSlots else slots,
                     arranging = arranging,
@@ -506,6 +506,12 @@ private fun MonitorScreen(
                     compact = compact
                 )
             }
+        }
+        // Howl: its controls over everything, and in focus mode its button stays on screen while it's connected.
+        val howlOpen by com.pulsepointlabs.sarahmonitor.howl.HowlSheetState.open.collectAsState()
+        if (howlOpen) com.pulsepointlabs.sarahmonitor.howl.HowlSheet { com.pulsepointlabs.sarahmonitor.howl.HowlSheetState.open.value = false }
+        if (focusMode) Box(Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp), contentAlignment = Alignment.BottomStart) {
+            com.pulsepointlabs.sarahmonitor.howl.HowlButton({ com.pulsepointlabs.sarahmonitor.howl.HowlSheetState.open.value = true })
         }
         // Focus mode: a way out that shows for a few seconds, then fades so it never covers a card (Esc, X or Back always work).
         var showExit by remember { mutableStateOf(false) }
@@ -680,8 +686,11 @@ internal fun TopBar(
             // Phone portrait: tabs get the full width on top; clock, record, mark and toggles get their own row.
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Tabs(screen, compact = true, fill = true, onScreen = onScreen)
-                Row(Modifier.fillMaxWidth().height(34.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(clockFormat), color = MonitorColors.label, fontSize = 14.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+                Row(Modifier.fillMaxWidth().height(38.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // With Howl connected its button takes the clock's place (the row has no room for both).
+                    val howlOn = com.pulsepointlabs.sarahmonitor.howl.Howl.state.collectAsState().value.connected
+                    if (howlOn) com.pulsepointlabs.sarahmonitor.howl.HowlButton({ com.pulsepointlabs.sarahmonitor.howl.HowlSheetState.open.value = true })
+                    else Text(java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(clockFormat), color = MonitorColors.label, fontSize = 14.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
                     Spacer(Modifier.weight(1f))
                     RecordButton(recording, now, compact = false, onClick = onRecord)
                     MarkButton(enabled = recording != null, compact = false, onClick = onMark)
@@ -698,6 +707,7 @@ internal fun TopBar(
             if (full) recording?.let { SessionClock(it.startTimeMs, now) }
             Tabs(screen, compact = !full, onScreen = onScreen)
             Spacer(Modifier.weight(1f))
+            com.pulsepointlabs.sarahmonitor.howl.HowlButton({ com.pulsepointlabs.sarahmonitor.howl.HowlSheetState.open.value = true })
             BarIcon(androidx.compose.material.icons.Icons.Default.Fullscreen, "Focus mode (F)", onFocus)
             // Picture-in-picture: tap for its menu (start, or choose cards and shape).
             Box {
@@ -794,7 +804,8 @@ private fun SessionClock(startMs: Long, now: Long) {
 @Composable
 private fun Tabs(screen: Screen, compact: Boolean, fill: Boolean = false, onScreen: (Screen) -> Unit) {
     Row((if (fill) Modifier.fillMaxWidth() else Modifier).border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(8.dp))) {
-        Screen.entries.forEach { s ->
+        // Devices now live in Settings (dropdowns), so there's no Sensors tab.
+        Screen.entries.filter { it != Screen.Sensors }.forEach { s ->
             val on = s == screen
             val tint = if (on) MonitorColors.background else MonitorColors.label
             Box(

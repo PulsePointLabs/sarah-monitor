@@ -49,7 +49,11 @@ fun SensorsScreen(
     onMessage: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    AdaptiveColumns(
+    AdaptiveColumns(deviceSections(onHealthConnectImport, onCsvImport, onMessage), modifier)
+}
+
+/** Every device's section (shown in Settings as dropdowns). */
+fun deviceSections(onHealthConnectImport: () -> Unit, onCsvImport: () -> Unit, onMessage: (String) -> Unit): List<PageSection> =
         listOf(
             PageSection(7) { H10Section() },
             PageSection(10) { CivetSection(onMessage) },
@@ -63,10 +67,7 @@ fun SensorsScreen(
                     }
                 }
             }
-        ),
-        modifier
-    )
-}
+        )
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -77,19 +78,10 @@ private fun Buttons(content: @Composable () -> Unit) {
     ) { content() }
 }
 
+/** A device section: the same tappable dropdown as every other Settings section. */
 @Composable
 private fun Section(title: String, color: Color, subtitle: String? = null, content: @Composable () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(color.copy(alpha = 0.07f), RoundedCornerShape(10.dp))
-            .border(1.dp, color.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Text(title, color = color, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        content()
-    }
+    SettingsSection(title, color, subtitle) { content() }
 }
 
 @Composable

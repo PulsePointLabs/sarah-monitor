@@ -77,6 +77,7 @@ internal fun designSize(type: CardType): Pair<Float, Float> = when (type) {
     CardType.Recovery, CardType.Respiration -> 220f to 200f
     CardType.SarahLive -> 380f to 240f
     CardType.QuickMarks -> 380f to 180f
+    CardType.Howl -> 380f to 300f
 }
 
 private fun identity(type: CardType): Color = when (type) {
@@ -95,6 +96,7 @@ private fun identity(type: CardType): Color = when (type) {
     CardType.NearClimax, CardType.SarahLive -> com.pulsepointlabs.sarahmonitor.response.ClimaxPink
     CardType.Cardiac -> MonitorColors.hr
     CardType.Recovery, CardType.Respiration -> MonitorColors.pelvic
+    CardType.Howl -> com.pulsepointlabs.sarahmonitor.howl.HowlColor
 }
 
 /** One dashboard card (also used, compact, in the floating overlays). */
@@ -136,6 +138,7 @@ fun MonitorCard(type: CardType, modifier: Modifier = Modifier) {
                     CardType.Respiration -> com.pulsepointlabs.sarahmonitor.response.RespirationCard()
                     CardType.SarahLive -> com.pulsepointlabs.sarahmonitor.response.SarahLiveCard()
                     CardType.QuickMarks -> com.pulsepointlabs.sarahmonitor.response.QuickMarksCard()
+                    CardType.Howl -> com.pulsepointlabs.sarahmonitor.howl.HowlCard { com.pulsepointlabs.sarahmonitor.howl.HowlSheetState.open.value = true }
                 }
             }
         }

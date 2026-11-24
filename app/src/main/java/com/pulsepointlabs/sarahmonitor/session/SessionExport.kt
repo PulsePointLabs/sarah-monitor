@@ -159,7 +159,7 @@ object SessionExport {
                         appendLine(
                             "| ${i + 1} | ${elapsed(e.startMs)}–${elapsed(e.endMs)} | ${e.kind.label} | ${f0(e.troughHr)}→${f0(e.peakHr)} | " +
                                 "${e.buildS?.let { SessionAnalysis.durationWords(it * 1000L) } ?: ""} | ${e.recoveryFraction?.let { "%.0f".format(Locale.US, it * 100) + "%" } ?: ""} | " +
-                                "${f1(e.pelvicPeakKpa)} | ${e.contractions} | ${e.loadPeak ?: ""} | ${e.confidence} |"
+                                "${f1(e.pelvicPeakKpa)} | ${e.contractions} | ${e.loadPeak ?: ""} | ${e.confidence} |" + (e.stimAtPeak?.let { " Howl: $it" } ?: "")
                         )
                     }
                     val progression = com.pulsepointlabs.sarahmonitor.response.ResponseEpisodes.progression(episodes)

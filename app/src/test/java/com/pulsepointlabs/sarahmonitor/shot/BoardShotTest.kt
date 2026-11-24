@@ -96,6 +96,18 @@ class BoardShotTest {
         shot("monitor-dex", 1360, 700) { Dashboard(GridLayoutEngine.defaultLayout, false, {}, {}, Modifier.fillMaxSize(), compact = false) }
         pelvicStates()
         kegel()
+        howl()
+    }
+
+    /** Howl connected and playing: the full controls and the response board with its card. */
+    private fun howl() {
+        val now = System.currentTimeMillis() + 600_000L
+        com.pulsepointlabs.sarahmonitor.howl.Howl.state.value = com.pulsepointlabs.sarahmonitor.howl.HowlState(connected = true, powerA = 34, powerB = 71, playing = true,
+            activity = com.pulsepointlabs.sarahmonitor.howl.HowlActivity.MILKMASTER, updatedAtMs = now)
+        com.pulsepointlabs.sarahmonitor.howl.Howl.history.value = (0 until 120).map { i -> Triple(now - (120 - i) * 1000L, 20 + i / 6, 40 + (i / 4)) }
+        shot("howl-panel-phone", 411, 891) { com.pulsepointlabs.sarahmonitor.howl.HowlPanel(Modifier.fillMaxSize()) }
+        shot("howl-panel-dex", 1360, 700) { com.pulsepointlabs.sarahmonitor.howl.HowlPanel(Modifier.fillMaxSize()) }
+        shot("howl-response-phone", 411, 780) { Dashboard(FitLayout.responseDefaults, false, {}, {}, Modifier.fillMaxSize(), compact = true) }
     }
 
     /** A synthetic 6-rep hold set (target 70 %, last reps fading) for the Kegel review and the live Detail mode. */

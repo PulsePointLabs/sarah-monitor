@@ -1035,6 +1035,7 @@ internal fun EpisodesCard(
                         e.loadPeak?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Load peak", "$it") },
                         e.recoveryFraction?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Recovered", "${(it * 100).toInt()}% of rise") },
                         e.nextGapS?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Next build", "in ${SessionAnalysis.durationWords(it * 1000L)}") },
+                        e.stimAtPeak?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Howl at peak", it.substringBefore(" · playing").substringBefore(" · paused")) },
                         com.pulsepointlabs.sarahmonitor.session.InsightFact("Data quality", e.confidence + (e.pressureUsablePct?.takeIf { it < 100 }?.let { " · pressure $it% usable" } ?: ""))
                     ), color)
                     val from = e.startMs - 180_000L; val to = e.endMs + 120_000L

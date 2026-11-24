@@ -269,6 +269,12 @@ object MonitorHub {
                 _emg.value = emgProcessor.snapshot()
             }
         }
+        // Howl e-stim: every change in what it delivers goes into the recording.
+        com.pulsepointlabs.sarahmonitor.howl.Howl.load(app)
+        com.pulsepointlabs.sarahmonitor.howl.Howl.onChange = { s ->
+            recorder.onSensorEvent(System.currentTimeMillis(), "howl", if (s.connected) "state" else "connection", if (s.connected) s.describe() else "disconnected" + (s.error?.let { ": $it" } ?: ""))
+        }
+        com.pulsepointlabs.sarahmonitor.howl.Howl.start(scope)
         ResponseSettings.load(app)
         arousal.setProfile(ResponseSettings.profile.value)
         scope.launch { ResponseSettings.profile.collect { arousal.setProfile(it) } }
@@ -445,6 +451,7 @@ object MonitorHub {
     /** Records the calibration and sensor state at the start of a recording, so the review knows what it started from. */
     private fun noteStartState() {
         val now = System.currentTimeMillis()
+        com.pulsepointlabs.sarahmonitor.howl.Howl.state.value.takeIf { it.connected }?.let { recorder.onSensorEvent(now, "howl", "state", it.describe()) }
         recorder.onSensorEvent(now, "civet", "session_start", "${civet.state.value.name}; ${pelvicProcessor.describeState()}")
         recorder.onSensorEvent(now, "h10", "session_start", h10.state.value.name)
     }

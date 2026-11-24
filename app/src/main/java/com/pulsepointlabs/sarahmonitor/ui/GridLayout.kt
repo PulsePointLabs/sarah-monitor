@@ -28,7 +28,9 @@ enum class CardType(val title: String, val minW: Int, val minH: Int) {
     Recovery("Recovery", 3, 2),
     Respiration("Respiration & motion", 3, 2),
     SarahLive("Sarah, live", 4, 3),
-    QuickMarks("Quick marks", 4, 2)
+    QuickMarks("Quick marks", 4, 2),
+    /** Howl e-stim controls (only shown while Howl is connected). */
+    Howl("Howl e-stim", 4, 3)
 }
 
 /**
@@ -64,7 +66,8 @@ object GridLayoutEngine {
         CardSlot(CardType.Glucose, 0, 16, 5, 3, visible = false),
         CardSlot(CardType.SpO2, 6, 16, 5, 4, visible = false),
         CardSlot(CardType.Body, 5, 16, 5, 4, visible = false),
-        CardSlot(CardType.Emg, 10, 16, 8, 5, visible = false)
+        CardSlot(CardType.Emg, 10, 16, 8, 5, visible = false),
+        CardSlot(CardType.Howl, 0, 21, 8, 6, visible = false)
     )
 
     /** The Response board: phase and near-climax up top, pelvic floor / HRV / EMG, timelines underneath. */
@@ -86,7 +89,8 @@ object GridLayoutEngine {
         CardSlot(CardType.Ecg, 0, 16, 12, 4, visible = false),
         CardSlot(CardType.BloodPressure, 12, 16, 6, 4, visible = false),
         CardSlot(CardType.PelvicTrend, 0, 20, 12, 4, visible = false),
-        CardSlot(CardType.HrTrend, 12, 20, 12, 4, visible = false)
+        CardSlot(CardType.HrTrend, 12, 20, 12, 4, visible = false),
+        CardSlot(CardType.Howl, 0, 24, 8, 6, visible = false)
     )
 
     fun clampSlot(slot: CardSlot): CardSlot {
@@ -239,11 +243,11 @@ object FitLayout {
 
     val monitorDefaults = compactSlots(
         listOf(CardType.HeartRate, CardType.Stress, CardType.Ecg, CardType.Hrv, CardType.Load, CardType.Pelvic, CardType.BloodPressure, CardType.HrTrend),
-        listOf(CardType.HrvTrend, CardType.PelvicTrend, CardType.Glucose, CardType.SpO2, CardType.Body, CardType.Emg)
+        listOf(CardType.HrvTrend, CardType.PelvicTrend, CardType.Glucose, CardType.SpO2, CardType.Body, CardType.Emg, CardType.Howl)
     )
 
     val responseDefaults = compactSlots(
-        listOf(CardType.Phase, CardType.NearClimax, CardType.Pelvic, CardType.HeartRate, CardType.ResponseTimeline, CardType.SarahLive, CardType.Hrv),
+        listOf(CardType.Phase, CardType.NearClimax, CardType.Howl, CardType.Pelvic, CardType.HeartRate, CardType.ResponseTimeline, CardType.SarahLive, CardType.Hrv),
         listOf(CardType.QuickMarks, CardType.Matrix, CardType.Emg, CardType.Recovery, CardType.Respiration, CardType.Cardiac, CardType.Load,
             CardType.Ecg, CardType.BloodPressure, CardType.PelvicTrend, CardType.HrTrend)
     )

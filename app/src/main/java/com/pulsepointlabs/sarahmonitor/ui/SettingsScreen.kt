@@ -47,7 +47,7 @@ import com.pulsepointlabs.sarahmonitor.overlay.OverlaySettings
 
 /** App settings: overlays, sound and voice. Overlays stay visible while this page is open, as a live preview. */
 @Composable
-fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, extra: @Composable ColumnScope.() -> Unit = {}) {
+fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, extra: @Composable ColumnScope.() -> Unit = {}, onHealthConnect: () -> Unit = {}, onCsvImport: () -> Unit = {}) {
     val context = LocalContext.current
     DisposableEffect(Unit) {
         OverlaySettings.setPreviewing(true)
@@ -55,7 +55,8 @@ fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, e
         onDispose { OverlaySettings.setPreviewing(false) }
     }
     CompositionLocalProvider(LocalCollapsibleSections provides true) { AdaptiveColumns(
-        listOf(
+        // Devices first (each a dropdown), then everything else.
+        deviceSections(onHealthConnect, onCsvImport, onMessage) + PageSection(8) { com.pulsepointlabs.sarahmonitor.howl.HowlSettingsSection() } + listOf(
             PageSection(6) { QuickControls() },
             PageSection(10) { OverlaySettingsSection() },
             PageSection(10) { HeartbeatSoundSection() },

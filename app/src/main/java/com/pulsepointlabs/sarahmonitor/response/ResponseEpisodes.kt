@@ -57,7 +57,9 @@ data class ResponseEpisode(
     /** Seconds from this episode's end to the next one's start (null for the last). */
     val nextGapS: Int? = null,
     /** "good", "limited" or "low": how much of the episode's data was there and usable. Not a probability. */
-    val confidence: String = "good"
+    val confidence: String = "good",
+    /** What Howl was delivering at the peak ("A 34 · B 30 · Milkmaster 3000 · playing"), if it was connected. */
+    val stimAtPeak: String? = null
 ) {
     /** How far HR came back down after the peak, as a share of the rise (1 = fully back to the trough). */
     val recoveryFraction: Double? get() {
@@ -226,7 +228,8 @@ object ResponseEpisodes {
                 hrRiseBpmPerMin = if (peakHr != null && troughHr != null && build != null && build >= 10) (peakHr - troughHr) / build * 60.0 else null,
                 recoveryLowHr = recoveryLow,
                 nextGapS = nextStart?.let { ((it - span.last) / 1000).toInt() },
-                confidence = confidence
+                confidence = confidence,
+                stimAtPeak = data.sensorEvents.lastOrNull { it.device == "howl" && it.timestampMs <= peakMs }?.takeIf { it.kind == "state" }?.detail
             )
         }
     }

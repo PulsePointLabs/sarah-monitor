@@ -70,6 +70,11 @@ object EventSnapshot {
         MonitorHub.body.items.value.lastOrNull()?.let {
             o.put("body", JSONObject().put("weight_kg", it.weightKg).opt("body_fat_pct", it.bodyFatPct).put("age_days", ageMin(it.timestampMs) / 1440))
         }
+        // What Howl was delivering at this moment (power 0–200 per channel).
+        com.pulsepointlabs.sarahmonitor.howl.Howl.state.value.takeIf { it.connected }?.let { h ->
+            o.put("howl", JSONObject().put("power_a", h.powerA).put("power_b", h.powerB).put("muted", h.muted).put("playing", h.playing)
+                .opt("activity", h.activity?.label ?: h.title))
+        }
         o.put("sensors", JSONObject()
             .put("h10", MonitorHub.h10.state.value.name).put("civet", MonitorHub.civet.state.value.name)
             .put("omron", MonitorHub.omron.state.value.name).put("emg", MonitorHub.emgClient.state.value.name))
@@ -81,6 +86,7 @@ object EventSnapshot {
         val o = json?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return null
         val parts = mutableListOf<String>()
         o.optJSONObject("gear")?.let { parts += "device: " + it.optString("label") }
+        o.optJSONObject("howl")?.let { parts += "Howl A ${it.optInt("power_a")} · B ${it.optInt("power_b")}" + (it.optString("activity").takeIf { a -> a.isNotBlank() && a != "null" }?.let { a -> " ($a)" } ?: "") + if (it.optBoolean("playing")) "" else " paused" }
         o.optJSONObject("stress")?.let { parts += "stress ${it.optInt("score")}" + (if (it.optBoolean("moving")) " (moving)" else "") }
         if (o.has("breaths_per_min")) parts += "breathing ${o.optDouble("breaths_per_min").roundToInt()}/min"
         o.optJSONObject("response")?.let { r -> if (r.optInt("approach") > 0 || r.optString("phase") != "Baseline") parts += "${r.optString("phase").lowercase()} · approach ${r.optInt("approach")}" }
