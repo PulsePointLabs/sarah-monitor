@@ -135,6 +135,32 @@ object VoiceCommand {
         return SpokenEvent(types, device?.id, note, bucket, level, null, "Logged: $what" + (level?.let { ", $it out of 10" } ?: "") + ".", "keywords")
     }
 
+    // "End the session", "you can conclude the session", "stop recording", "wrap up the session now please", "we're
+    // done, end it". Short and direct only, and never when negated ("don't end the session yet").
+    private val END_VERB = "(?:end|stop|finish|conclude|close|wrap(?: it)? up|close out)"
+    private val END_SESSION = listOf(
+        Regex("\\b$END_VERB\\s+(?:out\\s+|up\\s+)?(?:the|this|my|our)?\\s*(?:session|recording)\\b"),
+        Regex("\\b(?:session|recording)\\s+(?:is\\s+)?(?:over|done|finished|ended)\\b"),
+        Regex("\\bwe(?:'re| are)\\s+(?:all\\s+)?done\\b.{0,20}\\b(?:end|stop|conclude|wrap)"),
+        // "End it" / "wrap it up" on their own — but not a bare "stop" (that's just "be quiet").
+        Regex("^(?:you can\\s+)?(?:end|conclude|finish|wrap) (?:it|things)(?: up)?(?: now)?(?: please)?$")
+    )
+    private val NEGATED = Regex("\\b(?:don't|do not|dont|not|never|yet|later|before|until|almost|about to|going to|gonna|when)\\b")
+
+    private val NEVER_MIND = Regex("^(?:okay |ok )?(?:stop|stop talking|be quiet|quiet|shush|hush|never ?mind|cancel|nothing|that's all|forget it)(?: please)?$")
+
+    /** "Sarah, stop" / "never mind": she's already gone quiet; nothing to log. */
+    fun dismisses(command: String): Boolean =
+        NEVER_MIND.matches(command.lowercase().replace(Regex("[^a-z' ]"), " ").replace(Regex("\\s+"), " ").trim())
+
+    /** True when the whole note is an instruction to end the recording. Pure; unit-tested. */
+    fun endsSession(command: String): Boolean {
+        val c = command.lowercase().replace(Regex("[^a-z' ]"), " ").replace(Regex("\\s+"), " ").trim()
+            .removePrefix("okay ").removePrefix("ok ").removePrefix("please ").trim()
+        if (c.isBlank() || c.split(' ').size > 12 || NEGATED.containsMatchIn(c)) return false
+        return END_SESSION.any { it.containsMatchIn(c) }
+    }
+
     /** His words exactly as heard: only the first letter capitalised and a closing full stop added. Never rewritten. */
     fun verbatim(command: String): String =
         command.trim().replaceFirstChar { it.uppercase() }.let { if (it.isEmpty() || it.last() in ".!?…") it else "$it." }
@@ -180,9 +206,14 @@ class HandsFree(
     private val mark: (atMs: Long, event: SpokenEvent, raw: String, heardBy: String) -> Unit,
     /** true = "listening" tone, false = "logged" tone. */
     private val cue: (Boolean) -> Unit,
-    private val speak: (String) -> Unit,
+    /** Says it right away (it's her answer to you, so it doesn't wait behind anything). */
+    private val speak: suspend (String) -> Unit,
     private val allowedTypes: () -> List<MarkerTypes.Type>,
-    private val gear: () -> List<GearItem>
+    private val gear: () -> List<GearItem>,
+    /** She heard "Sarah": stop talking (media is paused here). */
+    private val hush: () -> Unit = {},
+    /** "Sarah, end the session." */
+    private val endSession: () -> Unit = {}
 ) {
     private val _status = MutableStateFlow(HandsFreeStatus())
     val status: StateFlow<HandsFreeStatus> = _status
@@ -190,10 +221,25 @@ class HandsFree(
     private var wanted = false
     private var preparing: Job? = null
     private var restart: Job? = null
+    /** Lets media go again if a note somehow never finishes. */
+    private var holdWatchdog: Job? = null
     private val ears = LocalEars(
         context, scope,
         onPhrase = { pcm, at, offline -> phrase(pcm, at, offline) },
-        onWakeOnly = { cue(true); _status.value = _status.value.copy(message = "Go ahead…") },
+        onWake = {
+            // One clear signal the moment she hears her name: she goes quiet, music/video pauses, listening tone.
+            hush()
+            com.pulsepointlabs.sarahmonitor.audio.MediaHold.acquire(HOLD)
+            holdWatchdog?.cancel()
+            holdWatchdog = scope.launch { delay(150_000L); com.pulsepointlabs.sarahmonitor.audio.MediaHold.release(HOLD) }
+            cue(true)
+            _status.value = _status.value.copy(message = "Listening… take your time")
+        },
+        onNothing = {
+            cue(false)
+            letGo()
+            _status.value = _status.value.copy(message = "Listening for \"Sarah…\"")
+        },
         onProblem = { msg ->
             _status.value = _status.value.copy(listening = false, message = "Reconnecting… ($msg)")
             restart?.cancel()
@@ -247,13 +293,26 @@ class HandsFree(
         restart?.cancel()
         preparing?.cancel(); preparing = null
         ears.stop()
+        letGo()
         _status.value = HandsFreeStatus(false, message, _status.value.lastLogged)
     }
 
-    /** A phrase that began with "Sarah": transcribe just this clip, sort it, log it. */
+    /** Media carries on (whatever was playing before "Sarah"). */
+    private fun letGo() {
+        holdWatchdog?.cancel(); holdWatchdog = null
+        com.pulsepointlabs.sarahmonitor.audio.MediaHold.release(HOLD)
+    }
+
+    /** A phrase that began with "Sarah": transcribe just this clip, sort it, log it, then let media resume. */
     private fun phrase(pcm: ShortArray, at: Long, offline: String) {
         _status.value = _status.value.copy(message = "Writing it down…")
         scope.launch {
+            try { transcribeAndHandle(pcm, at, offline) } finally { letGo() }
+        }
+    }
+
+    private suspend fun transcribeAndHandle(pcm: ShortArray, at: Long, offline: String) {
+        run {
             val key = VoiceSettings.apiKey(context)
             val heard = if (key.isNotBlank() && pcm.isNotEmpty()) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val wav = com.pulsepointlabs.sarahmonitor.audio.BeatSynth.wav(LocalEars.normalized(pcm), LocalEars.RATE)
@@ -264,12 +323,24 @@ class HandsFree(
             // The cloud transcript is better; the offline one keeps it working without a network.
             val text = heard ?: offline
             val command = VoiceCommand.commandFrom(heard, offline)
-            if (command.isBlank()) { _status.value = _status.value.copy(message = "Listening for \"Sarah…\""); return@launch }
+            if (command.isBlank()) { cue(false); _status.value = _status.value.copy(message = "Listening for \"Sarah…\""); return }
             handle(command, at, text, if (heard != null) "cloud" else "offline")
         }
     }
 
     private suspend fun handle(command: String, at: Long, raw: String, heardBy: String) {
+        if (VoiceCommand.endsSession(command)) {
+            cue(false)
+            speak("Okay. Ending the session.")
+            _status.value = _status.value.copy(message = "Session ended by voice", lastLogged = VoiceCommand.verbatim(command))
+            endSession()
+            return
+        }
+        if (VoiceCommand.dismisses(command)) {
+            cue(false)
+            _status.value = _status.value.copy(message = "Listening for \"Sarah…\"")
+            return
+        }
         val allowed = allowedTypes()
         val ids = allowed.map { it.id }.toSet()
         val g = gear()
@@ -280,4 +351,6 @@ class HandsFree(
         if (HandsFreeSettings.sayBack.value) speak(event.confirm)
         _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = event.note)
     }
+
+    private companion object { const val HOLD = "hands-free" }
 }

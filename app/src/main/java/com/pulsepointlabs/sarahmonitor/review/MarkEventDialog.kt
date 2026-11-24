@@ -229,6 +229,8 @@ fun MarkEventDialog(
         onDispose {
             recognizer.stop(); whisper.cancel(); realtime.release()
             MonitorHub.handsFree.pause(false, MonitorHub.session.value != null)
+            // Saved or cancelled: whatever was playing when you started dictating carries on.
+            com.pulsepointlabs.sarahmonitor.audio.MediaHold.release("mark-event")
         }
     }
     /** Claude tidies punctuation (same words) when that's on and a key is saved. */
@@ -271,6 +273,11 @@ fun MarkEventDialog(
     fun listen() {
         // The mic can serve one listener at a time: hands-free steps aside while you dictate here.
         MonitorHub.handsFree.pause(true, MonitorHub.session.value != null)
+        // Quiet while you talk: Sarah stops mid-line and music/video pauses until the event is saved.
+        if (!listening) {
+            MonitorHub.audio.hush()
+            com.pulsepointlabs.sarahmonitor.audio.MediaHold.acquire("mark-event")
+        }
         when (engine) {
             VoiceSettings.Engine.Android -> {
                 if (listening) { recognizer.stop(); MonitorHub.audio.listenCue(false); return }

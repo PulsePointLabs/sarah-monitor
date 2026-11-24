@@ -206,9 +206,16 @@ object MonitorHub {
                 }
             },
             cue = { listening -> audio.listenCue(listening) },
-            speak = { text -> scope.launch { audio.say(text) } },
+            speak = { text -> audio.say(text, urgent = true) },
             allowedTypes = { com.pulsepointlabs.sarahmonitor.session.MarkerTypes.offered(liveCategory().groups) },
-            gear = { _sessionDetails.value.gear }
+            gear = { _sessionDetails.value.gear },
+            hush = { audio.hush() },
+            endSession = {
+                if (recorder.active.value != null) {
+                    markEvent(System.currentTimeMillis(), setOf("event"), "Ended the session by voice.")
+                    scope.launch { delay(400L); stopSession() }
+                }
+            }
         )
         scope.launch {
             kotlinx.coroutines.flow.combine(com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.enabled, recorder.active) { _, a -> a != null }
@@ -504,7 +511,8 @@ object MonitorHub {
     /** Marks an event at [timestampMs] (the moment the button was pressed). Returns false if not recording. */
     fun markEvent(timestampMs: Long, types: Set<String>, note: String, checkIn: com.pulsepointlabs.sarahmonitor.session.CheckIn = com.pulsepointlabs.sarahmonitor.session.CheckIn(), extra: Pair<String, org.json.JSONObject>? = null, onDone: (Boolean) -> Unit = {}) {
         // Marked climaxes teach the arousal engine this person's climax HR rise.
-        if (recorder.active.value != null && ("orgasm" in types || "ejaculation" in types)) arousal.climaxSample()?.let { ResponseSettings.addClimax(it) }
+        // (Only a new one: describing the same climax again doesn't count twice.)
+        if (recorder.active.value != null && ("orgasm" in types || "ejaculation" in types) && arousal.isNewClimax(timestampMs)) arousal.climaxSample()?.let { ResponseSettings.addClimax(it) }
         arousal.onMarker(timestampMs, types)
         _response.value = arousal.current()
         // "Sensor problem" (slipped, re-seated, re-inflated): pressure analysis stops until recalibrated or resumed.

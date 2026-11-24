@@ -159,6 +159,7 @@ class SarahVoice(context: Context) {
             withTimeoutOrNull(30_000L) {
                 suspendCancellableCoroutine { cont ->
                     val id = "sarah-${System.nanoTime()}"
+                    cont.invokeOnCancellation { runCatching { engine.stop() } }
                     engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) = Unit
                         override fun onDone(utteranceId: String?) { if (utteranceId == id && cont.isActive) cont.resume(Unit) }

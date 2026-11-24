@@ -81,7 +81,13 @@ data class ResponseState(
     val candidate: ClimaxCandidate? = null,
     val timeline: List<TimelinePoint> = emptyList(),
     val sessionStartMs: Long? = null,
-    val learned: Boolean = false
+    val learned: Boolean = false,
+    /** Seconds since the (first) climax of this session; null before one. */
+    val sinceClimaxS: Int? = null,
+    /** After a climax: no "approaching again" reads for a good while (see [ArousalEngine.REFRACTORY_MS]). */
+    val refractory: Boolean = false,
+    /** Moving about (walking, cleaning up): HR rises from that, not arousal. */
+    val moving: Boolean = false
 )
 
 /**
@@ -117,6 +123,8 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
     private var peakApproach = 0
     private var peakHr = 0.0
     private var climaxAt: Long? = null
+    private var firstClimaxAt: Long? = null
+    private var refractoryUntil: Long? = null
     private var edges = 0
     private var climaxes = 0
     private var candidate: ClimaxCandidate? = null
@@ -134,7 +142,7 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
         lastPulseCount = 0; holding = false; lastLoad = null; lastRmssd = null; start = null
         buildStart = null; lastBuildEvidence = null; plateauStart = null
         phase = ResponsePhase.Baseline; phaseSince = null; peakApproachAt = null; peakApproach = 0; peakHr = 0.0
-        climaxAt = null; edges = 0; climaxes = 0; candidate = null; lastCandidateAt = null
+        climaxAt = null; firstClimaxAt = null; refractoryUntil = null; edges = 0; climaxes = 0; candidate = null; lastCandidateAt = null
         approachSmooth = null; arousalSmooth = null; rrRecent.clear(); motion.clear()
         timeline.clear(); state = ResponseState()
     }
@@ -179,19 +187,37 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
         }
     }
 
-    /** User-marked events. Orgasm/ejaculation counts as a climax (and teaches the profile via [climaxSample]). */
+    /**
+     * User-marked events. Orgasm/ejaculation counts as a climax (and teaches the profile via [climaxSample]).
+     * A man has one, then a refractory period: every orgasm/ejaculation note inside it ("that was a big one",
+     * "ejaculation was strong") is the same climax, and nothing reads as "approaching again" until it's over,
+     * unless he says himself that he's building again (near climax / edge / arousal, 5+ minutes later).
+     */
     @Synchronized
     fun onMarker(t: Long, types: Set<String>) {
+        val inRefractory = refractoryUntil?.let { t < it } == true
         if ("orgasm" in types || "ejaculation" in types) {
-            if (climaxAt == null || t - climaxAt!! > 60_000L) climaxes++
+            if (inRefractory || (climaxAt != null && t - climaxAt!! <= 60_000L)) return  // the same climax, described again
+            climaxes++
             climaxAt = t
+            firstClimaxAt = firstClimaxAt ?: t
+            refractoryUntil = t + REFRACTORY_MS
+            approachSmooth = approachSmooth?.let { min(it, 15.0) }
             candidate = null
             setPhase(ResponsePhase.Climax, t)
-        } else if ("edge" in types && phase != ResponsePhase.BackingOff) {
+        } else if (inRefractory && (types.any { it in GOING_AGAIN }) && climaxAt != null && t - climaxAt!! >= 5 * 60_000L) {
+            // His call, not the detector's: he's going again.
+            refractoryUntil = null; climaxAt = null
+            setPhase(ResponsePhase.Warming, t)
+        } else if ("edge" in types && phase != ResponsePhase.BackingOff && !inRefractory) {
             edges++
             setPhase(ResponsePhase.BackingOff, t)
         }
     }
+
+    /** Whether an orgasm/ejaculation note at [t] would be a new climax (not the last one described again). */
+    @Synchronized
+    fun isNewClimax(t: Long): Boolean = !(refractoryUntil?.let { t < it } == true || (climaxAt != null && t - climaxAt!! <= 60_000L))
 
     /** Features at this moment, to remember for a confirmed climax. */
     @Synchronized
@@ -307,6 +333,14 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
         // EMG adds like Sarah's live prediction: a rise of 18%+ counts, up to +12.
         if (emg != null && emg >= 18) approach += (emg * 0.16).coerceAtMost(12.0)
         if (dropFromPeak > 8) approach -= 12
+        // Walking about (cleaning up, fetching something) raises HR on its own: without pelvic evidence that's
+        // not arousal, so it can't read as "approaching".
+        val motionNow = motion.map { it.second }.sorted().let { if (it.isEmpty()) null else it[(it.size * 0.9).toInt().coerceAtMost(it.size - 1)] }
+        val moving = motionNow != null && motionNow >= com.pulsepointlabs.sarahmonitor.hrv.MovementAnalyzer.MILD_MOTION_DYNAMIC_MG
+        if (moving && train == null && ppm < 4) approach = min(approach, 40.0)
+        // After a climax: refractory. Not "approaching another" while he recovers.
+        val refractory = refractoryUntil?.let { t < it } == true
+        if (refractory) approach = min(approach, 15.0)
         // Caps: a fresh build or early session can't claim "near climax" on HR alone.
         val confirmations = listOf(
             (delta ?: 0.0) >= 12 && buildS >= 60, hrvSignal == "compressed" || hrvSignal == "tightening",
@@ -316,20 +350,20 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
         if (buildS < 45 && confirmations < 2) approach = min(approach, 45.0)
         if (minutes < 5 && confirmations < 3) approach = min(approach, 50.0)
         approachSmooth = approachSmooth?.let { it + 0.12 * (approach.coerceIn(0.0, 100.0) - it) } ?: approach.coerceIn(0.0, 100.0)
+        // No slow fade from "close" after he's come: it drops at once.
+        if (refractory) approachSmooth = min(approachSmooth!!, 15.0)
         val approachI = approachSmooth!!.roundToInt().coerceIn(0, 100)
         if (approachI > peakApproach || (peakApproachAt != null && t - peakApproachAt!! > 120_000L)) {
             peakApproach = approachI; peakApproachAt = t
         }
 
-        // Climax signature → candidate for the user to confirm.
-        if (train != null && (approachI >= 55 || (delta ?: 0.0) >= climaxDelta * 0.6) && (lastCandidateAt == null || t - lastCandidateAt!! > 90_000L) &&
-            (climaxAt == null || t - climaxAt!! > 90_000L)
-        ) {
+        // Climax signature → candidate for the user to confirm. One detected climax per 15 minutes at most (a
+        // detector that found three in one session was counting aftershocks), and none in the refractory period.
+        val candidateOk = !refractory && (lastCandidateAt == null || t - lastCandidateAt!! > CANDIDATE_GAP_MS) && (climaxAt == null || t - climaxAt!! > 90_000L)
+        if (train != null && (approachI >= 55 || (delta ?: 0.0) >= climaxDelta * 0.6) && candidateOk) {
             lastCandidateAt = t
             candidate = ClimaxCandidate(t, "probable", "${train.first} rhythmic contractions about ${"%.1f".format(train.second)} s apart at high arousal")
-        } else if (train == null && pelvic.isEmpty() && peakApproach >= 85 && dropFromPeak >= 10 && (lastCandidateAt == null || t - lastCandidateAt!! > 90_000L) &&
-            (climaxAt == null || t - climaxAt!! > 90_000L)
-        ) {
+        } else if (train == null && pelvic.isEmpty() && peakApproach >= 85 && dropFromPeak >= 10 && candidateOk && !moving) {
             lastCandidateAt = t
             candidate = ClimaxCandidate(t, "possible", "HR peaked near your climax range, then dropped ${dropFromPeak.roundToInt()} bpm")
         }
@@ -356,8 +390,8 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
             delta != null && delta >= 6 -> if (phase == ResponsePhase.Baseline || phase == ResponsePhase.Recovery || phase == ResponsePhase.BackingOff) setPhase(ResponsePhase.Warming, t)
             else -> setPhase(ResponsePhase.Baseline, t)
         }
-        // Recovery ends once HR has been back near baseline for a minute; a new build then starts fresh.
-        if (afterClimax && (delta ?: 99.0) < 8 && t - climaxAt!! > 105_000L) {
+        // Recovery ends once the refractory period is over and HR is back near baseline; a new build then starts fresh.
+        if (afterClimax && !refractory && (delta ?: 99.0) < 8 && t - climaxAt!! > 105_000L) {
             climaxAt = null
             setPhase(ResponsePhase.Baseline, t)
         }
@@ -410,8 +444,16 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
             load = lastLoad, buildSeconds = buildS, plateauSeconds = plateauS, edges = edges, climaxes = climaxes,
             signals = signals, plateau = plateauI, recovery = recoveryScore, dropFromPeak = dropFromPeak, drop30 = drop30, drop60 = drop60,
             peakHr = recentPeak, confirmations = confirmations, breathsPerMin = breaths, motionMg = motionMg, emgPct = emg,
-            candidate = candidate, timeline = timeline.toList(), sessionStartMs = start, learned = profile.learned
+            candidate = candidate, timeline = timeline.toList(), sessionStartMs = start, learned = profile.learned,
+            sinceClimaxS = firstClimaxAt?.let { ((t - it) / 1000).toInt() }, refractory = refractory, moving = moving
         )
+    }
+
+    companion object {
+        /** After a climax, how long nothing reads as "approaching again" (he can lift it by saying he's building). */
+        const val REFRACTORY_MS = 30 * 60_000L
+        private const val CANDIDATE_GAP_MS = 15 * 60_000L
+        private val GOING_AGAIN = setOf("near", "edge", "arousal", "plateau")
     }
 
     /** The latest run of ≥4 short contractions whose onsets are 0.5–1.5 s apart, ending within the last 10 s. */

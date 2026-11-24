@@ -100,6 +100,23 @@ bedside-monitor dashboards, floating overlays and a review screen.
 - Ben's feedback (2026-11-23): he wants research-grade data visible IN the app (and server), not exports; no plain-text
   metric dumps anywhere. He will send the full ChatGPT thread; compare intent vs 0.25.0 first next session.
 
+## 0.27.0 (talking to Sarah; one climax, then refractory)
+
+- Wake word: the moment "Sarah" is heard she stops talking (`AudioEngine.hush`), music/video pauses
+  (`audio/MediaHold`, transient audio focus, so only what was playing resumes) and one listening tone plays. One wake =
+  one note: she waits 2.5 s of quiet, 5.5 s if the words trail off ("…and the"), 8 s after a bare "Sarah"; notes up to
+  90 s. Media resumes after the note is saved and confirmed. Mark event dialog: same pause on dictation start, resume
+  when the dialog closes. Other speech waits while you talk (dropped if stale > 20 s).
+- "Sarah, end the session" / "conclude the session" / "stop recording" ends the recording (logged as an event).
+  "Sarah, stop" / "never mind" logs nothing.
+- ArousalEngine: a marked orgasm/ejaculation starts a 30 min refractory period: approach capped at 15, phase stays
+  Recovery, no detected candidates; further orgasm/ejaculation notes are the same climax. Lifted only if he logs
+  arousal/near/edge/plateau 5+ min later. Detected candidates at most one per 15 min. Walking about (H10 motion ≥ 180 mg)
+  without pelvic evidence can't read as approaching.
+- Sarah's voices (Style menu): Lover, Lover + body (stored as Encourage), Body state, Minimal. She now gets the
+  session's devices, plan/notes, pre-session check-in and the Howl output, plus refractory/moving flags; after a climax
+  she's brief and affectionate, then mostly quiet.
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

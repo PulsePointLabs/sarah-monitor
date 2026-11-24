@@ -79,6 +79,7 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
 
     init {
         AudioSettings.load(app)
+        MediaHold.init(app)
         pool.setOnLoadCompleteListener { _, id, status -> if (status == 0) synchronized(loaded) { loaded += id } }
         handler.post {
             val dir = File(app.filesDir, "sounds").apply { mkdirs() }
@@ -163,14 +164,43 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
         if (mode.voice) say(alert.spoken)
     }
 
-    /** Speaks through the alert queue's voice, ducking the beeps. Also used for "Test voice". */
-    suspend fun say(text: String) = speechLock.withLock {
-        _speaking.value = true
-        try {
-            _voiceProblem.value = voice.speak(text, AudioSettings.voiceVolume.value, AudioSettings.voiceEngine.value)
-        } finally {
-            _speaking.value = false
+    /** The line being spoken right now, so it can be cut off when you say "Sarah". */
+    @Volatile private var talking: kotlinx.coroutines.Job? = null
+    /** Bumped by [hush]: anything queued before it isn't said. */
+    @Volatile private var hushedAt = 0L
+
+    /**
+     * Speaks through the alert queue's voice, ducking the beeps. Also used for "Test voice".
+     * While you're talking to Sarah (media held for listening) she waits her turn; a line that has waited more than
+     * 20 s is stale and dropped. [urgent] lines (her reply to what you just said) go straight through.
+     */
+    suspend fun say(text: String, urgent: Boolean = false) {
+        val asked = System.currentTimeMillis()
+        if (!urgent) {
+            while (MediaHold.held && System.currentTimeMillis() - asked < 20_000L) delay(150)
+            if (MediaHold.held) return
         }
+        speechLock.withLock {
+            if (!urgent && hushedAt >= asked) return
+            _speaking.value = true
+            try {
+                kotlinx.coroutines.coroutineScope {
+                    val job = launch { _voiceProblem.value = voice.speak(text, AudioSettings.voiceVolume.value, AudioSettings.voiceEngine.value) }
+                    talking = job
+                    job.join()
+                }
+            } finally {
+                talking = null
+                _speaking.value = false
+            }
+        }
+    }
+
+    /** Stop talking now (you said "Sarah"): cuts the current line and drops what was waiting. */
+    fun hush() {
+        hushedAt = System.currentTimeMillis()
+        talking?.cancel()
+        while (queue.tryReceive().isSuccess) Unit
     }
 
     fun testVoice() {

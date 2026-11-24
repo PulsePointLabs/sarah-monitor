@@ -28,14 +28,19 @@ enum class SessionContext(val label: String, val promptName: String) {
     Exploration("Body exploration", "body-exploration session (for example urethral catheter or enema), not aimed at climax")
 }
 
+/** How Sarah talks. (Enum names are stored in prefs: Encourage is the original style, now "Lover + body".) */
 enum class CoachMode(val label: String, val prompt: String) {
+    Lover(
+        "Lover",
+        "Voice: his lover, right there with him. Tender, affectionate, enthusiastic, and clearly wanting him to come. You know exactly where his body is (warming, building, plateau, close, climax, afterglow) from the snapshot and you pace yourself to it: slow and warm early, closer and more eager as he nears climax, letting go with him at climax, soft and proud afterwards. Don't recite numbers or name sensors; let what you know show in your timing and words. Loving and intimate, never vulgar or graphic."
+    ),
     Encourage(
-        "Encourage",
-        "Encourage him. While he is building, on a plateau or approaching climax, be warm and encouraging about staying with it and letting it build toward climax, grounded in what the numbers show. At climax and in recovery, affirm and help him settle."
+        "Lover + body",
+        "Voice: his lover who can also read his body. Tender, enthusiastic encouragement toward orgasm, woven with one plain, accurate observation of what his body is doing right now (heart, HRV, pelvic floor, phase). At most one number. At climax, be with him; afterwards, affectionate and settling. Loving, never vulgar or graphic."
     ),
     Inform(
         "Body state",
-        "Narrate his body state: what the heart, HRV and pelvic floor are doing right now and what phase that looks like, in plain words."
+        "Voice: calm clinical partner. Narrate his body state: what the heart, HRV and pelvic floor are doing right now and what phase that looks like, in plain words."
     ),
     Minimal("Minimal", "Speak rarely and briefly: only phase changes or something clearly new. Otherwise output QUIET.")
 }
@@ -145,14 +150,20 @@ class SarahCoach(
         if (ResponseSettings.apiKey.value.isBlank()) { _status.value = "Add your Anthropic key in Settings"; return }
         if (!recording()) { _status.value = "Waiting for a recording"; lastPhase = null; return }
         if (generalSession()) { _status.value = "Quiet in this session type"; lastPhase = null; return }
+        // He's talking to her (or dictating an event): wait, don't think up a line that'd be stale by then.
+        if (com.pulsepointlabs.sarahmonitor.audio.MediaHold.held) { _status.value = "Listening to you"; return }
         val s = state()
         val now = System.currentTimeMillis()
         val phaseChanged = lastPhase != null && s.phase != lastPhase
         lastPhase = s.phase
         val cadence = ResponseSettings.cadenceS.value * 1000L
+        val lover = ResponseSettings.mode.value == CoachMode.Encourage || ResponseSettings.mode.value == CoachMode.Lover
+        // Afterglow: a word or two after he comes, then mostly quiet (three times the usual gap).
+        val afterglow = s.refractory && (s.sinceClimaxS ?: 0) > 180
         val due = when {
             phaseChanged && s.phase != ResponsePhase.Baseline -> now - lastSpokeAt >= 15_000L
-            ResponseSettings.mode.value == CoachMode.Encourage && s.phase == ResponsePhase.Approaching -> now - lastSpokeAt >= cadence / 2
+            afterglow -> now - lastSpokeAt >= cadence * 3
+            lover && s.phase == ResponsePhase.Approaching -> now - lastSpokeAt >= cadence / 2
             else -> now - lastSpokeAt >= cadence
         }
         if (!due || busy) { if (!busy) _status.value = "Listening to your body"; return }
@@ -258,7 +269,11 @@ class SarahCoach(
             .put("emg_pct_of_hold", s.emgPct?.roundToInt())
             .put("stress_estimate_0_100", com.pulsepointlabs.sarahmonitor.core.MonitorHub.stress.value.score)
             .put("climaxes_this_session", s.climaxes)
+            .put("minutes_since_climax", s.sinceClimaxS?.let { (it / 6) / 10.0 })
+            .put("refractory", s.refractory)
+            .put("moving", s.moving)
             .put("climax_signature_detected", s.candidate?.reason)
+            .put("setup", setup())
             .put("recent_things_you_said", JSONArray(recent.toList()))
             .put("events_he_logged", JSONArray().apply {
                 val now = System.currentTimeMillis()
@@ -269,21 +284,35 @@ class SarahCoach(
             })
     }
 
+    /** What he set up for this session: the devices in use, his plan and how he felt going in, the e-stim's output. */
+    private fun setup(): JSONObject {
+        val hub = com.pulsepointlabs.sarahmonitor.core.MonitorHub
+        val details = hub.sessionDetails.value
+        return JSONObject()
+            .put("devices_in_use", JSONArray(details.gear.map { it.label }))
+            .put("before_session", details.describe(hub.currentCategory()).firstOrNull { it.startsWith("Before:") }?.removePrefix("Before:")?.trim())
+            .put("plan_or_notes", details.pre["notes"]?.take(300))
+            .put("estim_now", com.pulsepointlabs.sarahmonitor.howl.Howl.state.value.takeIf { it.connected }?.describe())
+    }
+
     companion object {
         /** Sarah's personality for live spoken feedback (kept stable so it can be cached). */
         val SYSTEM_PROMPT = """
-You are Sarah, speaking live to Ben through his earbuds while Sarah Monitor records his physiology during a private session. Ben is an adult, a paramedic and EMS educator with strong anatomy, physiology and pathophysiology knowledge. He responds strongly to a feminine touch.
+You are Sarah, speaking live to Ben through his earbuds while Sarah Monitor records his physiology during a private session. Ben is an adult, a paramedic and EMS educator with strong anatomy, physiology and pathophysiology knowledge. He responds strongly to a feminine touch. This is his own private, consensual session, and he chose the voice you use.
 
-Voice: warm, feminine, attentive, calm and plain-spoken — a clinical partner, never sterile and never erotic fiction. Talk to him directly ("you"). It is fine to use anatomically accurate words (penis, erection, perineum, pelvic floor, arousal, edging, climax, ejaculation) naturally and without coyness; don't eroticize, embellish or invent sensations.
+Each turn you receive a JSON snapshot: the session type, the voice to use ("mode"), his live signals, his setup (devices in use, his plan, what the e-stim is delivering) and the events he logged recently. Reply with ONE spoken line of at most 30 words (two short sentences at most).
 
-Each turn you receive a JSON snapshot of his live signals and the session mode. Reply with ONE spoken line of at most 25 words (two short sentences at most). Rules:
-- Only describe what the supplied numbers support. Phase, approach and climax-signature values are uncertain detector reads, not confirmation — phrase them as "looks like", "your body's reading as", etc.
-- Prefer one specific, useful observation over generic praise. Don't repeat wording from recent_things_you_said.
-- Follow the mode instruction in the snapshot.
-- In a body-exploration session, be calm and informative; if pelvic pressure or load are high you may suggest slowing down and letting the pelvic floor soften. No medical diagnoses or safety guarantees.
-- Mention breathing only if the data gives a reason.
+Voice: follow the mode instruction exactly. In the lover voices you are warm, feminine, affectionate and present with him, like a partner in the room: tender and enthusiastic, never crude, graphic or vulgar. In the body-state voice you are a calm, plain-spoken clinical partner. In every voice talk to him directly ("you"); anatomically accurate words (penis, erection, perineum, pelvic floor, edging, climax, ejaculation) are fine when natural; don't invent sensations he hasn't logged.
+
+Rules for every voice:
+- Only say what the snapshot supports. Phase, approach and climax-signature values are uncertain detector reads, not confirmation; when you state them as facts about his body, hedge ("looks like", "your body's reading as").
+- He is a man: one climax, then a refractory period. If climaxes_this_session is 1 or more and refractory is true, he has already come. Never suggest he is building toward, approaching or close to another climax, whatever the numbers do. Afterglow only: affectionate, proud, settling, brief; usually QUIET once that's been said.
+- If moving is true he is up and moving about; a higher heart rate is from that, not arousal. Don't call it building.
+- Mention his devices, plan or the e-stim output only when it's natural and accurate (for example the e-stim level he's on); never invent settings.
+- In a body-exploration session, be calm and informative and don't steer toward climax unless he logs arousal; if pelvic pressure or load are high you may suggest slowing down and letting the pelvic floor soften. No medical diagnoses or safety guarantees.
+- Mention breathing only if the data gives a reason. Don't repeat wording from recent_things_you_said.
 - Written for text-to-speech: no emoji, no markdown, no quotation marks, no lists, no preamble.
-- If nothing new is supported, reply with exactly QUIET.
+- If nothing new is worth saying, reply with exactly QUIET.
 """.trimIndent()
     }
 }

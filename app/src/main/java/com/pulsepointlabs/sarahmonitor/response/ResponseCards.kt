@@ -149,7 +149,7 @@ private fun MenuPill(title: String, current: String, options: List<String>, modi
             Modifier.fillMaxWidth().border(1.dp, ClimaxPink, RoundedCornerShape(14.dp)).clickable { open = true }.padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text(title, color = MonitorColors.label, fontSize = s.sp(11f), maxLines = 1, softWrap = false)
+            if (title.isNotBlank()) Text(title, color = MonitorColors.label, fontSize = s.sp(11f), maxLines = 1, softWrap = false)
             Text(current, color = ClimaxPink, fontSize = s.sp(13f), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Text("▾", color = ClimaxPink, fontSize = s.sp(13f))
         }
@@ -418,7 +418,7 @@ fun SarahLiveCard() {
         // Session type and how she talks: one tidy row each, choices in a menu (no stack of pills).
         fixed { MenuPill("Session", ctx.label, SessionContext.entries.map { it.label }, Modifier.fillMaxWidth()) { i -> ResponseSettings.setContext(SessionContext.entries[i]) } }
         fixed(drop = 1) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            MenuPill("Style", mode.label, CoachMode.entries.map { it.label }, Modifier.weight(1f)) { i -> ResponseSettings.setMode(CoachMode.entries[i]) }
+            MenuPill("", mode.label, CoachMode.entries.map { it.label }, Modifier.weight(1f)) { i -> ResponseSettings.setMode(CoachMode.entries[i]) }
             Pill("▶ Ask", ClimaxPink, false) { MonitorHub.coach.askNow() }
         } }
     }

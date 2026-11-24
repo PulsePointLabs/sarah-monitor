@@ -102,30 +102,56 @@ class PcmRing(seconds: Int, private val rate: Int = 16_000) {
 }
 
 /**
- * Hands-free "ears", all on the phone: a continuous mic stream into a rolling 40 s buffer, an offline recogniser
+ * Hands-free "ears", all on the phone: a continuous mic stream into a rolling buffer, an offline recogniser
  * that only has to notice "Sarah", and simple voice-activity detection for where a phrase starts and ends.
- * When a phrase begins with "Sarah", its audio (from just before you started talking to when you stopped) is
- * handed to [onPhrase]; nothing else ever leaves the phone. "Sarah" on its own calls [onWakeOnly] and the next
- * phrase within 10 s is handed over whole.
+ *
+ * The moment "Sarah" is heard, [onWake] fires once (she stops talking, media pauses, the listening tone plays).
+ * Everything you say from there is one note, until you've clearly finished: [END_QUIET_MS] of quiet, longer when
+ * the last words sound unfinished ("…and the", "…because"), and up to [WAIT_FOR_START_MS] after a bare "Sarah".
+ * Its audio goes to [onPhrase]; nothing else ever leaves the phone. A bare "Sarah" followed by silence calls
+ * [onNothing].
  */
 class LocalEars(
     private val context: Context,
     private val scope: CoroutineScope,
     /** pcm (16 kHz), when the phrase started (wall clock), what the offline recogniser heard. */
     private val onPhrase: (pcm: ShortArray, startedAtMs: Long, offlineText: String) -> Unit,
-    private val onWakeOnly: () -> Unit,
+    private val onWake: () -> Unit,
+    private val onNothing: () -> Unit,
     private val onProblem: (String) -> Unit
 ) {
     companion object {
         const val RATE = 16_000
         private const val CHUNK = RATE / 10           // 100 ms
         private const val LEAD_IN = RATE * 3 / 10     // keep 0.3 s before the phrase
-        private const val END_QUIET_MS = 1_200        // a phrase ends after this much quiet
-        private const val MAX_PHRASE_MS = 30_000
-        private const val AWAIT_MS = 10_000L
+        /** A finished-sounding thought ends after this much quiet. */
+        const val END_QUIET_MS = 2_500
+        /** …and one that trails off mid-sentence gets this long to carry on. */
+        const val UNFINISHED_QUIET_MS = 5_500
+        /** After "Sarah" on its own: how long she waits for you to start. */
+        const val WAIT_FOR_START_MS = 8_000
+        private const val MAX_PHRASE_MS = 90_000
         private val WAKE = Regex("^(?:(?:ok|okay|hey|hi|so)\\s+)?(sarah|sara|sera|serra|zara)\\b", RegexOption.IGNORE_CASE)
+        /** Words a finished thought rarely ends on. */
+        private val DANGLING = setOf(
+            "and", "but", "or", "so", "because", "cause", "the", "a", "an", "to", "of", "with", "in", "on", "at", "for", "from", "into",
+            "my", "his", "her", "your", "its", "it's", "is", "was", "are", "were", "be", "been", "it", "i", "i'm", "im", "that", "which",
+            "like", "um", "uh", "er", "hmm", "then", "about", "just", "more", "less", "very", "really", "kind", "sort", "getting", "feeling",
+            "feels", "feel", "starting", "still", "also", "when", "while", "if", "as", "than", "some", "this", "there", "where", "what", "how"
+        )
 
         fun startsWithWake(text: String) = WAKE.containsMatchIn(text.trim())
+
+        /** Quiet needed before a phrase counts as finished, given what's been heard so far. Pure; unit-tested. */
+        fun quietNeededMs(heard: String): Int {
+            val after = WAKE.find(heard.trim())?.let { heard.trim().substring(it.range.last + 1) } ?: heard
+            val words = after.lowercase().split(Regex("[^a-z']+")).filter { it.isNotBlank() }
+            return when {
+                words.isEmpty() -> WAIT_FOR_START_MS
+                words.size <= 2 || words.last() in DANGLING -> UNFINISHED_QUIET_MS
+                else -> END_QUIET_MS
+            }
+        }
 
         /** Brings a quiet clip up to a healthy level (peaks near −3 dBFS, at most ×8) before transcription. */
         fun normalized(pcm: ShortArray): ShortArray {
@@ -161,7 +187,7 @@ class LocalEars(
         route.input?.let { rec.preferredDevice = it }
         if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); MicRoute.close(context, route); throw IllegalStateException("Couldn't open the microphone") }
         val recognizer = org.vosk.Recognizer(model, RATE.toFloat())
-        val ring = PcmRing(40)
+        val ring = PcmRing(MAX_PHRASE_MS / 1000 + 10)
         val startedAt = System.currentTimeMillis()
         fun wallAt(sample: Long) = startedAt + sample * 1000 / RATE
         val pcm = ShortArray(CHUNK)
@@ -173,7 +199,11 @@ class LocalEars(
         var utteranceStart: Long? = null      // onset of the speech the recogniser is currently hearing
         var capturing: Long? = null           // start sample of a phrase being captured
         var captureText = StringBuilder()
-        var awaitUntil = 0L                   // after a bare "Sarah": take the next phrase whole
+        var partialNow = ""                   // what the recogniser is hearing right now (not yet final)
+        fun begin(from: Long, text: String) {
+            capturing = maxOf(0L, from - LEAD_IN); captureText = StringBuilder(text); partialNow = ""
+            onWake()
+        }
         rec.startRecording()
         try {
             while (scope.isActive && running) {
@@ -195,31 +225,35 @@ class LocalEars(
                 if (speaking) {
                     if (quietMs >= 300) onsetSample = ring.written - n
                     quietMs = 0
-                    // Waiting after a bare "Sarah": this phrase is the note.
-                    if (capturing == null && System.currentTimeMillis() < awaitUntil) { capturing = maxOf(0L, onsetSample - LEAD_IN); captureText = StringBuilder("sarah "); awaitUntil = 0L }
                 } else quietMs += 100
 
                 val final = recognizer.acceptWaveForm(bytes, n * 2)
                 if (final) {
                     val text = JSONObject(recognizer.result).optString("text")
-                    if (capturing != null) captureText.append(' ').append(text)
-                    else if (startsWithWake(text)) { capturing = maxOf(0L, (utteranceStart ?: onsetSample) - LEAD_IN); captureText = StringBuilder(text) }
+                    if (capturing != null) { captureText.append(' ').append(text); partialNow = "" }
+                    else if (startsWithWake(text)) begin(utteranceStart ?: onsetSample, text)
                     utteranceStart = null
-                } else if (capturing == null) {
+                } else {
                     val partial = JSONObject(recognizer.partialResult).optString("partial")
-                    if (partial.isNotBlank() && utteranceStart == null) utteranceStart = onsetSample
-                    if (startsWithWake(partial)) { capturing = maxOf(0L, (utteranceStart ?: onsetSample) - LEAD_IN); captureText = StringBuilder() }
+                    if (capturing != null) partialNow = partial
+                    else {
+                        if (partial.isNotBlank() && utteranceStart == null) utteranceStart = onsetSample
+                        // Heard "Sarah": react now, not when the sentence is over. A second "Sarah" inside the same
+                        // note is just part of it (never a second listen).
+                        if (startsWithWake(partial)) begin(utteranceStart ?: onsetSample, "")
+                    }
                 }
 
                 val start = capturing ?: continue
                 val lengthMs = (ring.written - start) * 1000 / RATE
-                if (quietMs >= END_QUIET_MS || lengthMs >= MAX_PHRASE_MS) {
+                val heardSoFar = "$captureText $partialNow"
+                if (quietMs >= quietNeededMs(heardSoFar) || lengthMs >= MAX_PHRASE_MS) {
                     // Phrase over: everything up to a little after the last speech.
                     val end = ring.written - (quietMs - 300).coerceAtLeast(0) * RATE / 1000
                     val heard = (captureText.toString() + " " + JSONObject(recognizer.finalResult).optString("text")).trim().replace(Regex("\\s+"), " ")
                     recognizer.reset()
-                    capturing = null; utteranceStart = null
-                    if (wakeOnly(heard)) { awaitUntil = System.currentTimeMillis() + AWAIT_MS; onWakeOnly() }
+                    capturing = null; utteranceStart = null; partialNow = ""
+                    if (wakeOnly(heard) || heard.isBlank()) onNothing()
                     else onPhrase(ring.slice(start, end), wallAt(start + LEAD_IN), heard)
                 }
             }

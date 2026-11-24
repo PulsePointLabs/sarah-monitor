@@ -92,6 +92,7 @@ class BoardShotTest {
         feed()
         shot("monitor-phone", 411, 780) { Dashboard(FitLayout.monitorDefaults, false, {}, {}, Modifier.fillMaxSize(), compact = true) }
         shot("response-phone", 411, 780) { Dashboard(FitLayout.responseDefaults, false, {}, {}, Modifier.fillMaxSize(), compact = true) }
+        shot("response-landscape", 891, 340) { Dashboard(FitLayout.responseDefaults, false, {}, {}, Modifier.fillMaxSize(), compact = true) }
         shot("monitor-landscape", 891, 340) { Dashboard(FitLayout.monitorDefaults, false, {}, {}, Modifier.fillMaxSize(), compact = true) }
         shot("monitor-dex", 1360, 700) { Dashboard(GridLayoutEngine.defaultLayout, false, {}, {}, Modifier.fillMaxSize(), compact = false) }
         pelvicStates()
