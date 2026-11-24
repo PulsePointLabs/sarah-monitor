@@ -1,5 +1,7 @@
 package com.pulsepointlabs.sarahmonitor
 
+import androidx.compose.material.icons.filled.Fullscreen
+
 import android.Manifest
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.focusable
@@ -381,6 +383,20 @@ private fun MonitorScreen(
     BackHandler(enabled = reviewId != null || screen != Screen.Monitor) {
         if (reviewId != null) reviewId = null else screen = Screen.Monitor
     }
+    // Focus mode: only the monitor (or the Kegel trainer), full screen, no bars. F enters; Esc, X or Back leaves.
+    var focusMode by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = focusMode) { focusMode = false }
+    LaunchedEffect(focusMode) {
+        val w = (context as? android.app.Activity)?.window ?: return@LaunchedEffect
+        val bars = androidx.core.view.WindowCompat.getInsetsController(w, w.decorView)
+        if (focusMode) {
+            bars.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            bars.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        } else bars.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        runCatching { focus.requestFocus() }
+    }
+    // Shortcuts only where there are no text boxes to type into (typing "r" in a note must not start a recording).
+    val shortcuts = reviewId == null && screen in setOf(Screen.Monitor, Screen.Response, Screen.Kegel)
     val actions = remember {
         CardActions(
             onAddGlucose = { showAddGlucose = true },
@@ -401,14 +417,17 @@ private fun MonitorScreen(
                 // DeX / keyboard: M marks an event, R starts or stops recording.
                 .onPreviewKeyEvent { e ->
                     if (e.type != KeyEventType.KeyDown || markAt != null) return@onPreviewKeyEvent false
-                    when (e.key) {
-                        Key.M -> { mark(); true }
-                        Key.R -> { if (session == null) MonitorHub.startSession() else confirmStop = true; true }
+                    when {
+                        focusMode && (e.key == Key.Escape || e.key == Key.X) -> { focusMode = false; true }
+                        !shortcuts -> false
+                        e.key == Key.F -> { focusMode = true; true }
+                        e.key == Key.M -> { mark(); true }
+                        e.key == Key.R -> { if (session == null) MonitorHub.startSession() else confirmStop = true; true }
                         else -> false
                     }
                 }
         ) {
-            TopBar(
+            if (!focusMode) TopBar(
                 screen = if (reviewId != null) Screen.Sessions else screen,
                 recording = session,
                 arranging = arranging,
@@ -419,12 +438,14 @@ private fun MonitorScreen(
                 onCards = { showCards = true },
                 onOverlays = { screen = Screen.Settings; reviewId = null },
                 onArrange = { arranging = !arranging },
-                onReset = { confirmReset = true }
+                onReset = { confirmReset = true },
+                onFocus = { reviewId = null; if (screen !in setOf(Screen.Monitor, Screen.Response, Screen.Kegel)) screen = Screen.Monitor; focusMode = true }
             )
-            Spacer(Modifier.size(8.dp))
+            if (!focusMode) Spacer(Modifier.size(8.dp))
             val openReview = reviewId
             when {
-                openReview != null -> ReviewScreen(
+                focusMode && screen == Screen.Kegel -> com.pulsepointlabs.sarahmonitor.kegel.KegelScreen(Modifier.fillMaxSize(), focusOnly = true)
+                !focusMode && openReview != null -> ReviewScreen(
                     sessionId = openReview,
                     onBack = { reviewId = null },
                     onExportCsv = onExportCsv,
@@ -440,6 +461,11 @@ private fun MonitorScreen(
                     compact = compact
                 )
                 screen == Screen.Kegel -> com.pulsepointlabs.sarahmonitor.kegel.KegelScreen(Modifier.fillMaxSize())
+                focusMode && screen != Screen.Response -> Dashboard(
+                    slots = if (compact) fitSlots else slots,
+                    arranging = false, onArrangingChange = {}, onChange = { slots = it; layoutStore.save(it) },
+                    modifier = Modifier.fillMaxSize(), compact = compact
+                )
                 screen == Screen.Health -> com.pulsepointlabs.sarahmonitor.vitals.HealthScreen(onCsvImport, onHealthConnect, Modifier.fillMaxSize()) { m -> com.pulsepointlabs.sarahmonitor.sleep.SleepScreen(m) }
                 screen == Screen.Sessions -> SessionsScreen(onOpen = { reviewId = it }, modifier = Modifier.fillMaxSize())
                 screen == Screen.Sensors -> SensorsScreen(onHealthConnect, onCsvImport, onMessage, Modifier.fillMaxSize())
@@ -454,6 +480,17 @@ private fun MonitorScreen(
                 )
             }
         }
+        // Focus mode: a way out that shows for a few seconds, then fades so it never covers a card (Esc, X or Back always work).
+        var showExit by remember { mutableStateOf(false) }
+        LaunchedEffect(focusMode) { showExit = focusMode; if (focusMode) { delay(5_000L); showExit = false } }
+        androidx.compose.animation.AnimatedVisibility(showExit && focusMode, enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) { Box(Modifier.fillMaxSize().safeDrawingPadding().padding(10.dp), contentAlignment = Alignment.TopEnd) {
+            Text(
+                "✕  Exit focus", color = MonitorColors.text.copy(alpha = 0.85f), fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.background(MonitorColors.panel.copy(alpha = 0.85f), RoundedCornerShape(16.dp))
+                    .border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(16.dp)).clickable { focusMode = false }
+                    .padding(horizontal = 12.dp, vertical = 7.dp)
+            )
+        } }
     }
     markAt?.let { t ->
         MarkEventDialog(
@@ -579,7 +616,8 @@ internal fun TopBar(
     onCards: () -> Unit,
     onOverlays: () -> Unit,
     onArrange: () -> Unit,
-    onReset: () -> Unit
+    onReset: () -> Unit,
+    onFocus: () -> Unit = {}
 ) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(1_000L); now = System.currentTimeMillis() } }
@@ -599,6 +637,7 @@ internal fun TopBar(
                 BarIcon(Icons.Default.MoreVert, "More", { menu = true })
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MonitorColors.panel) {
                     val board = screen == Screen.Response
+                    DropdownMenuItem(text = { Text("Focus mode (F)") }, onClick = { menu = false; onFocus() })
                     DropdownMenuItem(text = { Text("Cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onCards() })
                     if (!fit) DropdownMenuItem(text = { Text(if (arranging) "Done arranging" else "Arrange cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onArrange() })
                     DropdownMenuItem(text = { Text("Start fresh") }, onClick = { menu = false; onReset() })
@@ -627,6 +666,7 @@ internal fun TopBar(
             if (full) recording?.let { SessionClock(it.startTimeMs, now) }
             Tabs(screen, compact = !full, onScreen = onScreen)
             Spacer(Modifier.weight(1f))
+            BarIcon(androidx.compose.material.icons.Icons.Default.Fullscreen, "Focus mode (F)", onFocus)
             RecordButton(recording, now, compact = false, onClick = onRecord)
             MarkButton(enabled = recording != null, compact = !full, onClick = onMark)
             ListenButton(labelled = true)

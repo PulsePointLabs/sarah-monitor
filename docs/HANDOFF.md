@@ -11,7 +11,7 @@ bedside-monitor dashboards, floating overlays and a review screen.
 
 - Repo: `PulsePointLabs/sarah-monitor`, branch `main`. Every push to `main` builds a signed release
   (GitHub Actions); it appears under Releases about 4–5 minutes later as `vX.Y.Z-main-<versionCode>`.
-- Bump `versionCode` and `versionName` in `app/build.gradle.kts` with every release. Current: **0.25.0 (42)**, released from branch `rc/0.25-research-integrity` as a pre-release (main is still 0.24.2).
+- Bump `versionCode` and `versionName` in `app/build.gradle.kts` with every release. Current: **0.25.1 (43)**, released from branch `rc/0.25-research-integrity` as a pre-release (main is still 0.24.2).
 - The older app (`PulsePointLabs/Sarah`, "SarahVS") is reference only. Don't copy its code; engineer it better.
 
 ## How Ben wants to work (important)
@@ -90,6 +90,15 @@ bedside-monitor dashboards, floating overlays and a review screen.
 - Review: quality-aware pressure stats, fault and sustained-elevation flags, events editable with typed elapsed time,
   range, source (memory/video/observation/notes) and ± timing; Export ▾ → CSV or Research ZIP; episode progression.
 - Fixed: duplicate flag titles in CSV rows; pre-session BP printed as 0:00; session-type context carrying over.
+
+## 0.25.1 (Kegels + focus mode)
+
+- Kegel trainer: Focus / Detail switch during a set (Detail = live 30 s graph, per-squeeze bars, tiles with trend
+  arrows); a set switches pressure logging on; full-screen set review (whole-set chart with hover/drag block per
+  squeeze, bar per squeeze, every squeeze up close, tiles, plain read) from the result card and from session review.
+- Focus mode: top-bar button (phone: More menu) or F; Esc, X or Back exits; hides bars, monitor (or Kegel trainer) only.
+- Ben's feedback (2026-11-23): he wants research-grade data visible IN the app (and server), not exports; no plain-text
+  metric dumps anywhere. He will send the full ChatGPT thread; compare intent vs 0.25.0 first next session.
 
 ## Open / unverified
 

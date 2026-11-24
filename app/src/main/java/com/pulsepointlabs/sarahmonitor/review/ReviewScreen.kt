@@ -208,6 +208,15 @@ fun ReviewScreen(
     var selectedFlag by remember(sessionId) { mutableStateOf<SessionFlag?>(null) }
     var selectedEpisode by remember(sessionId) { mutableStateOf<com.pulsepointlabs.sarahmonitor.response.ResponseEpisode?>(null) }
     val kegelSets = remember(d) { d.markers.mapNotNull { com.pulsepointlabs.sarahmonitor.kegel.KegelRecord.from(it) } }
+    var kegelDetail by remember(sessionId) { mutableStateOf<com.pulsepointlabs.sarahmonitor.kegel.KegelRecord?>(null) }
+    kegelDetail?.let { k ->
+        // The set's own pressure from the recording (every sample), in the same units the set was scored in.
+        val pts = remember(k, d.pelvic.size) {
+            d.pelvic.filter { it.timestampMs in (k.startMs - 3_000L)..(k.endMs + 5_000L) }
+                .mapNotNull { p -> p.aboveRestKpa?.let { com.pulsepointlabs.sarahmonitor.kegel.KegelPoint(p.timestampMs, com.pulsepointlabs.sarahmonitor.kegel.KegelAnalysis.toValue(it, k.referenceKpa)) } }
+        }
+        com.pulsepointlabs.sarahmonitor.kegel.KegelSetReview(k, pts) { kegelDetail = null }
+    }
     fun bands(chart: FlagChart): List<ChartBand> =
         (if (!showFlags) emptyList() else flags.filter { it.kind.chart == chart }.map { ChartBand(it.startMs, it.endMs, flagColor(it.severity), it == selectedFlag) }) +
             (if (chart == FlagChart.Hr) episodes.map { ChartBand(it.startMs, it.endMs, EpisodePink, it == selectedEpisode) } else emptyList()) +
@@ -296,10 +305,10 @@ fun ReviewScreen(
     }
     val episodesCard: @Composable () -> Unit = {
         if (responseLane) EpisodesCard(episodes, d, exploration, ::focusEpisode)
-        if (kegelSets.isNotEmpty()) KegelCard(kegelSets) { k ->
+        if (kegelSets.isNotEmpty()) KegelCard(kegelSets, onFocus = { k ->
             cursor = k.startMs
             viewport = viewport.centeredOn((k.startMs + k.endMs) / 2, ((k.endMs - k.startMs) * 1.3).toLong().coerceAtLeast(60_000L), fullStart, fullEnd)
-        }
+        }, onDetails = { kegelDetail = it })
     }
     val details: @Composable ColumnScope.() -> Unit = {
         SummaryCard(d, flags)
@@ -1052,7 +1061,7 @@ internal fun EpisodesCard(
 
 /** Kegel sets in this session: score, per-rep quality, and a plain read (fatigue, relaxation). */
 @Composable
-internal fun KegelCard(sets: List<com.pulsepointlabs.sarahmonitor.kegel.KegelRecord>, onFocus: (com.pulsepointlabs.sarahmonitor.kegel.KegelRecord) -> Unit) {
+internal fun KegelCard(sets: List<com.pulsepointlabs.sarahmonitor.kegel.KegelRecord>, onFocus: (com.pulsepointlabs.sarahmonitor.kegel.KegelRecord) -> Unit, onDetails: (com.pulsepointlabs.sarahmonitor.kegel.KegelRecord) -> Unit = {}) {
     val pink = EpisodePink
     Section(if (sets.size == 1) "Kegel set" else "Kegel sets (${sets.size})") {
         sets.forEach { k ->
@@ -1082,6 +1091,11 @@ internal fun KegelCard(sets: List<com.pulsepointlabs.sarahmonitor.kegel.KegelRec
                 }
                 Text("Bars: time on target per rep · dots: strength (% of reference)", color = MonitorColors.dim, fontSize = 11.sp)
                 Text(k.story(), color = MonitorColors.text, fontSize = 13.sp, lineHeight = 18.sp)
+                Text(
+                    "See every squeeze in detail", color = MonitorColors.background, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().background(pink, RoundedCornerShape(8.dp)).clickable { onDetails(k) }.padding(vertical = 9.dp)
+                )
             }
         }
     }

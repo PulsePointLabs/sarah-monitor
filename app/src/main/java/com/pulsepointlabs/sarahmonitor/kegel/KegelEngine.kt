@@ -129,7 +129,8 @@ class KegelSession(val routine: KegelRoutine, val reps: Int, val holdS: Double, 
     }
 
     /** Everything about this set as JSON, frozen onto its event so the review can rebuild it. */
-    fun toJson(r: KegelResult, stoppedEarly: Boolean): JSONObject = JSONObject()
+    fun toJson(r: KegelResult, stoppedEarly: Boolean, referenceKpa: Double? = null, thresholdKpa: Double? = null): JSONObject = JSONObject()
+        .put("reference_kpa", referenceKpa ?: JSONObject.NULL).put("threshold_kpa", thresholdKpa ?: JSONObject.NULL)
         .put("routine", routine.name).put("routine_label", routine.label).put("reps", reps).put("hold_s", holdS).put("rest_s", restS)
         .put("start_ms", startMs).put("score", r.score).put("strength_pct", r.avgPctOfRef ?: JSONObject.NULL).put("relax_pct", r.relaxQualityPct ?: JSONObject.NULL)
         .put("stopped_early", stoppedEarly)

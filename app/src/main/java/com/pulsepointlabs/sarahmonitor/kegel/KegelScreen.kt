@@ -84,9 +84,13 @@ private fun Card(title: String, color: Color, modifier: Modifier = Modifier, con
     }
 }
 
-/** Guided pelvic-floor training: pick a routine, follow the breathing ring, get scored live from the CIVET. */
+/**
+ * Guided pelvic-floor training: pick a routine, follow the breathing ring, get scored live from the CIVET.
+ * During a set: Focus (the ring and little else) or Detail (live graph, per-squeeze bars, tiles).
+ * [focusOnly]: the app's focus mode; only the trainer shows.
+ */
 @Composable
-fun KegelScreen(modifier: Modifier = Modifier) {
+fun KegelScreen(modifier: Modifier = Modifier, focusOnly: Boolean = false) {
     val context = LocalContext.current
     LaunchedEffect(Unit) { KegelHistory.load(context) }
     val pelvic by MonitorHub.pelvic.collectAsState()
@@ -100,6 +104,11 @@ fun KegelScreen(modifier: Modifier = Modifier) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var lastIndex by remember { mutableIntStateOf(-1) }
     val scope = rememberCoroutineScope()
+    var detail by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    // The set's pressure, kept so the detailed review opens the moment it ends.
+    val setPoints = remember { androidx.compose.runtime.mutableStateListOf<KegelPoint>() }
+    var lastSet by remember { mutableStateOf<Pair<KegelRecord, List<KegelPoint>>?>(null) }
+    var reviewing by remember { mutableStateOf(false) }
     // A set started while nothing was recording gets its own session, stopped when the set ends.
     var autoSession by remember { mutableStateOf(false) }
     val autoRef = androidx.compose.runtime.rememberUpdatedState(autoSession)
@@ -110,10 +119,13 @@ fun KegelScreen(modifier: Modifier = Modifier) {
         KegelHistory.add(context, r)
         val wasAuto = autoSession
         autoSession = false
+        val p = MonitorHub.pelvic.value
+        val json = s.toJson(r, early, p.referenceKpa, p.thresholdKpa)
+        KegelRecord.fromJson("live", json, at)?.let { lastSet = it to setPoints.toList() }
         if (MonitorHub.session.value != null) {
             MonitorHub.markEvent(
                 at, setOf("activity"), "Kegels: ${r.routine.label}, ${r.reps} reps, score ${r.score}" + if (early) " (stopped early)" else "",
-                extra = "kegel" to s.toJson(r, early)
+                extra = "kegel" to json
             ) { if (wasAuto) MonitorHub.stopSession() }
         }
         result = r
@@ -128,6 +140,9 @@ fun KegelScreen(modifier: Modifier = Modifier) {
             now = System.currentTimeMillis()
             val p = MonitorHub.pelvic.value
             s.sample(now, p.aboveRestKpa, p.referenceKpa, p.thresholdKpa)
+            // Keep every new pressure sample of the set (10/s) for the review.
+            val lastT = setPoints.lastOrNull()?.t ?: (s.startMs - 3_000L)
+            p.trace.forEach { q -> if (q.timestampMs > lastT) q.aboveRestKpa?.let { setPoints += KegelPoint(q.timestampMs, KegelAnalysis.toValue(it, p.referenceKpa)) } }
             val n = s.at(now)
             if (n.index != lastIndex) {
                 lastIndex = n.index
@@ -163,6 +178,9 @@ fun KegelScreen(modifier: Modifier = Modifier) {
     fun start() {
         result = null
         lastIndex = -1
+        setPoints.clear(); lastSet = null
+        // Pressure counts only while logging is on (0.25): a set switches it on so its squeezes are recorded.
+        if (!MonitorHub.pelvic.value.logging) MonitorHub.startPelvicLogging()
         if (MonitorHub.session.value == null) {
             val clock = java.time.LocalTime.now().format(DateTimeFormatter.ofPattern("h:mm a"))
             MonitorHub.startSession(com.pulsepointlabs.sarahmonitor.session.SessionCategory.Kegel, "Kegels · ${routine.label} · $clock")
@@ -198,7 +216,14 @@ fun KegelScreen(modifier: Modifier = Modifier) {
         }
     }
 
+    val s0 = session
+    if (s0 != null && (detail && !focusOnly)) {
+        DetailTrainer(s0, now, pelvic, routine, onFocus = { detail = false }, onStop = { finish(s0, System.currentTimeMillis(), early = true) }, modifier = modifier)
+        return
+    }
+    if (reviewing) lastSet?.let { (rec, pts) -> KegelSetReview(rec, pts) { reviewing = false } }
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (running && !focusOnly) ModeSwitch(detail) { detail = it }
         // Routine + three dropdowns; everything else stays out of the way of the circle.
         val routines: @Composable () -> Unit = {
             ChoiceRow {
@@ -214,7 +239,7 @@ fun KegelScreen(modifier: Modifier = Modifier) {
             PanelButton(androidx.compose.material.icons.Icons.Default.Compress, "Calibrate", if (pelvic.referenceKpa == null) MonitorColors.warn else relaxColor) { calibrationPanel() }
             PanelButton(androidx.compose.material.icons.Icons.Default.ShowChart, "Progress", MonitorColors.rmssd) { Box(Modifier.width(380.dp).padding(horizontal = 8.dp)) { HistoryCard() } }
         }
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (!running && !focusOnly) BoxWithConstraints(Modifier.fillMaxWidth()) {
             if (maxWidth >= 900.dp) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(Modifier.weight(1f)) { routines() }
@@ -228,7 +253,7 @@ fun KegelScreen(modifier: Modifier = Modifier) {
                 }
             }
         }
-        Text(
+        if (!focusOnly) Text(
             "${routine.label} · $reps reps · ${"%.0f".format(hold)} s ${if (routine == KegelRoutine.Reverse) "release" else "hold"} · ${"%.0f".format(rest)} s rest",
             color = MonitorColors.label, fontSize = 13.sp
         )
@@ -263,7 +288,7 @@ fun KegelScreen(modifier: Modifier = Modifier) {
                         .clickable { start() }
                         .padding(horizontal = 28.dp, vertical = 12.dp)
                 )
-                result?.let { ResultCard(it) }
+                result?.let { r -> ResultCard(r, onDetails = lastSet?.let { { reviewing = true } }) }
             }
         }
     }
@@ -390,12 +415,172 @@ private fun RepDots(s: KegelSession, rep: Int) {
 }
 
 @Composable
-private fun ResultCard(r: KegelResult) {
-    Card("Set complete · ${r.routine.label}", MonitorColors.good, Modifier.fillMaxWidth().widthIn(max = 520.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            Big("Score", "${r.score}", MonitorColors.good)
-            Big("Strength", r.avgPctOfRef?.let { "$it%" } ?: "--", squeezeColor)
-            Big("Relax", r.relaxQualityPct?.let { "$it%" } ?: "--", relaxColor)
+private fun ResultCard(r: KegelResult, onDetails: (() -> Unit)?) {
+    Card("Set complete · ${r.routine.label}", qualityColor(r.score), Modifier.fillMaxWidth().widthIn(max = 620.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            KTile("Score", "${r.score}", qualityColor(r.score), Modifier.weight(1f))
+            KTile("Strength", r.avgPctOfRef?.toString() ?: "--", squeezeColor, Modifier.weight(1f), "%")
+            KTile("Relaxed", r.relaxQualityPct?.toString() ?: "--", qualityColor(r.relaxQualityPct), Modifier.weight(1f), "%")
+        }
+        if (onDetails != null) Text(
+            "See every squeeze in detail", color = MonitorColors.background, fontWeight = FontWeight.Bold, fontSize = 16.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().background(squeezeColor, RoundedCornerShape(10.dp)).clickable(onClick = onDetails).padding(vertical = 11.dp)
+        )
+    }
+}
+
+/** Focus (the ring) or Detail (graphs and numbers) while a set runs. */
+@Composable
+private fun ModeSwitch(detail: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(10.dp)).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        listOf(false to "Focus", true to "Detail").forEach { (d, label) ->
+            val on = d == detail
+            Text(
+                label, color = if (on) MonitorColors.background else MonitorColors.text, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.background(if (on) squeezeColor else Color.Transparent, RoundedCornerShape(8.dp)).clickable { onChange(d) }.padding(horizontal = 18.dp, vertical = 7.dp)
+            )
+        }
+    }
+}
+
+/**
+ * Detail mode: the ring beside (DeX) or above (phone) a live graph of the last 30 s with each squeeze shaded and
+ * its target, tiles with live numbers and trend arrows, and a bar for every squeeze so far.
+ */
+@Composable
+internal fun DetailTrainer(
+    s: KegelSession, now: Long, pelvic: com.pulsepointlabs.sarahmonitor.core.PelvicSnapshot, routine: KegelRoutine,
+    onFocus: () -> Unit, onStop: () -> Unit, modifier: Modifier
+) {
+    val n = s.at(now)
+    val ref = pelvic.referenceKpa?.takeIf { it > 0.3 }
+    val livePct = pelvic.aboveRestKpa?.let { a -> ref?.let { a / it * 100 } ?: (a / pelvic.thresholdKpa * 50) }
+    // Squeezes so far, measured the same way as the review (recomputed once a second).
+    val tick = now / 1000
+    val soFar = remember(tick) {
+        val json = s.toJson(s.result(now), false, ref, pelvic.thresholdKpa)
+        val rec = KegelRecord.fromJson("live", json, now)
+        val pts = pelvic.trace.mapNotNull { q -> q.aboveRestKpa?.let { KegelPoint(q.timestampMs, KegelAnalysis.toValue(it, ref)) } }
+        rec?.let { KegelAnalysis.contractions(it, pts).filter { c -> c.startMs <= now } } ?: emptyList()
+    }
+    val (onTarget, strength, relax) = s.soFar()
+    val left = (s.totalS - (now - s.startMs) / 1000.0).coerceAtLeast(0.0)
+    val current = soFar.lastOrNull { now in it.startMs..it.endMs }
+    val tiles: @Composable (Modifier) -> Unit = { m ->
+        Column(m, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                KTile("Live", livePct?.toInt()?.toString() ?: "--", squeezeColor, Modifier.weight(1f), if (ref != null) "%" else "")
+                KTile("This squeeze", current?.peak?.toInt()?.toString() ?: "--", squeezeColor, Modifier.weight(1f), if (ref != null) "%" else "")
+                KTile("Left", "${(left / 60).toInt()}:${"%02d".format((left % 60).toInt())}", MonitorColors.text, Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                KTile("On target", onTarget?.toString() ?: "--", qualityColor(onTarget), Modifier.weight(1f), "%")
+                KTile("Strength", strength?.toString() ?: "--", squeezeColor, Modifier.weight(1f), "%", KegelAnalysis.fatigueTrend(soFar))
+                KTile("Relaxed", relax?.toString() ?: "--", qualityColor(relax), Modifier.weight(1f), "%")
+            }
+        }
+    }
+    val graph: @Composable (Modifier) -> Unit = { m -> LiveSetGraph(pelvic, s, now, ref, m) }
+    val bars: @Composable (Modifier) -> Unit = { m -> LiveBars(soFar, ref != null, s.steps.count { it.targetPct != null }, m) }
+    val ring: @Composable (Modifier) -> Unit = { m ->
+        BoxWithConstraints(m, contentAlignment = Alignment.Center) {
+            BreathingRing(n.step, n.stepProgress, n.remainingS, livePct, Modifier.size(minOf(maxWidth, maxHeight)))
+        }
+    }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        val coach: @Composable (Modifier) -> Unit = { m ->
+            Text(kegelCoach(n.step, livePct), color = if (n.step.kind in setOf(StepKind.Squeeze, StepKind.Hold)) squeezeColor else relaxColor, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 2, modifier = m)
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            if (maxWidth >= 700.dp) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ModeSwitch(true) { if (!it) onFocus() }
+                coach(Modifier.weight(1f))
+                RepDots(s, n.step.rep)
+                ChoiceChip("■ Stop", false, MonitorColors.alarm) { onStop() }
+            } else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Phone: switch and Stop on top, the coaching line and rep dots below, nothing squeezed.
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    ModeSwitch(true) { if (!it) onFocus() }
+                    androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                    ChoiceChip("■ Stop", false, MonitorColors.alarm) { onStop() }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    coach(Modifier.weight(1f))
+                    RepDots(s, n.step.rep)
+                }
+            }
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            if (maxWidth >= 900.dp) {
+                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ring(Modifier.weight(0.85f).fillMaxHeight())
+                    Column(Modifier.weight(1.15f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        tiles(Modifier.fillMaxWidth())
+                        graph(Modifier.fillMaxWidth().weight(1.3f))
+                        bars(Modifier.fillMaxWidth().weight(0.7f))
+                    }
+                }
+            } else {
+                Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ring(Modifier.fillMaxWidth().weight(0.9f))
+                    tiles(Modifier.fillMaxWidth())
+                    graph(Modifier.fillMaxWidth().weight(0.8f))
+                    bars(Modifier.fillMaxWidth().weight(0.45f))
+                }
+            }
+        }
+    }
+}
+
+/** The last 30 s: squeeze windows shaded, their targets dashed, your pressure on top. */
+@Composable
+private fun LiveSetGraph(p: com.pulsepointlabs.sarahmonitor.core.PelvicSnapshot, s: KegelSession, now: Long, ref: Double?, modifier: Modifier) {
+    val windows = s.stepWindows().filter { it.first.targetPct != null }
+    Column(modifier.background(MonitorColors.panel, RoundedCornerShape(10.dp)).border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(10.dp)).padding(10.dp)) {
+        Text(if (ref != null) "Last 30 s · % of reference · dashed = target" else "Last 30 s · kPa above rest", color = MonitorColors.label, fontSize = 12.sp)
+        Canvas(Modifier.fillMaxSize().padding(top = 4.dp)) {
+            val start = now - 30_000L
+            val pts = p.trace.filter { it.timestampMs >= start }
+            fun v(a: Double) = KegelAnalysis.toValue(a, ref)
+            val top = maxOf(if (ref != null) 110.0 else 1.0, (pts.mapNotNull { it.aboveRestKpa?.let(::v) }.maxOrNull() ?: 0.0) * 1.08)
+            fun x(t: Long) = ((t - start).toFloat() / 30_000f) * size.width
+            fun y(value: Double) = size.height - (value / top).toFloat().coerceIn(0f, 1f) * size.height
+            listOf(0.25, 0.5, 0.75, 1.0).forEach { f -> drawLine(MonitorColors.trendGrid, Offset(0f, y(top * f / 1.1)), Offset(size.width, y(top * f / 1.1)), 1f) }
+            windows.filter { it.third >= start && it.second <= now + 30_000L }.forEach { (st, a, b) ->
+                val xa = x(a).coerceAtLeast(0f); val xb = x(b).coerceAtMost(size.width)
+                if (xb > xa) {
+                    drawRect(squeezeColor.copy(alpha = 0.12f), Offset(xa, 0f), Size(xb - xa, size.height))
+                    if (ref != null) st.targetPct?.let { t -> drawLine(MonitorColors.warn, Offset(xa, y(t.toDouble())), Offset(xb, y(t.toDouble())), 2f, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 7f))) }
+                }
+            }
+            val path = androidx.compose.ui.graphics.Path(); var started = false
+            pts.forEach { q ->
+                val a = q.aboveRestKpa ?: return@forEach
+                if (!started || q.gapBefore) path.moveTo(x(q.timestampMs), y(v(a))) else path.lineTo(x(q.timestampMs), y(v(a)))
+                started = true
+            }
+            drawPath(path, MonitorColors.text, style = Stroke(2.6f, cap = StrokeCap.Round))
+        }
+    }
+}
+
+/** A bar per squeeze so far (peak), coloured by time on target, with empty slots for the ones to come. */
+@Composable
+private fun LiveBars(cs: List<Contraction>, hasRef: Boolean, total: Int, modifier: Modifier) {
+    Column(modifier.background(MonitorColors.panel, RoundedCornerShape(10.dp)).border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(10.dp)).padding(10.dp)) {
+        Text("Each squeeze · height = peak · colour = on target", color = MonitorColors.label, fontSize = 12.sp)
+        Canvas(Modifier.fillMaxSize().padding(top = 4.dp)) {
+            val slots = total.coerceAtLeast(1)
+            val w = size.width / slots
+            val top = maxOf(if (hasRef) 110.0 else 1.0, (cs.mapNotNull { it.peak }.maxOrNull() ?: 0.0) * 1.08)
+            for (i in 0 until slots) {
+                val c = cs.getOrNull(i)
+                drawRoundRect(MonitorColors.trendGrid, Offset(i * w + w * 0.18f, 0f), Size(w * 0.64f, size.height), androidx.compose.ui.geometry.CornerRadius(4f))
+                val v = c?.peak ?: continue
+                val h = (v / top).toFloat() * size.height
+                drawRoundRect((if (hasRef) qualityColor(c.onTargetPct) else squeezeColor), Offset(i * w + w * 0.18f, size.height - h), Size(w * 0.64f, h), androidx.compose.ui.geometry.CornerRadius(4f))
+            }
         }
     }
 }

@@ -20,7 +20,10 @@ data class KegelRecord(
     /** (rep, on-target %, strength %) */
     val repScores: List<Triple<Int, Int, Int?>>,
     /** Squeeze/hold windows: (start, end, target %) */
-    val squeezes: List<Triple<Long, Long, Int>>
+    val squeezes: List<Triple<Long, Long, Int>>,
+    /** Reference hold and hold threshold at the time (kPa); null on sets saved before 0.25.1. */
+    val referenceKpa: Double? = null,
+    val thresholdKpa: Double? = null
 ) {
     /** A plain read of the set. */
     fun story(): String {
@@ -47,6 +50,12 @@ data class KegelRecord(
     companion object {
         fun from(m: MarkerEntity): KegelRecord? {
             val o = m.snapshot?.let { runCatching { JSONObject(it) }.getOrNull() }?.optJSONObject("kegel") ?: return null
+            return fromJson(m.id, o, m.timestampMs)
+        }
+
+        /** From a set's JSON (as saved on its event, or straight from a set that just finished). */
+        fun fromJson(id: String, o: JSONObject, endMs: Long): KegelRecord? {
+            val m = object { val id = id; val timestampMs = endMs }
             return runCatching {
                 val reps = o.getJSONArray("rep_scores")
                 val steps = o.getJSONArray("steps")
@@ -59,7 +68,9 @@ data class KegelRecord(
                     o.optInt("relax_pct", -1).takeIf { !o.isNull("relax_pct") && it >= 0 },
                     o.optBoolean("stopped_early"),
                     (0 until reps.length()).map { reps.getJSONObject(it) }.map { Triple(it.getInt("rep"), it.getInt("on_target_pct"), if (it.isNull("strength_pct")) null else it.getInt("strength_pct")) },
-                    sq
+                    sq,
+                    o.optDouble("reference_kpa").takeIf { !o.isNull("reference_kpa") && it.isFinite() },
+                    o.optDouble("threshold_kpa").takeIf { !o.isNull("threshold_kpa") && it.isFinite() }
                 )
             }.getOrNull()
         }

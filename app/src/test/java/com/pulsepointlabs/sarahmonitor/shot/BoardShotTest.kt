@@ -95,6 +95,36 @@ class BoardShotTest {
         shot("monitor-landscape", 891, 340) { Dashboard(FitLayout.monitorDefaults, false, {}, {}, Modifier.fillMaxSize(), compact = true) }
         shot("monitor-dex", 1360, 700) { Dashboard(GridLayoutEngine.defaultLayout, false, {}, {}, Modifier.fillMaxSize(), compact = false) }
         pelvicStates()
+        kegel()
+    }
+
+    /** A synthetic 6-rep hold set (target 70 %, last reps fading) for the Kegel review and the live Detail mode. */
+    private fun kegel() {
+        val ref = 4.0
+        val start = System.currentTimeMillis() - 70_000L
+        val session = com.pulsepointlabs.sarahmonitor.kegel.KegelSession(com.pulsepointlabs.sarahmonitor.kegel.KegelRoutine.Holds, 6, 5.0, 5.0, start)
+        val windows = session.stepWindows().filter { it.first.targetPct != null }
+        fun pct(t: Long): Double {
+            val w = windows.indexOfFirst { t in it.second..it.third }
+            if (w < 0) return 4.0 + 3 * kotlin.math.sin(t / 700.0)
+            val strength = if (w < 4) 82.0 else 82.0 - (w - 3) * 18
+            val into = (t - windows[w].second) / 1000.0
+            return strength * (1 - kotlin.math.exp(-into * 3)) + 3 * kotlin.math.sin(t / 300.0)
+        }
+        val pts = (0 until 700).map { i -> val t = start + i * 100L; com.pulsepointlabs.sarahmonitor.kegel.KegelPoint(t, pct(t)) }
+        val result = session.result(start + 70_000L)
+        val rec = com.pulsepointlabs.sarahmonitor.kegel.KegelRecord.fromJson("shot", session.toJson(result, false, ref, 0.3), start + 70_000L)!!
+            .copy(score = 74, strengthPct = 71, relaxPct = 83, repScores = (1..6).map { Triple(it, if (it < 5) 92 else 40, if (it < 5) 80 else 55) })
+        shot("kegel-review-phone", 411, 891) { com.pulsepointlabs.sarahmonitor.kegel.KegelSetReviewContent(rec, pts) {} }
+        shot("kegel-review-dex", 1360, 700) { com.pulsepointlabs.sarahmonitor.kegel.KegelSetReviewContent(rec, pts) {} }
+        // Live Detail mode, 52 s into the same set.
+        val now = start + 52_000L
+        val trace = pts.filter { it.t <= now }.map { com.pulsepointlabs.sarahmonitor.core.PelvicPoint(it.t, 6.0 + it.v / 100 * ref, it.v / 100 * ref, false) }
+        val snap = PelvicSnapshot(pressureKpa = trace.last().pressureKpa, aboveRestKpa = trace.last().aboveRestKpa, restKpa = 6.0, referenceKpa = ref, trace = trace, logging = true,
+            quality = com.pulsepointlabs.sarahmonitor.core.PressureQuality.Valid)
+        pts.filter { it.t <= now }.forEach { session.sample(it.t, it.v / 100 * ref, ref, 0.3) }
+        shot("kegel-detail-phone", 411, 780) { com.pulsepointlabs.sarahmonitor.kegel.DetailTrainer(session, now, snap, com.pulsepointlabs.sarahmonitor.kegel.KegelRoutine.Holds, {}, {}, Modifier.fillMaxSize()) }
+        shot("kegel-detail-dex", 1360, 700) { com.pulsepointlabs.sarahmonitor.kegel.DetailTrainer(session, now, snap, com.pulsepointlabs.sarahmonitor.kegel.KegelRoutine.Holds, {}, {}, Modifier.fillMaxSize()) }
     }
 
     /** The pressure card while previewing (logging off) and during a suspected displacement, with live pressure. */
