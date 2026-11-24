@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.drag as dragPointer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,6 +56,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onSizeChanged
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -85,7 +89,7 @@ fun Dashboard(
 ) {
     BoxWithConstraints(modifier) {
         if (compact) {
-            FitDashboard(slots, maxWidth.value, maxHeight.value)
+            FitDashboard(slots, maxWidth.value, maxHeight.value, onChange)
         } else {
             Column(Modifier.fillMaxSize()) {
                 if (arranging) ArrangeBanner { onArrangingChange(false) }
@@ -132,23 +136,195 @@ private fun ArrangeBanner(onDone: () -> Unit) {
     }
 }
 
-/** Every visible card on one screen: rows share the height, cards in a row share the width by their span. */
+/**
+ * Every visible card on one screen: rows share the height, cards in a row share the width by their span, so there
+ * is never empty space. Editing on the phone:
+ * - hold one finger on a card: it's selected, with grips on the right edge (width), bottom edge (height) and corner;
+ * - two fingers on any card (or one finger on the selected card): pick it up and move it; the others slide aside;
+ * - tap another card, the strip's Done, or empty space: finished. Every change reflows the board live and is saved.
+ * One touch handler for the whole board (cards move between rows mid-drag, so per-card handlers would be torn down).
+ */
 @Composable
-private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float) {
-    val order = slots.filter { it.visible }.sortedWith(compareBy({ it.y }, { it.x })).map { it.type }
-    val units = FitLayout.bestUnits(order, widthDp, heightDp)
-    val rows = FitLayout.rows(order, units)
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(GAP_DP.dp)) {
-        rows.forEach { row ->
-            // Rows get height by what their cards need (a pelvic card with six stats needs more than a phase
-            // name), instead of every row getting the same.
-            val need = row.maxOf { FitLayout.rowNeed(it) }
-            Row(Modifier.fillMaxWidth().weight(need), horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp)) {
-                row.forEach { type -> MonitorCard(type, Modifier.weight(FitLayout.span(type, units).toFloat()).fillMaxHeight()) }
+private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float, onChange: (List<CardSlot>) -> Unit) {
+    var working by remember(slots) { mutableStateOf(slots) }
+    var selected by remember { mutableStateOf<CardType?>(null) }
+    var moving by remember { mutableStateOf<CardType?>(null) }
+    var finger by remember { mutableStateOf(Offset.Zero) }
+    var grab by remember { mutableStateOf(Offset.Zero) }
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    val bounds = remember { androidx.compose.runtime.mutableStateMapOf<CardType, androidx.compose.ui.geometry.Rect>() }
+    val current by rememberUpdatedState(working)
+    val visible = working.filter { it.visible }.sortedWith(compareBy({ it.y }, { it.x }))
+    // Units freeze while editing so the grid doesn't change under your finger.
+    var frozenUnits by remember { mutableStateOf<Int?>(null) }
+    val units = frozenUnits ?: FitLayout.bestUnitsFor(visible, widthDp, heightDp)
+    val unitsNow by rememberUpdatedState(units)
+    val rows = FitLayout.slotRows(visible, units)
+    val density = LocalDensity.current
+    val gripPx = with(density) { 34.dp.toPx() }
+    val gapPx = with(density) { GAP_DP.dp.toPx() }
+    val editing = selected != null || moving != null
+    if (!editing && frozenUnits != null) frozenUnits = null
+
+    fun reorder(type: CardType, before: CardType) {
+        val order = current.filter { it.visible }.sortedWith(compareBy({ it.y }, { it.x })).map { it.type }.toMutableList()
+        val from = order.indexOf(type); val to = order.indexOf(before)
+        if (from < 0 || to < 0 || from == to) return
+        order.removeAt(from); order.add(to, type)
+        working = current.map { s -> order.indexOf(s.type).takeIf { it >= 0 }?.let { s.copy(x = 0, y = it) } ?: s.copy(y = order.size + s.y) }
+    }
+    fun update(type: CardType, change: (CardSlot) -> CardSlot) { working = current.map { if (it.type == type) change(it) else it } }
+    fun save() { onChange(current) }
+    fun cardAt(p: Offset): CardType? = bounds.entries.firstOrNull { it.value.contains(p) }?.key
+
+    Box(
+        Modifier.fillMaxSize()
+            .onGloballyPositioned { origin = it.boundsInRoot().topLeft }
+            .pointerInput(Unit) {
+                val slop = viewConfiguration.touchSlop
+                val longPress = viewConfiguration.longPressTimeoutMillis
+                val initial = androidx.compose.ui.input.pointer.PointerEventPass.Initial
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = initial)
+                    val p0 = down.position + origin
+                    val hit = cardAt(p0)
+                    val sel = selected
+                    val selBounds = sel?.let { bounds[it] }
+                    // 1) Grips on the selected card: resize.
+                    if (sel != null && selBounds != null && selBounds.contains(p0)) {
+                        val onRight = p0.x > selBounds.right - gripPx
+                        val onBottom = p0.y > selBounds.bottom - gripPx
+                        if (onRight || onBottom) {
+                            down.consume()
+                            val slot0 = current.first { it.type == sel }
+                            val span0 = FitLayout.span(slot0, unitsNow)
+                            val f0 = FitLayout.heightFactor(slot0)
+                            val w0 = selBounds.width; val h0 = selBounds.height
+                            val unitW = (w0 + gapPx) / span0
+                            while (true) {
+                                val ev = awaitPointerEvent(initial)
+                                val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!ch.pressed) break
+                                ch.consume()
+                                val d = ch.position - down.position
+                                if (onRight) {
+                                    val span = ((w0 + d.x + gapPx) / unitW).roundToInt().coerceIn(1, unitsNow)
+                                    if (span != FitLayout.span(current.first { it.type == sel }, unitsNow)) update(sel) { it.copy(fitSpan = span) }
+                                }
+                                if (onBottom && h0 > 0f) {
+                                    val q = (Math.round(((h0 + d.y) / h0 * f0).coerceIn(0.5f, 3f) * 4) / 4f * 100).roundToInt()
+                                    if (q != (FitLayout.heightFactor(current.first { it.type == sel }) * 100).roundToInt()) update(sel) { it.copy(fitHeight = q) }
+                                }
+                            }
+                            save()
+                            return@awaitEachGesture
+                        }
+                    }
+                    if (hit == null) {
+                        // Empty space (or the strip): a tap ends editing; the strip's Done handles itself.
+                        return@awaitEachGesture
+                    }
+                    // While a card is selected, it's a handle: its own buttons don't react.
+                    if (hit == sel) down.consume()
+                    val t0 = System.currentTimeMillis()
+                    var mode = 0 // 0 undecided, 1 moving, 2 just selected by holding
+                    fun begin(centroid: Offset) {
+                        mode = 1; moving = hit; frozenUnits = unitsNow
+                        val b = bounds[hit] ?: return
+                        grab = centroid - b.topLeft; finger = centroid
+                    }
+                    while (true) {
+                        val remaining = (longPress - (System.currentTimeMillis() - t0)).coerceAtLeast(1L)
+                        val ev = if (mode == 0) withTimeoutOrNull(remaining) { awaitPointerEvent(initial) } else awaitPointerEvent(initial)
+                        if (ev == null) { // held still: select this card
+                            if (mode == 0) { mode = 2; selected = hit; frozenUnits = unitsNow }
+                            continue
+                        }
+                        val pressed = ev.changes.filter { it.pressed }
+                        if (pressed.isEmpty()) {
+                            // A quick tap on another card while editing: finished.
+                            if (mode == 0 && sel != null && hit != sel) { selected = null; save() }
+                            if (mode == 2 || hit == sel) ev.changes.forEach { it.consume() }
+                            break
+                        }
+                        val centroid = Offset(pressed.map { it.position.x }.average().toFloat(), pressed.map { it.position.y }.average().toFloat()) + origin
+                        val travelled = ((pressed.firstOrNull { it.id == down.id }?.position ?: pressed.first().position) - down.position).getDistance()
+                        when {
+                            mode == 0 && pressed.size >= 2 -> begin(centroid)
+                            mode == 0 && travelled > slop -> if (hit == sel) begin(centroid) else break // ordinary scroll/drag on a card
+                            mode == 2 && travelled > slop -> begin(centroid)
+                        }
+                        if (mode != 0 || hit == sel) ev.changes.forEach { it.consume() }
+                        if (mode == 1) {
+                            finger = centroid
+                            // Crossing into another card takes its place; the rest slide aside.
+                            bounds.entries.firstOrNull { (t, r) -> t != hit && r.contains(finger) }?.let { (t, _) -> reorder(hit, t) }
+                        }
+                    }
+                    if (mode == 1) { moving = null; selected = hit; save() }
+                }
+            }
+    ) {
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(GAP_DP.dp)) {
+            // While editing: one strip with how it works and Done (kept off the cards themselves).
+            if (editing) Row(
+                Modifier.fillMaxWidth().background(MonitorColors.pelvic.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                    .border(1.dp, MonitorColors.pelvic.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Drag to move · pull the edges to resize", color = MonitorColors.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text(
+                    "Done", color = MonitorColors.background, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.background(MonitorColors.pelvic, RoundedCornerShape(6.dp)).clickable { selected = null; save() }.padding(horizontal = 16.dp, vertical = 6.dp)
+                )
+            }
+            rows.forEach { row ->
+                // Rows get height by what their cards need, times the height the user gave them.
+                val need = row.maxOf { FitLayout.rowNeed(it.type) * FitLayout.heightFactor(it) }
+                // Keyed on its height: a changed weight alone doesn't re-measure the column, so the row is rebuilt.
+                key(need) { Row(Modifier.fillMaxWidth().weight(need), horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp)) {
+                    row.forEach { slot ->
+                        key(slot.type) {
+                            val type = slot.type
+                            val isMoving = moving == type
+                            Box(Modifier.weight(FitLayout.span(slot, units).toFloat()).fillMaxHeight().onGloballyPositioned { bounds[type] = it.boundsInRoot() }) {
+                                val b = bounds[type]
+                                Box(
+                                    Modifier.fillMaxSize().zIndex(if (isMoving) 3f else 1f).graphicsLayer {
+                                        if (isMoving && b != null) {
+                                            translationX = finger.x - grab.x - b.left
+                                            translationY = finger.y - grab.y - b.top
+                                            scaleX = 1.03f; scaleY = 1.03f; alpha = 0.92f
+                                            shadowElevation = 24f * density.density
+                                        }
+                                    }
+                                ) {
+                                    MonitorCard(type, Modifier.fillMaxSize())
+                                    if (selected == type || isMoving) FitEditOverlay()
+                                }
+                            }
+                        }
+                    }
+                } }
             }
         }
     }
 }
+
+/** The selected card's outline and grips (the board's touch handler does the work). */
+@Composable
+private fun FitEditOverlay() {
+    val c = MonitorColors.pelvic
+    Box(Modifier.fillMaxSize().background(c.copy(alpha = 0.06f), RoundedCornerShape(10.dp)).border(2.dp, c, RoundedCornerShape(10.dp))) {
+        Box(Modifier.align(Alignment.CenterEnd).size(28.dp, 64.dp).padding(3.dp).background(c, RoundedCornerShape(6.dp)))
+        Box(Modifier.align(Alignment.BottomCenter).size(64.dp, 28.dp).padding(3.dp).background(c, RoundedCornerShape(6.dp)))
+        Box(Modifier.align(Alignment.BottomEnd)) { ResizeGrip(Modifier) }
+    }
+}
+private fun Modifier.onGloballyPositionedCompat(block: (androidx.compose.ui.geometry.Rect) -> Unit): Modifier =
+    this.onGloballyPositioned { block(it.boundsInRoot()) }
+
+private fun Modifier.onSizeChangedCompat(block: (androidx.compose.ui.unit.IntSize) -> Unit): Modifier = this.onSizeChanged(block)
 
 private data class DragState(val type: CardType, val dx: Float, val dy: Float, val resize: Boolean)
 

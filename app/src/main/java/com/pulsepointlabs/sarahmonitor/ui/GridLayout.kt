@@ -31,7 +31,11 @@ enum class CardType(val title: String, val minW: Int, val minH: Int) {
     QuickMarks("Quick marks", 4, 2)
 }
 
-data class CardSlot(val type: CardType, val x: Int, val y: Int, val w: Int, val h: Int, val visible: Boolean = true) {
+/**
+ * [fitSpan] / [fitHeight]: the phone layout's per-card choices (0 = automatic): how many row slots the card takes,
+ * and its row height as a percentage of normal (100 = normal).
+ */
+data class CardSlot(val type: CardType, val x: Int, val y: Int, val w: Int, val h: Int, val visible: Boolean = true, val fitSpan: Int = 0, val fitHeight: Int = 0) {
     val right: Int get() = x + w
     val bottom: Int get() = y + h
     fun overlaps(o: CardSlot): Boolean = x < o.right && o.x < right && y < o.bottom && o.y < bottom
@@ -136,7 +140,7 @@ object GridLayoutEngine {
     }
 
     fun toJson(slots: List<CardSlot>): String = JSONArray().apply {
-        slots.forEach { put(JSONObject().put("type", it.type.name).put("x", it.x).put("y", it.y).put("w", it.w).put("h", it.h).put("visible", it.visible)) }
+        slots.forEach { put(JSONObject().put("type", it.type.name).put("x", it.x).put("y", it.y).put("w", it.w).put("h", it.h).put("visible", it.visible).put("fit_span", it.fitSpan).put("fit_height", it.fitHeight)) }
     }.toString()
 
     fun fromJson(json: String?, defaults: List<CardSlot> = defaultLayout): List<CardSlot> {
@@ -146,7 +150,7 @@ object GridLayoutEngine {
             (0 until array.length()).mapNotNull { i ->
                 val o = array.getJSONObject(i)
                 val type = runCatching { CardType.valueOf(o.getString("type")) }.getOrNull()?.takeIf { it in allowed } ?: return@mapNotNull null
-                clampSlot(CardSlot(type, o.getInt("x"), o.getInt("y"), o.getInt("w"), o.getInt("h"), o.optBoolean("visible", true)))
+                clampSlot(CardSlot(type, o.getInt("x"), o.getInt("y"), o.getInt("w"), o.getInt("h"), o.optBoolean("visible", true), o.optInt("fit_span", 0), o.optInt("fit_height", 0)))
             }
         }.getOrNull() ?: return defaults
         // Cards added in a newer version start hidden (turn them on from Cards) so a saved layout doesn't shift.
@@ -174,6 +178,32 @@ object FitLayout {
     val wideTypes = setOf(CardType.Ecg, CardType.HrTrend, CardType.HrvTrend, CardType.PelvicTrend, CardType.ResponseTimeline, CardType.Cardiac, CardType.QuickMarks)
 
     fun span(type: CardType, units: Int) = if (type in wideTypes) minOf(2, units) else 1
+
+    /** The card's span: the user's choice when set (capped to the row), otherwise the default. */
+    fun span(slot: CardSlot, units: Int) = if (slot.fitSpan > 0) slot.fitSpan.coerceIn(1, units) else span(slot.type, units)
+
+    /** Row-height multiplier the user chose (1 = normal), within 0.5–3×. */
+    fun heightFactor(slot: CardSlot): Float = if (slot.fitHeight > 0) (slot.fitHeight / 100f).coerceIn(0.5f, 3f) else 1f
+
+    /** Rows of slots in order, honouring each card's span (same packing as [rows]). */
+    fun slotRows(cards: List<CardSlot>, units: Int): List<List<CardSlot>> {
+        val left = cards.toMutableList()
+        val rows = mutableListOf<List<CardSlot>>()
+        while (left.isNotEmpty()) {
+            val row = mutableListOf<CardSlot>()
+            var used = 0
+            while (used < units) {
+                val next = left.firstOrNull { span(it, units) <= units - used } ?: break
+                left.remove(next); row += next; used += span(next, units)
+            }
+            if (row.isEmpty()) { val f = left.removeAt(0); row += f }
+            rows += row
+        }
+        return rows
+    }
+
+    fun bestUnitsFor(cards: List<CardSlot>, widthDp: Float, heightDp: Float): Int =
+        (2..6).maxBy { u -> minOf(widthDp / u / 1.5f, heightDp / slotRows(cards, u).size.coerceAtLeast(1)) }
 
     /** Relative row height a card needs on a phone (its design height, kept within a sensible band). */
     fun rowNeed(type: CardType): Float = designSize(type).second.coerceIn(170f, 300f)

@@ -456,14 +456,14 @@ private fun MonitorScreen(
                     slots = if (compact) fitResponseSlots else responseSlots,
                     arranging = arranging,
                     onArrangingChange = { arranging = it },
-                    onChange = { responseSlots = it; responseStore.save(it) },
+                    onChange = { if (compact) { fitResponseSlots = it; fitResponseStore.save(it) } else { responseSlots = it; responseStore.save(it) } },
                     modifier = Modifier.fillMaxSize(),
                     compact = compact
                 )
                 screen == Screen.Kegel -> com.pulsepointlabs.sarahmonitor.kegel.KegelScreen(Modifier.fillMaxSize())
                 focusMode && screen != Screen.Response -> Dashboard(
                     slots = if (compact) fitSlots else slots,
-                    arranging = false, onArrangingChange = {}, onChange = { slots = it; layoutStore.save(it) },
+                    arranging = false, onArrangingChange = {}, onChange = { if (compact) { fitSlots = it; fitStore.save(it) } else { slots = it; layoutStore.save(it) } },
                     modifier = Modifier.fillMaxSize(), compact = compact
                 )
                 screen == Screen.Health -> com.pulsepointlabs.sarahmonitor.vitals.HealthScreen(onCsvImport, onHealthConnect, Modifier.fillMaxSize()) { m -> com.pulsepointlabs.sarahmonitor.sleep.SleepScreen(m) }
@@ -474,7 +474,7 @@ private fun MonitorScreen(
                     slots = if (compact) fitSlots else slots,
                     arranging = arranging,
                     onArrangingChange = { arranging = it },
-                    onChange = { slots = it; layoutStore.save(it) },
+                    onChange = { if (compact) { fitSlots = it; fitStore.save(it) } else { slots = it; layoutStore.save(it) } },
                     modifier = Modifier.fillMaxSize(),
                     compact = compact
                 )
