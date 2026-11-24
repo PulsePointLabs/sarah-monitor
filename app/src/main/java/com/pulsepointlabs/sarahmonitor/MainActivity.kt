@@ -1,6 +1,7 @@
 package com.pulsepointlabs.sarahmonitor
 
 import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 
 import android.Manifest
 import androidx.activity.compose.BackHandler
@@ -115,6 +116,7 @@ import com.pulsepointlabs.sarahmonitor.ui.MonitorColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.withContext
 import java.time.format.DateTimeFormatter
 
@@ -148,6 +150,12 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         MonitorHub.init(this)
         OverlaySettings.load(this)
+        com.pulsepointlabs.sarahmonitor.ui.PipSettings.load(this)
+        // Keep the system's picture-in-picture settings (shape, auto-enter) in step with the user's choices.
+        lifecycleScope.launch {
+            kotlinx.coroutines.flow.combine(com.pulsepointlabs.sarahmonitor.ui.PipSettings.shape, com.pulsepointlabs.sarahmonitor.ui.PipSettings.autoEnter) { _, _ -> Unit }
+                .collect { runCatching { setPictureInPictureParams(com.pulsepointlabs.sarahmonitor.ui.PipSettings.params()) } }
+        }
         requestPermissions()
         val layoutStore = LayoutStore(this)
         setContent {
@@ -162,10 +170,24 @@ class MainActivity : ComponentActivity() {
                     )
                     val notice by MonitorHub.notice.collectAsState()
                     com.pulsepointlabs.sarahmonitor.ui.NoticeHost(notice, MonitorHub::dismissNotice)
+                    // Picture-in-picture: the chosen cards on top; the app keeps running underneath (sets, sessions, state).
+                    val pip by com.pulsepointlabs.sarahmonitor.ui.PipSettings.active.collectAsState()
+                    if (pip) com.pulsepointlabs.sarahmonitor.ui.PipContent()
                 }
             }
         }
         handleSharedExport(intent)
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        com.pulsepointlabs.sarahmonitor.ui.PipSettings.active.value = isInPictureInPictureMode
+    }
+
+    /** Before Android 12 there's no auto-enter flag: start picture-in-picture by hand when the user leaves. */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (android.os.Build.VERSION.SDK_INT < 31 && com.pulsepointlabs.sarahmonitor.ui.PipSettings.autoEnter.value) com.pulsepointlabs.sarahmonitor.ui.PipSettings.enter(this)
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -397,6 +419,8 @@ private fun MonitorScreen(
     }
     // Shortcuts only where there are no text boxes to type into (typing "r" in a note must not start a recording).
     val shortcuts = reviewId == null && screen in setOf(Screen.Monitor, Screen.Response, Screen.Kegel)
+    var pipSettings by remember { mutableStateOf(false) }
+    fun startPip() { (context as? android.app.Activity)?.let { com.pulsepointlabs.sarahmonitor.ui.PipSettings.enter(it) } }
     val actions = remember {
         CardActions(
             onAddGlucose = { showAddGlucose = true },
@@ -421,6 +445,7 @@ private fun MonitorScreen(
                         focusMode && (e.key == Key.Escape || e.key == Key.X) -> { focusMode = false; true }
                         !shortcuts -> false
                         e.key == Key.F -> { focusMode = true; true }
+                        e.key == Key.P -> { startPip(); true }
                         e.key == Key.M -> { mark(); true }
                         e.key == Key.R -> { if (session == null) MonitorHub.startSession() else confirmStop = true; true }
                         else -> false
@@ -439,7 +464,9 @@ private fun MonitorScreen(
                 onOverlays = { screen = Screen.Settings; reviewId = null },
                 onArrange = { arranging = !arranging },
                 onReset = { confirmReset = true },
-                onFocus = { reviewId = null; if (screen !in setOf(Screen.Monitor, Screen.Response, Screen.Kegel)) screen = Screen.Monitor; focusMode = true }
+                onFocus = { reviewId = null; if (screen !in setOf(Screen.Monitor, Screen.Response, Screen.Kegel)) screen = Screen.Monitor; focusMode = true },
+                onPip = ::startPip,
+                onPipSettings = { pipSettings = true }
             )
             if (!focusMode) Spacer(Modifier.size(8.dp))
             val openReview = reviewId
@@ -591,6 +618,7 @@ private fun MonitorScreen(
         )
     }
     if (showAddGlucose) AddGlucoseDialog(onDismiss = { showAddGlucose = false }, onMessage = onMessage)
+    if (pipSettings) com.pulsepointlabs.sarahmonitor.ui.PipSettingsDialog(onStart = { pipSettings = false; startPip() }, onDismiss = { pipSettings = false })
     if (confirmReset) {
         AlertDialog(
             onDismissRequest = { confirmReset = false },
@@ -617,7 +645,9 @@ internal fun TopBar(
     onOverlays: () -> Unit,
     onArrange: () -> Unit,
     onReset: () -> Unit,
-    onFocus: () -> Unit = {}
+    onFocus: () -> Unit = {},
+    onPip: () -> Unit = {},
+    onPipSettings: () -> Unit = {}
 ) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(1_000L); now = System.currentTimeMillis() } }
@@ -638,6 +668,8 @@ internal fun TopBar(
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MonitorColors.panel) {
                     val board = screen == Screen.Response
                     DropdownMenuItem(text = { Text("Focus mode (F)") }, onClick = { menu = false; onFocus() })
+                    DropdownMenuItem(text = { Text("Picture-in-picture (P)") }, onClick = { menu = false; onPip() })
+                    DropdownMenuItem(text = { Text("Picture-in-picture cards…") }, onClick = { menu = false; onPipSettings() })
                     DropdownMenuItem(text = { Text("Cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onCards() })
                     if (!fit) DropdownMenuItem(text = { Text(if (arranging) "Done arranging" else "Arrange cards") }, onClick = { menu = false; if (!board) onScreen(Screen.Monitor); onArrange() })
                     DropdownMenuItem(text = { Text("Start fresh") }, onClick = { menu = false; onReset() })
@@ -667,6 +699,15 @@ internal fun TopBar(
             Tabs(screen, compact = !full, onScreen = onScreen)
             Spacer(Modifier.weight(1f))
             BarIcon(androidx.compose.material.icons.Icons.Default.Fullscreen, "Focus mode (F)", onFocus)
+            // Picture-in-picture: tap for its menu (start, or choose cards and shape).
+            Box {
+                var pipMenu by remember { mutableStateOf(false) }
+                BarIcon(androidx.compose.material.icons.Icons.Default.PictureInPictureAlt, "Picture-in-picture (P)", { pipMenu = true })
+                DropdownMenu(expanded = pipMenu, onDismissRequest = { pipMenu = false }, containerColor = MonitorColors.panel) {
+                    DropdownMenuItem(text = { Text("Start picture-in-picture (P)") }, onClick = { pipMenu = false; onPip() })
+                    DropdownMenuItem(text = { Text("Choose cards and shape…") }, onClick = { pipMenu = false; onPipSettings() })
+                }
+            }
             RecordButton(recording, now, compact = false, onClick = onRecord)
             MarkButton(enabled = recording != null, compact = !full, onClick = onMark)
             ListenButton(labelled = true)

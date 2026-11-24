@@ -52,12 +52,13 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|keyboard|keyboardHidden|navigation|uiMode"
             android:exported="true"
             android:launchMode="singleTask"
+            android:supportsPictureInPicture="true"
             android:resizeableActivity="true">
             <layout
                 android:defaultWidth="1400dp"
                 android:defaultHeight="860dp"
-                android:minWidth="360dp"
-                android:minHeight="420dp" />
+                android:minWidth="200dp"
+                android:minHeight="150dp" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
