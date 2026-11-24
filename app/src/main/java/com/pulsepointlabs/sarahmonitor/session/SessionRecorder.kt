@@ -35,6 +35,7 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
     private var rr = mutableListOf<RrEntity>()
     private var pelvic = mutableListOf<PelvicSampleEntity>()
     private var emg = mutableListOf<EmgSampleEntity>()
+    private var sensorEvents = mutableListOf<SensorEventEntity>()
     private val ecgTs = ArrayList<Long>()
     private val ecgUv = ArrayList<Int>()
     private var lastEcgTs = Long.MIN_VALUE
@@ -56,7 +57,7 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         val now = System.currentTimeMillis()
         val session = SessionEntity(id = UUID.randomUUID().toString(), title = title ?: defaultTitle(now), startTimeMs = now, category = category.name, details = details)
         withContext(Dispatchers.IO) { dao.upsertSession(session) }
-        synchronized(lock) { hr.clear(); rr.clear(); pelvic.clear(); emg.clear(); ecgTs.clear(); ecgUv.clear(); ecgChunks.clear(); lastEcgTs = Long.MIN_VALUE }
+        synchronized(lock) { hr.clear(); rr.clear(); pelvic.clear(); emg.clear(); sensorEvents.clear(); ecgTs.clear(); ecgUv.clear(); ecgChunks.clear(); lastEcgTs = Long.MIN_VALUE }
         _active.value = session
         session
     }
@@ -74,7 +75,7 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
             withContext(Dispatchers.IO) {
                 runCatching {
                     val base = (dao.getSession(current.id) ?: current).copy(endTimeMs = null)
-                    dao.upsertSession(SessionAnalysis.summarize(base, dao.getHr(base.id), dao.getRr(base.id), dao.getPelvic(base.id), dao.getMarkers(base.id).size))
+                    dao.upsertSession(dao.getMarkers(base.id).let { m -> SessionAnalysis.summarize(base, dao.getHr(base.id), dao.getRr(base.id), dao.getPelvic(base.id), m.size, m) })
                 }
             }
         }
@@ -93,7 +94,7 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
             // Read-modify-write under the lock, so a details edit at the same moment isn't lost.
             mutex.withLock {
                 val ended = (dao.getSession(session.id) ?: session).copy(endTimeMs = endedAt)
-                val summarized = SessionAnalysis.summarize(ended, dao.getHr(ended.id), dao.getRr(ended.id), dao.getPelvic(ended.id), dao.getMarkers(ended.id).size)
+                val summarized = dao.getMarkers(ended.id).let { m -> SessionAnalysis.summarize(ended, dao.getHr(ended.id), dao.getRr(ended.id), dao.getPelvic(ended.id), m.size, m) }
                 dao.upsertSession(summarized)
                 summarized
             }
@@ -109,7 +110,7 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         val s = withContext(Dispatchers.IO) { dao.getSession(id) } ?: return null
         val live = s.copy(endTimeMs = null)
         withContext(Dispatchers.IO) { dao.upsertSession(live) }
-        synchronized(lock) { hr.clear(); rr.clear(); pelvic.clear(); emg.clear(); ecgTs.clear(); ecgUv.clear(); ecgChunks.clear(); lastEcgTs = Long.MIN_VALUE }
+        synchronized(lock) { hr.clear(); rr.clear(); pelvic.clear(); emg.clear(); sensorEvents.clear(); ecgTs.clear(); ecgUv.clear(); ecgChunks.clear(); lastEcgTs = Long.MIN_VALUE }
         _active.value = live
         live
     }
@@ -136,9 +137,15 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    fun onPelvic(timestampMs: Long, pressureKpa: Double, aboveRestKpa: Double?, holding: Boolean) {
+    fun onPelvic(timestampMs: Long, pressureKpa: Double, aboveRestKpa: Double?, holding: Boolean, quality: String?) {
         val session = _active.value ?: return
-        synchronized(lock) { pelvic += PelvicSampleEntity(sessionId = session.id, timestampMs = timestampMs, pressureKpa = pressureKpa, aboveRestKpa = aboveRestKpa, holding = holding) }
+        synchronized(lock) { pelvic += PelvicSampleEntity(sessionId = session.id, timestampMs = timestampMs, pressureKpa = pressureKpa, aboveRestKpa = aboveRestKpa, holding = holding, quality = quality) }
+    }
+
+    /** A sensor connection, calibration or quality change, kept with the recording. Ignored when not recording. */
+    fun onSensorEvent(timestampMs: Long, device: String, kind: String, detail: String) {
+        val session = _active.value ?: return
+        synchronized(lock) { sensorEvents += SensorEventEntity(sessionId = session.id, timestampMs = timestampMs, device = device, kind = kind, detail = detail) }
     }
 
     fun onEmg(row: EmgSampleEntity) {
@@ -176,7 +183,8 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
             out
         }
         val m = synchronized(lock) { emg.also { emg = mutableListOf() } }
-        if (h.isEmpty() && r.isEmpty() && p.isEmpty() && e.isEmpty() && m.isEmpty()) return
+        val ev = synchronized(lock) { sensorEvents.also { sensorEvents = mutableListOf() } }
+        if (h.isEmpty() && r.isEmpty() && p.isEmpty() && e.isEmpty() && m.isEmpty() && ev.isEmpty()) return
         withContext(Dispatchers.IO) {
             runCatching {
                 @Suppress("UNCHECKED_CAST")
@@ -184,6 +192,7 @@ class SessionRecorder(context: Context, private val scope: CoroutineScope) {
                 @Suppress("UNCHECKED_CAST")
                 dao.insertPelvic(p as List<PelvicSampleEntity>); dao.insertEcg(e as List<EcgChunkEntity>)
                 if (m.isNotEmpty()) dao.insertEmg(m)
+                if (ev.isNotEmpty()) dao.insertSensorEvents(ev)
             }
         }
     }
@@ -253,7 +262,8 @@ enum class SessionCategory(val label: String, val groups: List<MarkerTypes.Group
 
 /** Event types: SarahVS's general set plus sexual-response types, shown in two groups. */
 object MarkerTypes {
-    enum class Group(val title: String) { General("General"), Sexual("Sexual"), Procedure("Procedure steps") }
+    /** [Sensor] types are offered in every session type (on every tab), whatever the category's groups. */
+    enum class Group(val title: String) { General("General"), Sexual("Sexual"), Procedure("Procedure steps"), Sensor("Sensor") }
 
     data class Type(val id: String, val label: String, val group: Group)
 
@@ -292,10 +302,15 @@ object MarkerTypes {
         Type("estim_change", "E-stim change", Group.Procedure),
         // Said or noted in passing during any sexual / exploration session.
         Type("sensation", "Sensation", Group.Sexual),
-        Type("finding", "Body finding", Group.Sexual)
+        Type("finding", "Body finding", Group.Sexual),
+        // The measuring sensor itself (CIVET slipped, re-seated, re-inflated): stops pressure analysis until recalibrated.
+        Type("sensor_issue", "Sensor problem", Group.Sensor)
     )
 
     fun inGroup(group: Group): List<Type> = all.filter { it.group == group }
+
+    /** Types offered for a session with these groups: its own groups plus the sensor types. */
+    fun offered(groups: List<Group>): List<Type> = all.filter { it.group in groups || it.group == Group.Sensor }
 
     fun join(types: Set<String>): String = all.map { it.id }.filter { it in types }.ifEmpty { listOf("event") }.joinToString(",")
     fun split(types: String): Set<String> = types.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()

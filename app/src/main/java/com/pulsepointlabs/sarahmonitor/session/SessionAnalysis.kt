@@ -16,10 +16,22 @@ data class RecordedPulse(val startMs: Long, val endMs: Long, val peakKpa: Double
 data class PelvicSummary(
     val maxKpa: Double?,
     val averageKpa: Double?,
+    /** Contractions: rises above the hold threshold lasting up to [com.pulsepointlabs.sarahmonitor.core.PelvicProcessor.MAX_CONTRACTION_S]. */
     val pulses: List<RecordedPulse>,
     val longestHoldS: Double?,
-    val sampleCount: Int
-)
+    val sampleCount: Int,
+    /** Rises that lasted longer than a contraction can: sustained elevation, origin unknown (tension, posture, drift). */
+    val sustained: List<RecordedPulse> = emptyList(),
+    /** Samples that may be analysed (logging on, no fault). */
+    val usableCount: Int = sampleCount,
+    /** Samples recorded while logging was on or during a fault (excludes preview/calibration). */
+    val loggedCount: Int = sampleCount,
+    /** Stretches excluded as suspected displacement, shifted rest or a reported sensor problem. */
+    val faults: List<QualitySpan> = emptyList()
+) {
+    /** Share of the logged pressure that was usable, 0–1 (null with nothing logged). */
+    val usableFraction: Double? get() = if (loggedCount > 0) usableCount.toDouble() / loggedCount else null
+}
 
 /** What an event looked like in the data: values at the moment and how HR responded afterwards. */
 data class MarkerContext(
@@ -44,8 +56,15 @@ data class SessionData(
     val bp: List<BpEntry>,
     val glucose: List<GlucoseEntry>,
     val hasEcg: Boolean,
-    val emg: List<EmgSampleEntity> = emptyList()
+    val emg: List<EmgSampleEntity> = emptyList(),
+    /** Connection, calibration and quality changes recorded automatically (0.25.0+). */
+    val sensorEvents: List<SensorEventEntity> = emptyList()
 ) {
+    /** Quality of every pressure sample as the review uses it (see [PressureReview]). Computed once. */
+    val pelvicQuality: Array<com.pulsepointlabs.sarahmonitor.core.PressureQuality> by lazy { PressureReview.qualities(pelvic, markers) }
+    /** The pressure analysis for this session (quality-aware, annotation exclusions applied). Computed once. */
+    val pelvicSummary: PelvicSummary by lazy { SessionAnalysis.pelvic(pelvic, markers, pelvicQuality) }
+
     val endMs: Long get() = session.endTimeMs ?: listOfNotNull(hr.lastOrNull()?.timestampMs, pelvic.lastOrNull()?.timestampMs, System.currentTimeMillis()).max()
 }
 
@@ -63,34 +82,56 @@ object SessionAnalysis {
             elapsedMs = (rr.lastOrNull()?.timestampMs ?: session.startTimeMs) - session.startTimeMs
         )
 
-    /** Holds are runs where the live detector reported "holding"; at least 0.2 s long. */
-    fun pelvic(samples: List<PelvicSampleEntity>): PelvicSummary {
+    /**
+     * Holds are runs where the live detector reported "holding" on usable samples (see [PressureReview]); at least
+     * 0.2 s long. A run that hits unusable pressure (fault, preview, calibration) is dropped, not cut short. Runs
+     * longer than a contraction can last are reported as sustained elevation instead.
+     */
+    fun pelvic(
+        samples: List<PelvicSampleEntity>,
+        markers: List<MarkerEntity> = emptyList(),
+        quality: Array<com.pulsepointlabs.sarahmonitor.core.PressureQuality> = PressureReview.qualities(samples, markers)
+    ): PelvicSummary {
         val pulses = mutableListOf<RecordedPulse>()
+        val sustained = mutableListOf<RecordedPulse>()
         var start: Long? = null
         var peak = 0.0
         var previous: PelvicSampleEntity? = null
-        samples.forEach { s ->
+        samples.forEachIndexed { i, s ->
             val gap = previous != null && s.timestampMs - previous!!.timestampMs > 1_000L
-            if (gap && start != null) {
-                start = null
-            }
-            if (s.holding) {
+            if (gap || !quality[i].usable) start = null
+            if (s.holding && quality[i].usable) {
                 if (start == null) { start = s.timestampMs; peak = 0.0 }
                 peak = max(peak, s.aboveRestKpa ?: 0.0)
             } else if (start != null) {
                 val pulse = RecordedPulse(start!!, s.timestampMs, peak)
-                if (pulse.durationS >= 0.2) pulses += pulse
+                when {
+                    pulse.durationS > com.pulsepointlabs.sarahmonitor.core.PelvicProcessor.MAX_CONTRACTION_S -> sustained += pulse
+                    pulse.durationS >= 0.2 -> pulses += pulse
+                }
                 start = null
             }
             previous = s
         }
-        val values = samples.mapNotNull { it.aboveRestKpa }
+        // Still "holding" when the recording ends: report it (a long one as sustained elevation) rather than drop it.
+        if (start != null && previous != null) {
+            val open = RecordedPulse(start!!, previous!!.timestampMs, peak)
+            when {
+                open.durationS > com.pulsepointlabs.sarahmonitor.core.PelvicProcessor.MAX_CONTRACTION_S -> sustained += open
+                open.durationS >= 0.2 -> pulses += open
+            }
+        }
+        val values = samples.indices.filter { quality[it].usable }.mapNotNull { samples[it].aboveRestKpa }
         return PelvicSummary(
             maxKpa = values.maxOrNull(),
             averageKpa = values.takeIf { it.isNotEmpty() }?.average(),
             pulses = pulses,
             longestHoldS = pulses.maxOfOrNull { it.durationS },
-            sampleCount = samples.size
+            sampleCount = samples.size,
+            sustained = sustained,
+            usableCount = quality.count { it.usable },
+            loggedCount = quality.count { it.usable || it.fault || it == com.pulsepointlabs.sarahmonitor.core.PressureQuality.Stabilizing },
+            faults = PressureReview.faultSpans(samples, quality)
         )
     }
 
@@ -100,9 +141,9 @@ object SessionAnalysis {
         return hr.chunked(size).map { c -> c.map { it.bpm }.average().toInt() }.take(points).joinToString(",")
     }
 
-    fun summarize(session: SessionEntity, hr: List<HrSampleEntity>, rr: List<RrEntity>, pelvic: List<PelvicSampleEntity>, markerCount: Int): SessionEntity {
+    fun summarize(session: SessionEntity, hr: List<HrSampleEntity>, rr: List<RrEntity>, pelvic: List<PelvicSampleEntity>, markerCount: Int, markers: List<MarkerEntity> = emptyList()): SessionEntity {
         val hrv = if (rr.size >= 3) hrv(session, rr, hr.size) else null
-        val p = pelvic(pelvic)
+        val p = pelvic(pelvic, markers)
         return session.copy(
             averageHr = hr.takeIf { it.isNotEmpty() }?.map { it.bpm }?.average(),
             minHr = hr.minOfOrNull { it.bpm },
@@ -137,6 +178,28 @@ object SessionAnalysis {
             peakPressureNext30s = data.pelvic.filter { it.timestampMs in t..(t + 30_000L) }.mapNotNull { it.aboveRestKpa }.maxOrNull()
         )
     }
+
+    /** "82% of logged pressure usable; 3 suspected displacements excluded" — null when everything was usable. */
+    fun pressureQualityLine(p: PelvicSummary): String? {
+        val frac = p.usableFraction ?: return null
+        if (p.faults.isEmpty() && frac >= 0.98) return null
+        val counts = p.faults.groupingBy { it.quality }.eachCount().entries.joinToString(", ") { (q, n) -> "$n × ${q.label.lowercase()}" }
+        val replayed = if (p.faults.any { it.replayed }) " (found by re-checking an older recording, which has no live quality data)" else ""
+        return "Pressure quality: ${"%.0f".format(frac * 100)}% of logged pressure usable" + (if (counts.isNotEmpty()) "; excluded $counts$replayed" else "") + "."
+    }
+
+    /** "18 min before start" / "4 min after end" for a reading outside the recording; null when it was during it. */
+    fun bpTiming(t: Long, data: SessionData): String? {
+        val start = data.session.startTimeMs
+        return when {
+            t < start -> "${(start - t + 30_000L) / 60_000L} min before start"
+            t > data.endMs -> "${(t - data.endMs + 30_000L) / 60_000L} min after end"
+            else -> null
+        }
+    }
+
+    /** Elapsed time that can be negative ("-12:30" before the start), unlike [elapsed]. */
+    fun elapsedSigned(ms: Long): String = if (ms < 0) "-" + elapsed(-ms) else elapsed(ms)
 
     /** Fixed decimals without "-0.0". */
     fun num(v: Double, decimals: Int = 1): String {
@@ -182,14 +245,18 @@ object SessionAnalysis {
             lines += if (s.active) "Waiting for heart-rate data from the H10." else "No heart-rate data was recorded."
         }
         if (data.pelvic.isNotEmpty()) {
-            val p = pelvic(data.pelvic)
-            lines += if (p.maxKpa != null) {
-                "Pelvic pressure peaked at ${"%.1f".format(p.maxKpa)} kPa above rest with ${p.pulses.size} contraction${if (p.pulses.size == 1) "" else "s"}" +
-                    (p.longestHoldS?.let { "; longest hold ${"%.1f".format(it)} s." } ?: ".")
-            } else "Pelvic pressure was recorded but no rest level was set."
+            val p = data.pelvicSummary
+            lines += when {
+                p.loggedCount == 0 -> "Pelvic pressure was only previewed (logging was never switched on), so no contractions were analysed."
+                p.maxKpa != null -> "Pelvic pressure peaked at ${"%.1f".format(p.maxKpa)} kPa above rest with ${p.pulses.size} contraction${if (p.pulses.size == 1) "" else "s"}" +
+                    (p.longestHoldS?.let { "; longest hold ${"%.1f".format(it)} s" } ?: "") +
+                    (if (p.sustained.isNotEmpty()) "; ${p.sustained.size} sustained elevation${if (p.sustained.size == 1) "" else "s"} over ${com.pulsepointlabs.sarahmonitor.core.PelvicProcessor.MAX_CONTRACTION_S.toInt()} s (not counted as contractions)" else "") + "."
+                else -> "Pelvic pressure was recorded but no rest level was set."
+            }
+            pressureQualityLine(p)?.let { lines += it }
         }
         if (data.bp.isNotEmpty()) {
-            lines += "Blood pressure: " + data.bp.joinToString(" → ") { "${it.systolic}/${it.diastolic}" + (it.positionLabel?.let { p -> " ($p)" } ?: "") } + "."
+            lines += "Blood pressure: " + data.bp.joinToString(" → ") { "${it.systolic}/${it.diastolic}" + (it.positionLabel?.let { p -> " ($p)" } ?: "") + bpTiming(it.timestampMs, data)?.let { t -> " ($t)" }.orEmpty() } + "."
         }
         if (data.glucose.isNotEmpty()) {
             lines += "Glucose: " + data.glucose.joinToString(" → ") { "${"%.0f".format(it.mgDl)}" } + " mg/dL."

@@ -42,8 +42,30 @@ data class ResponseEpisode(
     val halfRecoveryS: Int?,
     val breathsAtPeak: Double?,
     val stressAtPeak: Int?,
-    val markedEvents: List<String>
+    val markedEvents: List<String>,
+    /** Highest Load (0–100) in the episode, and its area in load-minutes (Load × minutes). */
+    val loadPeak: Int? = null,
+    val loadMinutes: Double? = null,
+    /** Area of usable pressure above rest over the episode (+30 s), kPa·s. */
+    val pressureIntegralKpaS: Double? = null,
+    /** Share of the episode's pressure samples that were usable (null = no pressure recorded). */
+    val pressureUsablePct: Int? = null,
+    /** HR rise per minute from trough to peak. */
+    val hrRiseBpmPerMin: Double? = null,
+    /** Lowest smoothed HR in the 3 minutes after the peak (before the next episode starts). */
+    val recoveryLowHr: Double? = null,
+    /** Seconds from this episode's end to the next one's start (null for the last). */
+    val nextGapS: Int? = null,
+    /** "good", "limited" or "low": how much of the episode's data was there and usable. Not a probability. */
+    val confidence: String = "good"
 ) {
+    /** How far HR came back down after the peak, as a share of the rise (1 = fully back to the trough). */
+    val recoveryFraction: Double? get() {
+        val rise = riseBpm ?: return null
+        if (rise < 3 || peakHr == null || recoveryLowHr == null) return null
+        return ((peakHr - recoveryLowHr) / rise).coerceIn(0.0, 1.5)
+    }
+
     val durationMs: Long get() = endMs - startMs
     val riseBpm: Double? get() = peakHr?.let { p -> (troughHr ?: baselineHr)?.let { p - it } }
 
@@ -94,8 +116,8 @@ object ResponseEpisodes {
     fun detect(data: SessionData, profile: PersonalProfile = PersonalProfile()): List<ResponseEpisode> {
         if (data.hr.size < 60) return emptyList()
         val engine = ArousalEngine(profile)
-        val pelvic = SessionAnalysis.pelvic(data.pelvic)
-        val pulses = pelvic.pulses
+        val pulses = data.pelvicSummary.pulses
+        val quality = data.pelvicQuality
         var pulseIdx = 0
         var pIdx = 0
         var mIdx = 0
@@ -106,7 +128,9 @@ object ResponseEpisodes {
                 val p = data.pelvic[pIdx]
                 while (pulseIdx < pulses.size && pulses[pulseIdx].endMs <= p.timestampMs) pulseIdx++
                 val last = pulses.getOrNull(pulseIdx - 1)?.let { PelvicPulse(it.startMs, it.endMs, it.peakKpa) }
-                engine.onPelvic(p.timestampMs, p.aboveRestKpa, p.holding, pulseIdx, last)
+                // Pressure that may not be analysed (displaced sensor, preview, calibration) doesn't feed the read.
+                val usable = quality[pIdx].usable
+                engine.onPelvic(p.timestampMs, p.aboveRestKpa.takeIf { usable }, p.holding && usable, pulseIdx, last)
                 pIdx++
             }
             while (mIdx < markers.size && markers[mIdx].timestampMs <= t) {
@@ -133,7 +157,8 @@ object ResponseEpisodes {
         fun hrWindow(from: Long, to: Long) = data.hr.subList(lower(from), lower(to + 1).coerceAtLeast(lower(from)))
         fun smoothHr(t: Long): Double? = hrWindow(t - 5_000L, t + 5_000L).map { it.bpm }.takeIf { it.isNotEmpty() }?.average()
 
-        return merged.filter { it.last - it.first >= 20_000L }.map { span ->
+        val kept = merged.filter { it.last - it.first >= 20_000L }
+        return kept.mapIndexed { index, span ->
             val pts = timeline.filter { it.timestampMs in span }
             val peakPt = pts.maxBy { it.approach }
             // Peak HR within the episode (+30 s, the HR peak often lags the approach peak).
@@ -163,7 +188,26 @@ object ResponseEpisodes {
                 peakApproach >= 60 -> EpisodeKind.Close
                 else -> EpisodeKind.Build
             }
-            val pelvicIn = data.pelvic.filter { it.timestampMs in span.first..span.last + 30_000L }
+            val pelvicIdx = data.pelvic.indices.filter { data.pelvic[it].timestampMs in span.first..span.last + 30_000L }
+            val pelvicIn = pelvicIdx.filter { quality[it].usable }.map { data.pelvic[it] }
+            // Rectangle rule: each usable sample's positive pressure times the interval to the next sample (capped at 1 s).
+            val integral = if (pelvicIn.isEmpty()) null else pelvicIn.zipWithNext().sumOf { (a, b) ->
+                (a.aboveRestKpa ?: 0.0).coerceAtLeast(0.0) * ((b.timestampMs - a.timestampMs).coerceAtMost(1_000L) / 1000.0)
+            }
+            val inEpisode = hrWindow(span.first, span.last)
+            val loads = inEpisode.mapNotNull { h -> h.load?.let { h.timestampMs to it } }
+            val loadMinutes = if (loads.size < 2) null else loads.zipWithNext().sumOf { (a, b) -> a.second * ((b.first - a.first).coerceAtMost(5_000L) / 60_000.0) }
+            val nextStart = kept.getOrNull(index + 1)?.first
+            val recoveryEnd = minOf(peakMs + 180_000L, nextStart ?: Long.MAX_VALUE)
+            val recoveryLow = hrWindow(peakMs, recoveryEnd).mapNotNull { smoothHr(it.timestampMs) }.minOrNull()
+            val hrCoverage = inEpisode.size / ((span.last - span.first) / 1000.0).coerceAtLeast(1.0)
+            val usablePct = if (pelvicIdx.isEmpty()) null else (pelvicIn.size * 100 / pelvicIdx.size)
+            val confidence = when {
+                hrCoverage < 0.5 -> "low"
+                hrCoverage < 0.8 || (usablePct != null && usablePct < 70) -> "limited"
+                else -> "good"
+            }
+            val build = trough?.let { ((peakMs - it.timestampMs) / 1000.0) }
             ResponseEpisode(
                 kind = kind, startMs = span.first, peakMs = peakMs, endMs = span.last,
                 peakApproach = peakApproach, peakArousal = pts.maxOf { it.arousal },
@@ -174,8 +218,54 @@ object ResponseEpisodes {
                 contractions = pulses.count { it.startMs in span.first..span.last + 30_000L },
                 drop30 = drop30, drop60 = drop60, halfRecoveryS = half,
                 breathsAtPeak = atPeak?.breathsPerMin, stressAtPeak = atPeak?.stress,
-                markedEvents = marks.map { it.label }
+                markedEvents = marks.map { it.label },
+                loadPeak = loads.maxOfOrNull { it.second },
+                loadMinutes = loadMinutes,
+                pressureIntegralKpaS = integral,
+                pressureUsablePct = usablePct,
+                hrRiseBpmPerMin = if (peakHr != null && troughHr != null && build != null && build >= 10) (peakHr - troughHr) / build * 60.0 else null,
+                recoveryLowHr = recoveryLow,
+                nextGapS = nextStart?.let { ((it - span.last) / 1000).toInt() },
+                confidence = confidence
             )
         }
+    }
+
+    /**
+     * Episode-to-episode comparison in plain numbers: peak HR, rise, build speed, starting level and recovery.
+     * Says what changed; it does not assume intensity climbs each time, and says so when it doesn't.
+     */
+    fun progression(episodes: List<ResponseEpisode>): List<String> {
+        if (episodes.size < 2) return emptyList()
+        fun seq(values: List<Double?>, fmt: (Double) -> String) = values.joinToString(" → ") { it?.let(fmt) ?: "?" }
+        fun direction(values: List<Double?>, tolerance: Double): String {
+            val v = values.filterNotNull()
+            if (v.size < 2) return "not enough data"
+            val steps = v.zipWithNext { a, b -> b - a }
+            return when {
+                steps.all { it > tolerance } -> "higher every time"
+                steps.all { it < -tolerance } -> "lower every time"
+                steps.all { kotlin.math.abs(it) <= tolerance } -> "about the same each time"
+                v.last() - v.first() > tolerance -> "higher overall, not every time"
+                v.first() - v.last() > tolerance -> "lower overall, not every time"
+                else -> "no consistent direction"
+            }
+        }
+        val out = mutableListOf<String>()
+        val peaks = episodes.map { it.peakHr }
+        out += "Peak HR: ${seq(peaks) { "${it.roundToInt()}" }} bpm (${direction(peaks, 2.0)})."
+        val rises = episodes.map { it.riseBpm }
+        out += "Rise from the trough: ${seq(rises) { "+${it.roundToInt()}" }} bpm (${direction(rises, 2.0)})."
+        val builds = episodes.map { it.buildS?.toDouble() }
+        if (builds.count { it != null } >= 2) out += "Time to peak: ${seq(builds) { SessionAnalysis.durationWords((it * 1000).toLong()) }} (${direction(builds, 10.0).replace("higher", "longer").replace("lower", "shorter")})."
+        val troughs = episodes.map { it.troughHr }
+        out += "Starting level (trough HR): ${seq(troughs) { "${it.roundToInt()}" }} bpm (${direction(troughs, 2.0)})."
+        val recov = episodes.dropLast(1).map { it.recoveryFraction }
+        if (recov.count { it != null } >= 1) out += "Recovery before the next build: ${recov.joinToString(" → ") { r -> r?.let { "${(it * 100).roundToInt()}%" } ?: "?" }} of each rise came back down."
+        val press = episodes.map { it.pelvicPeakKpa }
+        if (press.count { it != null } >= 2) out += "Peak pressure: ${seq(press) { SessionAnalysis.num(it) }} kPa (${direction(press, 0.3)})."
+        val low = episodes.count { it.confidence != "good" }
+        if (low > 0) out += "$low of ${episodes.size} episodes have limited or low data quality; read their numbers with care."
+        return out
     }
 }

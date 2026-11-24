@@ -82,6 +82,8 @@ object VoiceCommand {
 
     // Plain keyword reading, used without an Anthropic key (or if Claude can't be reached).
     private val RULES: List<Pair<Regex, Pair<String, String>>> = listOf(
+        // The pressure sensor itself (not a session device): "the probe slipped out", "re-seating the sensor".
+        Regex("\\b(probe|sensor|civet)\\b.{0,40}\\b(slip(?:ped|ping|s)?|fell|fall(?:ing|s)?|came|com(?:e|ing) out|moved|dislodg|deflat|re-?seat|re-?inflat|pop(?:ped)?)|\\b(slip(?:ped)?|re-?seat(?:ed|ing)?|re-?inflat(?:ed|ing)?)\\b.{0,30}\\b(probe|sensor|civet)\\b") to ("sensor_issue" to "general"),
         // Word endings matter: "prepped" is a prep step, "the lab is prepared" isn't.
         Regex("\\b(lube\\b|lubric|prep(?:ping|ped|aring|are|s)?\\b|clean(?:ing|ed)?\\b|betadine|swab)") to ("prep" to "procedure_step"),
         Regex("\\b(resistance|resisting|tight(?:ness)?|stuck)") to ("resistance" to "procedure_step"),
@@ -107,6 +109,8 @@ object VoiceCommand {
         Regex("\\b(heart (?:is )?racing|breathing|sweat|shak(?:y|ing)|dizzy|lightheaded)") to ("symptom" to "physiological_change")
     )
 
+    private val SENSOR_WORDS = Regex("\\b(probe|sensor|civet|balloon)\\b")
+
     private val DEVICE_WORDS = mapOf(
         GearType.Foley to Regex("\\b(foley|catheter|cath)\\b"), GearType.Sound to Regex("\\bsound(?:ing)?\\b"),
         GearType.Enema to Regex("\\b(enema|nozzle|bag)\\b"), GearType.Estim to Regex("\\b(e-?stim|howl|pads?)\\b"),
@@ -119,8 +123,12 @@ object VoiceCommand {
         val hits = RULES.filter { (r, _) -> r.containsMatchIn(lower) }.map { it.second }.filter { it.first in allowed }
         val types = hits.map { it.first }.distinct().take(3).toSet().ifEmpty { setOf(if ("event" in allowed) "event" else allowed.first()) }
         val bucket = hits.firstOrNull()?.second ?: "general"
+        // The CIVET probe/sensor is the measuring instrument, not a session device: when he talks about it (or a
+        // balloon without naming the catheter), don't fall back to the only device listed (that filed CIVET notes
+        // under the Foley).
+        val aboutSensor = SENSOR_WORDS.containsMatchIn(lower) || "sensor_issue" in types
         val device = gear.firstOrNull { g -> DEVICE_WORDS[g.type]?.containsMatchIn(lower) == true }
-            ?: gear.singleOrNull { it.type !in setOf(GearType.Lubricant) }.takeIf { bucket == "procedure_step" }
+            ?: gear.singleOrNull { it.type !in setOf(GearType.Lubricant) }.takeIf { bucket == "procedure_step" && !aboutSensor }
         val note = verbatim(command)
         val level = intensity(command)
         val what = MarkerTypes.label(types).lowercase()
@@ -136,6 +144,7 @@ object VoiceCommand {
 You categorise a short spoken note from a paramedic logging his own body during a physiology session. His words are saved verbatim; you only classify them.
 Allowed event types (id: label): ${allowed.joinToString("; ") { "${it.id}: ${it.label}" }}.
 Devices in use (id: label): ${gear.joinToString("; ") { "${it.id}: ${it.label}" }.ifBlank { "none" }}.
+The CIVET rectal pressure probe/sensor is the measuring instrument, not one of these devices: if he is talking about the probe, the sensor or a balloon without naming the catheter, set "device" to null. Use "sensor_issue" (if allowed) when the sensor slipped, came out, moved, deflated or was re-seated or re-inflated.
 Buckets: ${BUCKETS.joinToString(", ")}.
 Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or null,"bucket":one bucket,"intensity":0-10 or null (only if he gave a number or a clear severity),"site":anatomical site or null,"confirm":a spoken confirmation of at most 10 words, no names}.
 """.trimIndent()

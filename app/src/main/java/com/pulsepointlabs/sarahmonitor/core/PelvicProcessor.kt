@@ -3,8 +3,14 @@ package com.pulsepointlabs.sarahmonitor.core
 import kotlin.math.max
 import kotlin.math.sqrt
 
-/** One trace point: time, raw pressure and pressure above rest (null until a rest level exists). */
-data class PelvicPoint(val timestampMs: Long, val pressureKpa: Double, val aboveRestKpa: Double?, val gapBefore: Boolean)
+/** One trace point: time, raw pressure, pressure above rest (null until a rest level exists) and its quality. */
+data class PelvicPoint(
+    val timestampMs: Long,
+    val pressureKpa: Double,
+    val aboveRestKpa: Double?,
+    val gapBefore: Boolean,
+    val quality: PressureQuality = PressureQuality.Valid
+)
 
 /** A completed contraction: rise above the hold threshold and back down. */
 data class PelvicPulse(val onsetMs: Long, val endMs: Long, val peakKpa: Double) {
@@ -16,6 +22,9 @@ enum class RestSource { None, Auto, Captured }
 enum class CaptureKind { Rest, Reference }
 
 data class CaptureStatus(val kind: CaptureKind, val remainingS: Double, val message: String)
+
+/** Something that changed the meaning of the pressure signal, timestamped for the recording. */
+data class PelvicEvent(val timestampMs: Long, val kind: String, val detail: String)
 
 data class PelvicSnapshot(
     val pressureKpa: Double? = null,
@@ -38,20 +47,40 @@ data class PelvicSnapshot(
     val trend: Int = 0,
     val capture: CaptureStatus? = null,
     val message: String? = null,
-    val trace: List<PelvicPoint> = emptyList()
-)
+    val trace: List<PelvicPoint> = emptyList(),
+    /** Quality of the latest sample (what the recording stores with it). */
+    val quality: PressureQuality = PressureQuality.Preview,
+    /** The user switched pressure logging on (contractions and statistics count only then). */
+    val logging: Boolean = false,
+    /** The current hold has lasted longer than a contraction can: sustained elevation, origin unknown. */
+    val sustained: Boolean = false
+) {
+    /** Above-rest pressure only when it may be analysed (null while previewing, calibrating or faulted). */
+    val usableAboveRestKpa: Double? get() = aboveRestKpa?.takeIf { quality.usable }
+}
 
 /**
- * Turns raw CIVET pressure into "pressure above rest" plus hold/pulse detection.
+ * Turns raw CIVET pressure into "pressure above rest" plus hold/pulse detection, with a measurement-quality state
+ * on every sample.
+ *
+ * Workflow: connect and watch the live pressure while positioning (Preview). Capture a relaxed rest (or let auto
+ * rest settle), then switch logging on. Only then do contractions, holds and pressure statistics count. Calibration
+ * and preview samples are still recorded raw, labelled with their quality, and never feed the analysis.
  *
  * Rest comes from a 5 s relaxed capture when the user takes one, otherwise from a rolling low percentile of the
  * last 30 s ("auto rest"), which follows slow drift but is not as trustworthy as a captured rest. A reference
- * capture (a comfortable 5 s hold) lets the card show "% of reference". Readings are mechanical pressure, not
- * calibrated muscle force.
+ * capture (a comfortable 5 s hold) lets the card show "% of reference". Readings are mechanical pressure relative
+ * to the sensor's zero and seating, not calibrated muscle force; the rest level is not "zero anatomical pressure".
+ *
+ * While logging, [PressureIntegrity] watches for a suspected displacement (pressure far below rest) or a shifted
+ * rest. Either one stops analysis until the user recaptures rest or resumes: a fault is never recalibrated away
+ * silently. A signal gap (reconnect) waits [STABILIZE_MS] before trusting pressure again, without touching the rest.
  */
 class PelvicProcessor {
     private val trace = ArrayDeque<PelvicPoint>()
     private val pulses = ArrayDeque<PelvicPulse>()
+    private val integrity = PressureIntegrity()
+    private val events = mutableListOf<PelvicEvent>()
     private var capturedRest: Double? = null
     private var restNoise: Double? = null
     private var reference: Double? = null
@@ -66,15 +95,21 @@ class PelvicProcessor {
     private var sessionMax: Double? = null
     private var longestHold: Double? = null
     private var lastTimestamp: Long? = null
+    private var logging = false
+    private var fault: PressureQuality? = null
+    private var stabilizeUntilMs: Long? = null
+    /** Auto rest only looks at samples from here on (moved forward when the user resumes after a fault). */
+    private var autoRestFromMs = Long.MIN_VALUE
 
     @Synchronized
     fun reset() {
-        trace.clear(); pulses.clear(); capture = null; captureValues.clear()
+        trace.clear(); pulses.clear(); capture = null; captureValues.clear(); integrity.reset()
         holdOnsetMs = null; belowSinceMs = null; holdPeak = 0.0
         pulseCount = 0; sessionMax = null; longestHold = null; lastTimestamp = null; message = null
+        logging = false; fault = null; stabilizeUntilMs = null; autoRestFromMs = Long.MIN_VALUE
     }
 
-    /** Clears session statistics (counts, maxima) but keeps rest and reference. */
+    /** Clears session statistics (counts, maxima) but keeps rest, reference and the logging state. */
     @Synchronized
     fun resetStats() {
         pulses.clear(); pulseCount = 0; sessionMax = null; longestHold = null
@@ -86,38 +121,153 @@ class PelvicProcessor {
         capture = kind
         captureStartMs = nowMs
         captureValues.clear()
+        abortHold()
         message = null
+        event(nowMs, "capture_start", if (kind == CaptureKind.Rest) "rest capture started" else "reference capture started")
         return null
     }
 
     @Synchronized
     fun clearCalibration() {
         capturedRest = null; restNoise = null; reference = null; message = null
+        integrity.reset()
+        lastTimestamp?.let { event(it, "rest_auto", "switched to auto rest") }
+    }
+
+    /** Switches pressure logging on. Needs a rest level (captured, or auto rest once it has settled). */
+    @Synchronized
+    fun startLogging(nowMs: Long): String? {
+        if (capture != null) return "Wait for the capture to finish."
+        val rest = currentRest(nowMs, trace.lastOrNull()?.pressureKpa)
+            ?: return "No rest level yet. Relax and capture rest (or wait a few seconds for auto rest)."
+        val wasFault = fault
+        logging = true
+        fault = null
+        stabilizeUntilMs = null
+        integrity.reset()
+        resetStats()
+        abortHold()
+        message = "Logging pressure. Rest ${"%.2f".format(rest)} kPa (${if (capturedRest != null) "captured" else "auto"})."
+        event(nowMs, "logging_on", "rest ${"%.2f".format(rest)} kPa ${if (capturedRest != null) "captured" else "auto"}" + (wasFault?.let { "; cleared ${it.label}" } ?: ""))
+        return null
     }
 
     @Synchronized
+    fun stopLogging(nowMs: Long) {
+        if (!logging) return
+        logging = false
+        fault = null
+        abortHold()
+        message = "Pressure logging paused (preview only)."
+        event(nowMs, "logging_off", "logging switched off")
+    }
+
+    /**
+     * The user checked the sensor and wants analysis back with the current rest (a false alarm, or re-seated at
+     * the same level). Auto rest starts fresh so the faulty stretch can't drag it down.
+     */
+    @Synchronized
+    fun resume(nowMs: Long): String? {
+        val was = fault ?: return null
+        fault = null
+        integrity.reset()
+        if (capturedRest == null) autoRestFromMs = nowMs
+        stabilizeUntilMs = nowMs + STABILIZE_MS
+        message = "Resumed. Checking the signal for ${STABILIZE_MS / 1000} s."
+        event(nowMs, "resumed", "user resumed after ${was.label}")
+        return null
+    }
+
+    /** The user reported a sensor problem (slipped, re-seated, re-inflated): analysis stops until they recalibrate or resume. */
+    @Synchronized
+    fun reportProblem(nowMs: Long, note: String) {
+        event(nowMs, "reported_problem", note.ifBlank { "sensor problem reported" })
+        if (!logging) return
+        fault = PressureQuality.ReportedProblem
+        abortHold()
+        message = "Sensor problem noted. Re-seat, then capture rest or tap Resume."
+    }
+
+    /** Events since the last call (for the recording). */
+    @Synchronized
+    fun drainEvents(): List<PelvicEvent> = events.toList().also { events.clear() }
+
+    /** Everything needed to describe the calibration at a moment (session start). */
+    @Synchronized
+    fun describeState(): String =
+        "quality ${quality(lastTimestamp ?: 0L, currentRestOrNull()).name}; logging ${if (logging) "on" else "off"}; " +
+            "rest ${currentRestOrNull()?.let { "%.2f".format(it) } ?: "none"} (${if (capturedRest != null) "captured" else "auto"})" +
+            (restNoise?.let { "; rest noise ±${"%.2f".format(it)}" } ?: "") + (reference?.let { "; reference ${"%.2f".format(it)}" } ?: "")
+
+    @Synchronized
     fun ingest(timestampMs: Long, pressureKpa: Double): PelvicSnapshot {
-        val backwards = lastTimestamp?.let { timestampMs < it } ?: false
-        val gap = backwards || lastTimestamp?.let { timestampMs - it > GAP_MS } ?: false
+        val previous = lastTimestamp
+        val backwards = previous?.let { timestampMs < it } ?: false
+        val gapMs = previous?.let { timestampMs - it } ?: 0L
+        val gap = backwards || gapMs > GAP_MS
         lastTimestamp = timestampMs
         // The phone clock was corrected backwards: start the trace afresh rather than draw time out of order.
         if (backwards) trace.clear()
-        if (gap) {
-            holdOnsetMs = null
-            belowSinceMs = null
+        if (gap) abortHold()
+        if (logging && fault == null && (backwards || gapMs >= RECONNECT_GAP_MS)) {
+            stabilizeUntilMs = timestampMs + STABILIZE_MS
+            event(timestampMs, "signal_gap", if (backwards) "clock went backwards" else "no pressure for ${"%.1f".format(gapMs / 1000.0)} s; stabilizing")
         }
         handleCapture(timestampMs, pressureKpa, gap)
 
         val rest = currentRest(timestampMs, pressureKpa)
         val above = rest?.let { pressureKpa - it }
-        trace.addLast(PelvicPoint(timestampMs, pressureKpa, above, gap))
+        val issue = integrity.update(timestampMs, pressureKpa, above, rest, restNoise, capturedRest != null)
+        val stabilizing = stabilizeUntilMs?.let { timestampMs < it } == true
+        if (!stabilizing && stabilizeUntilMs != null) {
+            stabilizeUntilMs = null
+            event(timestampMs, "stable", "signal trusted again")
+        }
+        if (issue != null && logging && fault == null && capture == null && !stabilizing) raise(timestampMs, issue, pressureKpa, above, rest)
+
+        val quality = quality(timestampMs, rest)
+        trace.addLast(PelvicPoint(timestampMs, pressureKpa, above, gap, quality))
         while (trace.isNotEmpty() && timestampMs - trace.first().timestampMs > TRACE_MS) trace.removeFirst()
 
         val threshold = threshold()
-        if (above != null && capture == null) detect(timestampMs, above, threshold)
-        if (above != null && capture == null) sessionMax = max(sessionMax ?: above, above)
+        if (above != null && quality.usable) {
+            detect(timestampMs, above, threshold)
+            sessionMax = max(sessionMax ?: above, above)
+        } else abortHold()
         while (pulses.isNotEmpty() && timestampMs - pulses.first().endMs > 60_000L) pulses.removeFirst()
-        return snapshot(timestampMs, pressureKpa, above, rest, threshold)
+        return snapshot(timestampMs, pressureKpa, above, rest, threshold, quality)
+    }
+
+    private fun quality(t: Long, rest: Double?): PressureQuality = when {
+        capture != null -> PressureQuality.Calibrating
+        fault != null -> fault!!
+        !logging -> PressureQuality.Preview
+        rest == null || stabilizeUntilMs?.let { t < it } == true -> PressureQuality.Stabilizing
+        else -> PressureQuality.Valid
+    }
+
+    private fun raise(t: Long, issue: PressureIntegrity.Issue, pressure: Double, above: Double?, rest: Double?) {
+        fault = when (issue) {
+            PressureIntegrity.Issue.Displacement -> PressureQuality.SuspectedDisplacement
+            PressureIntegrity.Issue.BaselineShift -> PressureQuality.BaselineShift
+        }
+        abortHold()
+        message = when (issue) {
+            PressureIntegrity.Issue.Displacement -> "Possible CIVET sensor displacement. Check the probe, then capture rest or tap Resume."
+            PressureIntegrity.Issue.BaselineShift -> "Rest level shifted. Check the sensor, then capture a new rest or tap Resume."
+        }
+        event(t, if (issue == PressureIntegrity.Issue.Displacement) "suspected_displacement" else "baseline_shift",
+            "pressure ${"%.2f".format(pressure)} kPa, ${above?.let { "%.2f".format(it) } ?: "?"} vs rest ${rest?.let { "%.2f".format(it) } ?: "?"}")
+    }
+
+    private fun event(t: Long, kind: String, detail: String) {
+        events += PelvicEvent(t, kind, detail)
+        if (events.size > 200) events.removeAt(0)
+    }
+
+    private fun abortHold() {
+        holdOnsetMs = null
+        belowSinceMs = null
     }
 
     private fun handleCapture(timestampMs: Long, pressureKpa: Double, gap: Boolean) {
@@ -125,6 +275,7 @@ class PelvicProcessor {
         if (gap) {
             capture = null
             message = "Signal interrupted. Repeat the ${if (kind == CaptureKind.Rest) "rest" else "hold"}."
+            event(timestampMs, "capture_failed", "signal interrupted")
             return
         }
         captureValues += pressureKpa
@@ -133,6 +284,7 @@ class PelvicProcessor {
         val values = captureValues.toList()
         if (values.size < MIN_CAPTURE_SAMPLES) {
             message = "Too few samples (${values.size}). Repeat."
+            event(timestampMs, "capture_failed", "too few samples (${values.size})")
             return
         }
         val mean = values.average()
@@ -141,11 +293,19 @@ class PelvicProcessor {
             CaptureKind.Rest -> {
                 if (sd > MAX_REST_NOISE_KPA) {
                     message = "Rest wasn't steady (±${"%.2f".format(sd)} kPa). Relax and repeat."
+                    event(timestampMs, "capture_failed", "rest not steady ±${"%.2f".format(sd)} kPa")
                 } else {
                     capturedRest = mean
                     restNoise = sd
                     reference = null
-                    message = "Rest set at ${"%.2f".format(mean)} kPa. Optional: capture a reference hold."
+                    integrity.reset()
+                    val cleared = fault
+                    // Recapturing rest is the user recalibrating: a fault ends here, under their control.
+                    fault = null
+                    stabilizeUntilMs = null
+                    message = "Rest set at ${"%.2f".format(mean)} kPa." +
+                        if (logging) " Logging." else " Tap Start logging when ready."
+                    event(timestampMs, "rest_captured", "rest ${"%.2f".format(mean)} kPa ±${"%.2f".format(sd)}" + (cleared?.let { "; cleared ${it.label}" } ?: ""))
                     resetStats()
                 }
             }
@@ -154,18 +314,23 @@ class PelvicProcessor {
                 val ref = percentile(values, 0.95) - rest
                 val minimum = max(0.1, (restNoise ?: 0.05) * 6)
                 message = if (ref < minimum) {
+                    event(timestampMs, "capture_failed", "reference too small")
                     "Hold was too small or noisy. Repeat a steady 5 s hold."
                 } else {
                     reference = ref
+                    event(timestampMs, "reference_captured", "reference ${"%.2f".format(ref)} kPa above rest")
                     "Reference set: ${"%.2f".format(ref)} kPa above rest = 100%."
                 }
             }
         }
     }
 
-    private fun currentRest(timestampMs: Long, pressureKpa: Double): Double? {
+    private fun currentRestOrNull(): Double? = lastTimestamp?.let { currentRest(it, trace.lastOrNull()?.pressureKpa) }
+
+    private fun currentRest(timestampMs: Long, pressureKpa: Double?): Double? {
         capturedRest?.let { return it }
-        val recent = trace.filter { timestampMs - it.timestampMs <= AUTO_REST_WINDOW_MS }.map { it.pressureKpa } + pressureKpa
+        val recent = trace.filter { it.timestampMs >= autoRestFromMs && timestampMs - it.timestampMs <= AUTO_REST_WINDOW_MS }.map { it.pressureKpa } +
+            listOfNotNull(pressureKpa)
         if (recent.size < AUTO_REST_MIN_SAMPLES) return null
         return percentile(recent, 0.2)
     }
@@ -187,7 +352,8 @@ class PelvicProcessor {
             val since = belowSinceMs ?: timestampMs.also { belowSinceMs = it }
             if (timestampMs - since >= RELEASE_MS) {
                 val pulse = PelvicPulse(onset, since, holdPeak)
-                if (pulse.durationS >= MIN_PULSE_S) {
+                // Longer than a contraction can last: sustained elevation (posture, tone or drift), not a pulse.
+                if (pulse.durationS >= MIN_PULSE_S && pulse.durationS <= MAX_CONTRACTION_S) {
                     pulses.addLast(pulse)
                     pulseCount++
                     longestHold = max(longestHold ?: pulse.durationS, pulse.durationS)
@@ -200,9 +366,10 @@ class PelvicProcessor {
         }
     }
 
-    private fun snapshot(nowMs: Long, pressure: Double, above: Double?, rest: Double?, threshold: Double): PelvicSnapshot {
-        val recent = trace.filter { nowMs - it.timestampMs <= 30_000L }.mapNotNull { it.aboveRestKpa }
-        val previous = trace.filter { nowMs - it.timestampMs in 30_001L..60_000L }.mapNotNull { it.aboveRestKpa }
+    private fun snapshot(nowMs: Long, pressure: Double, above: Double?, rest: Double?, threshold: Double, quality: PressureQuality): PelvicSnapshot {
+        // Statistics only from samples that may be analysed.
+        val recent = trace.filter { nowMs - it.timestampMs <= 30_000L && it.quality.usable }.mapNotNull { it.aboveRestKpa }
+        val previous = trace.filter { nowMs - it.timestampMs in 30_001L..60_000L && it.quality.usable }.mapNotNull { it.aboveRestKpa }
         val avg = recent.takeIf { it.isNotEmpty() }?.average()
         val prevAvg = previous.takeIf { it.size >= 50 }?.average()
         val trend = when {
@@ -212,6 +379,7 @@ class PelvicProcessor {
             else -> 0
         }
         val onset = holdOnsetMs
+        val holdS = onset?.let { (nowMs - it) / 1000.0 }
         val captureStatus = capture?.let { kind ->
             val remaining = ((CAPTURE_MS - (nowMs - captureStartMs)) / 1000.0).coerceAtLeast(0.0)
             CaptureStatus(kind, remaining, if (kind == CaptureKind.Rest) "Relax completely…" else "Hold a comfortable squeeze…")
@@ -229,7 +397,7 @@ class PelvicProcessor {
             percentOfReference = if (above != null && reference != null) above / reference!! * 100.0 else null,
             thresholdKpa = threshold,
             holding = onset != null,
-            holdSeconds = onset?.let { (nowMs - it) / 1000.0 },
+            holdSeconds = holdS,
             lastPulse = pulses.lastOrNull(),
             pulseCount = pulseCount,
             pulsesLastMinute = pulses.size,
@@ -240,13 +408,19 @@ class PelvicProcessor {
             trend = trend,
             capture = captureStatus,
             message = message,
-            trace = trace.toList()
+            trace = trace.toList(),
+            quality = quality,
+            logging = logging,
+            sustained = holdS != null && holdS > MAX_CONTRACTION_S
         )
     }
 
     companion object {
         const val MIN_THRESHOLD_KPA = 0.3
         const val GAP_MS = 1_000L
+        /** A gap this long (link stall or reconnect) makes the signal re-stabilise before it counts again. */
+        const val RECONNECT_GAP_MS = 3_000L
+        const val STABILIZE_MS = 5_000L
         const val TRACE_MS = 120_000L
         const val CAPTURE_MS = 5_000L
         const val MIN_CAPTURE_SAMPLES = 25
@@ -255,6 +429,11 @@ class PelvicProcessor {
         const val AUTO_REST_MIN_SAMPLES = 20
         const val RELEASE_MS = 200L
         const val MIN_PULSE_S = 0.2
+        /**
+         * Longest rise still called a contraction. Voluntary pelvic-floor holds are seconds to tens of seconds;
+         * anything longer is reported as sustained elevation (origin unknown). Exploratory boundary.
+         */
+        const val MAX_CONTRACTION_S = 30.0
 
         fun percentile(values: List<Double>, p: Double): Double {
             val sorted = values.sorted()

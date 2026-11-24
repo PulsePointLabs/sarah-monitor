@@ -207,7 +207,7 @@ object MonitorHub {
             },
             cue = { listening -> audio.listenCue(listening) },
             speak = { text -> scope.launch { audio.say(text) } },
-            allowedTypes = { liveCategory().let { c -> com.pulsepointlabs.sarahmonitor.session.MarkerTypes.all.filter { it.group in c.groups } } },
+            allowedTypes = { com.pulsepointlabs.sarahmonitor.session.MarkerTypes.offered(liveCategory().groups) },
             gear = { _sessionDetails.value.gear }
         )
         scope.launch {
@@ -328,9 +328,11 @@ object MonitorHub {
             civet.samples.collect { sample ->
                 val snapshot = pelvicProcessor.ingest(sample.timestampMs, sample.pressureKpa)
                 trendRecorder.addPelvic(sample.timestampMs, snapshot.aboveRestKpa)
-                recorder.onPelvic(sample.timestampMs, sample.pressureKpa, snapshot.aboveRestKpa, snapshot.holding)
+                recorder.onPelvic(sample.timestampMs, sample.pressureKpa, snapshot.aboveRestKpa, snapshot.holding, snapshot.quality.name)
+                pelvicProcessor.drainEvents().forEach { recorder.onSensorEvent(it.timestampMs, "civet", it.kind, it.detail) }
                 audio.onPelvic(sample.timestampMs, snapshot)
-                arousal.onPelvic(sample.timestampMs, snapshot.aboveRestKpa, snapshot.holding, snapshot.pulseCount, snapshot.lastPulse)
+                // Only pressure that may be analysed reaches the arousal read (not preview, calibration or a fault).
+                arousal.onPelvic(sample.timestampMs, snapshot.usableAboveRestKpa, snapshot.holding, snapshot.pulseCount, snapshot.lastPulse)
                 // Pressure can arrive faster than the screen refreshes; publish at most every 33 ms.
                 if (sample.monotonicMs - lastPublish >= 33L || snapshot.capture != null) {
                     lastPublish = sample.monotonicMs
@@ -385,6 +387,16 @@ object MonitorHub {
                 }
             }
         }
+        // Every connection change goes into the recording, so the review knows when a sensor dropped and came back.
+        listOf("h10" to h10.state, "civet" to civet.state, "omron" to omron.state).forEach { (device, state) ->
+            scope.launch {
+                var last: ConnectionState? = null
+                state.collect { st ->
+                    if (st != last) recorder.onSensorEvent(System.currentTimeMillis(), device, "connection", st.name)
+                    last = st
+                }
+            }
+        }
         scope.launch {
             while (isActive) {
                 _trends.value = trendRecorder.snapshot()
@@ -405,6 +417,38 @@ object MonitorHub {
 
     fun clearPelvicCalibration() = pelvicProcessor.clearCalibration()
 
+    /** Switches CIVET pressure logging on (calibrated and relaxed). Returns a reason when it can't yet. */
+    fun startPelvicLogging(): String? = pelvicProcessor.startLogging(System.currentTimeMillis())
+
+    fun stopPelvicLogging() = pelvicProcessor.stopLogging(System.currentTimeMillis())
+
+    /** After a suspected displacement: the user checked the sensor and keeps the current rest. */
+    fun resumePelvic(): String? = pelvicProcessor.resume(System.currentTimeMillis())
+
+    /** A sensor note from outside the pressure stream (hardware zero), kept with the recording. */
+    fun noteSensorEvent(device: String, kind: String, detail: String) = recorder.onSensorEvent(System.currentTimeMillis(), device, kind, detail)
+
+    /**
+     * The response context follows the session type, every time. Before 0.25 only the three sexual/exploration
+     * types set it, so a general or hybrid session silently kept the previous session's context.
+     */
+    private fun applyContext(category: com.pulsepointlabs.sarahmonitor.session.SessionCategory?) {
+        ResponseSettings.setContext(
+            when (category) {
+                com.pulsepointlabs.sarahmonitor.session.SessionCategory.Sexual -> com.pulsepointlabs.sarahmonitor.response.SessionContext.Sexual
+                com.pulsepointlabs.sarahmonitor.session.SessionCategory.Exploration -> com.pulsepointlabs.sarahmonitor.response.SessionContext.Exploration
+                else -> com.pulsepointlabs.sarahmonitor.response.SessionContext.Masturbation
+            }
+        )
+    }
+
+    /** Records the calibration and sensor state at the start of a recording, so the review knows what it started from. */
+    private fun noteStartState() {
+        val now = System.currentTimeMillis()
+        recorder.onSensorEvent(now, "civet", "session_start", "${civet.state.value.name}; ${pelvicProcessor.describeState()}")
+        recorder.onSensorEvent(now, "h10", "session_start", h10.state.value.name)
+    }
+
     /** Starts recording a session; live statistics and trends restart with it. */
     /** Starts recording a [category] session; live statistics and trends restart with it. */
     fun startSession(
@@ -415,15 +459,12 @@ object MonitorHub {
         if (recorder.active.value == null) _sessionDetails.value = details ?: com.pulsepointlabs.sarahmonitor.session.SessionDetails()
         if (category.pickable) com.pulsepointlabs.sarahmonitor.session.SessionCategory.remember(appContext, category)
         // The Response board follows the session type.
-        when (category) {
-            com.pulsepointlabs.sarahmonitor.session.SessionCategory.Masturbation -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Masturbation)
-            com.pulsepointlabs.sarahmonitor.session.SessionCategory.Sexual -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Sexual)
-            com.pulsepointlabs.sarahmonitor.session.SessionCategory.Exploration -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Exploration)
-            else -> Unit
-        }
+        applyContext(category)
         scope.launch {
-            if (recorder.active.value == null) resetSession()
+            val fresh = recorder.active.value == null
+            if (fresh) resetSession()
             recorder.start(category, title, details?.takeIf { !it.empty }?.toJson())
+            if (fresh) noteStartState()
         }
     }
 
@@ -435,12 +476,8 @@ object MonitorHub {
             val s = recorder.resume(id)
             if (s != null) {
                 _sessionDetails.value = com.pulsepointlabs.sarahmonitor.session.SessionDetails.parse(s.details)
-                when (com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(s.category)) {
-                    com.pulsepointlabs.sarahmonitor.session.SessionCategory.Masturbation -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Masturbation)
-                    com.pulsepointlabs.sarahmonitor.session.SessionCategory.Sexual -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Sexual)
-                    com.pulsepointlabs.sarahmonitor.session.SessionCategory.Exploration -> ResponseSettings.setContext(com.pulsepointlabs.sarahmonitor.response.SessionContext.Exploration)
-                    else -> Unit
-                }
+                applyContext(com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(s.category))
+                noteStartState()
             }
             launch(Dispatchers.Main) { onDone(s) }
         }
@@ -463,6 +500,8 @@ object MonitorHub {
         if (recorder.active.value != null && ("orgasm" in types || "ejaculation" in types)) arousal.climaxSample()?.let { ResponseSettings.addClimax(it) }
         arousal.onMarker(timestampMs, types)
         _response.value = arousal.current()
+        // "Sensor problem" (slipped, re-seated, re-inflated): pressure analysis stops until recalibrated or resumed.
+        if ("sensor_issue" in types && recorder.active.value != null) pelvicProcessor.reportProblem(timestampMs, note)
         // Freeze the moment now (not when the save finishes).
         val gear = checkIn.gearId?.let { id -> _sessionDetails.value.gear.firstOrNull { it.id == id } }
         val snapshot = runCatching {
@@ -498,7 +537,7 @@ object MonitorHub {
             com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid -> {
                 val sexualEvent = recentEvents().any { e ->
                     System.currentTimeMillis() - e.timestampMs < 20 * 60_000L &&
-                        com.pulsepointlabs.sarahmonitor.session.MarkerTypes.all.any { it.id in e.types && it.group != com.pulsepointlabs.sarahmonitor.session.MarkerTypes.Group.General }
+                        com.pulsepointlabs.sarahmonitor.session.MarkerTypes.all.any { it.id in e.types && it.group in setOf(com.pulsepointlabs.sarahmonitor.session.MarkerTypes.Group.Sexual, com.pulsepointlabs.sarahmonitor.session.MarkerTypes.Group.Procedure) }
                 }
                 // Phase alone isn't enough (stress raises HR too), so only the climax-specific phases count.
                 val nearClimax = resp.phase in setOf(com.pulsepointlabs.sarahmonitor.response.ResponsePhase.Approaching, com.pulsepointlabs.sarahmonitor.response.ResponsePhase.Climax, com.pulsepointlabs.sarahmonitor.response.ResponsePhase.BackingOff)

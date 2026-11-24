@@ -200,6 +200,7 @@ private fun CivetSection(onMessage: (String) -> Unit) {
             Text("Sensor is deflated and outside the body", color = MonitorColors.label, fontSize = 13.sp, modifier = Modifier.weight(1f))
             TextButton(enabled = confirmZero, onClick = {
                 client.hardwareZero { ok, message ->
+                    if (ok) MonitorHub.noteSensorEvent("civet", "hardware_zero", "hardware zero sent (sensor deflated, outside the body)")
                     onMessage(if (ok) "Hardware zero sent. Capture a new rest." else message ?: "Zero failed")
                 }
                 confirmZero = false

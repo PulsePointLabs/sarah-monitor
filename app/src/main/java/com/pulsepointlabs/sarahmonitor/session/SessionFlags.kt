@@ -15,6 +15,8 @@ enum class FlagKind(val title: String, val chart: FlagChart) {
     LongHold("Long pelvic hold", FlagChart.Pelvic),
     StrongContraction("Strong contraction", FlagChart.Pelvic),
     ContractionBurst("Rhythmic contraction burst", FlagChart.Pelvic),
+    SustainedPressure("Sustained pressure elevation", FlagChart.Pelvic),
+    PressureFault("Pressure sensor problem", FlagChart.Pelvic),
     HighBp("High blood pressure", FlagChart.Bp),
     LowGlucose("Low glucose", FlagChart.Glucose),
     HighGlucose("High glucose", FlagChart.Glucose)
@@ -61,7 +63,8 @@ object SessionFlags {
                 flags += SessionFlag(
                     FlagKind.HighBp, bp.timestampMs, bp.timestampMs,
                     if (severe) FlagSeverity.High else FlagSeverity.Notable,
-                    "${bp.systolic}/${bp.diastolic} mmHg" + (if (severe) " (very high)" else "") + (bp.pulse?.let { ", pulse $it" } ?: "") + (bp.positionLabel?.let { ", $it" } ?: "")
+                    "${bp.systolic}/${bp.diastolic} mmHg" + (if (severe) " (very high)" else "") + (bp.pulse?.let { ", pulse $it" } ?: "") + (bp.positionLabel?.let { ", $it" } ?: "") +
+                        (SessionAnalysis.bpTiming(bp.timestampMs, data)?.let { "; taken $it, not during the recording" } ?: "")
                 )
             }
         }
@@ -209,10 +212,23 @@ object SessionFlags {
     }
 
     private fun pelvic(data: SessionData): List<SessionFlag> {
-        val summary = SessionAnalysis.pelvic(data.pelvic)
+        val summary = data.pelvicSummary
         val pulses = summary.pulses
-        if (pulses.isEmpty()) return emptyList()
         val flags = mutableListOf<SessionFlag>()
+        // Excluded pressure: shown so nobody reads a displaced sensor as physiology.
+        summary.faults.forEach { span ->
+            flags += SessionFlag(
+                FlagKind.PressureFault, span.startMs, span.endMs, FlagSeverity.Info,
+                "${span.quality.label}; pressure here is excluded from contractions and statistics" + if (span.replayed) " (found by re-checking an older recording)" else ""
+            )
+        }
+        summary.sustained.forEach {
+            flags += SessionFlag(
+                FlagKind.SustainedPressure, it.startMs, it.endMs, FlagSeverity.Info,
+                "${SessionAnalysis.durationWords(it.endMs - it.startMs)} above the hold threshold, peak ${SessionAnalysis.num(it.peakKpa)} kPa; too long for a contraction (sustained tension, posture or a drifting rest)"
+            )
+        }
+        if (pulses.isEmpty()) return flags
         pulses.filter { it.durationS >= 5.0 }.forEach {
             flags += SessionFlag(FlagKind.LongHold, it.startMs, it.endMs, if (it.durationS >= 10) FlagSeverity.High else FlagSeverity.Notable, "${SessionAnalysis.num(it.durationS)} s hold, peak ${SessionAnalysis.num(it.peakKpa)} kPa")
         }

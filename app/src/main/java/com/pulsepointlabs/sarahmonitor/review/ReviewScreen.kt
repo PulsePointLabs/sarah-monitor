@@ -132,6 +132,23 @@ fun ReviewScreen(
     val scope = rememberCoroutineScope()
     var reload by remember { mutableIntStateOf(0) }
     var data by remember { mutableStateOf<SessionData?>(null) }
+    // Research export: every native sample in a ZIP, written straight to the file the user picks.
+    var pendingZip by remember { mutableStateOf<SessionData?>(null) }
+    val zipLauncher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        val zd = pendingZip
+        pendingZip = null
+        if (uri != null && zd != null) scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val episodes = if (com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(zd.session.category)?.sexual == true)
+                        runCatching { com.pulsepointlabs.sarahmonitor.response.ResponseEpisodes.detect(zd, com.pulsepointlabs.sarahmonitor.response.ResponseSettings.profile.value) }.getOrDefault(emptyList())
+                    else emptyList()
+                    (context.contentResolver.openOutputStream(uri) ?: error("no output")).use { com.pulsepointlabs.sarahmonitor.session.ResearchExport.write(it, dao, zd, episodes) }
+                }.isSuccess
+            }
+            onMessage(if (ok) "Research export saved" else "Couldn't save the research export")
+        }
+    }
     var failed by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(sessionId, reload) {
         runCatching { withContext(Dispatchers.IO) { SessionRepository.load(dao, sessionId) } }
@@ -302,6 +319,7 @@ fun ReviewScreen(
             onRename = { renaming = true },
             onAskAi = { SessionExport.askAi(context, d) },
             onCsv = { onExportCsv(SessionExport.fileStem(d) + ".csv", SessionExport.csv(d)) },
+            onResearch = { pendingZip = d; zipLauncher.launch(SessionExport.fileStem(d) + "-research.zip") },
             onDelete = { confirmDelete = true },
             // Continue recording into this session (only when nothing else is recording).
             onResume = if (!d.session.active && liveSession == null) ({ MonitorHub.resumeSession(sessionId) { s -> if (s != null) { onMessage("Continuing \"${s.title}\""); reload++ } } }) else null
@@ -332,21 +350,37 @@ fun ReviewScreen(
     }
 
     editing?.let { m ->
+        var timing by remember(m.id) { mutableStateOf(com.pulsepointlabs.sarahmonitor.session.EventTiming.of(m)) }
         MarkEventDialog(
             pressedAtMs = m.timestampMs,
             editing = m,
-            onSave = { types, note, checkIn -> saveMarker(m.copy(types = MarkerTypes.join(types), label = MarkerTypes.label(types), note = note.trim(), wellbeing = checkIn.wellbeing, selfStress = checkIn.selfStress)); editing = null },
+            timing = timing, onTiming = { timing = it }, sessionStartMs = d.session.startTimeMs,
+            onSave = { types, note, checkIn ->
+                saveMarker(m.copy(
+                    types = MarkerTypes.join(types), label = MarkerTypes.label(types), note = note.trim(), wellbeing = checkIn.wellbeing, selfStress = checkIn.selfStress,
+                    timestampMs = timing.startMs, endTimeMs = timing.endMs?.takeIf { it > timing.startMs },
+                    source = timing.source.name.takeIf { timing.source != com.pulsepointlabs.sarahmonitor.session.EventSource.Live }, uncertaintyS = timing.uncertaintyS
+                ))
+                editing = null
+            },
             onDelete = { deleteMarker(m); editing = null },
             onDismiss = { editing = null },
             category = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(data?.session?.category) ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid
         )
     }
     addingAt?.let { t ->
+        // Added after the session: defaults to "from memory", time adjustable (typed from video or notes).
+        var timing by remember(t) { mutableStateOf(com.pulsepointlabs.sarahmonitor.session.EventTiming(t, null, com.pulsepointlabs.sarahmonitor.session.EventSource.Recollection, null)) }
         MarkEventDialog(
             pressedAtMs = t,
             editing = MarkerEntity("", sessionId, t, "event", "Event"),
+            timing = timing, onTiming = { timing = it }, sessionStartMs = d.session.startTimeMs,
             onSave = { types, note, checkIn ->
-                saveMarker(MarkerEntity(UUID.randomUUID().toString(), sessionId, t, MarkerTypes.join(types), MarkerTypes.label(types), note.trim(), wellbeing = checkIn.wellbeing, selfStress = checkIn.selfStress))
+                saveMarker(MarkerEntity(
+                    UUID.randomUUID().toString(), sessionId, timing.startMs, MarkerTypes.join(types), MarkerTypes.label(types), note.trim(), wellbeing = checkIn.wellbeing, selfStress = checkIn.selfStress,
+                    source = timing.source.name.takeIf { timing.source != com.pulsepointlabs.sarahmonitor.session.EventSource.Live },
+                    endTimeMs = timing.endMs?.takeIf { it > timing.startMs }, uncertaintyS = timing.uncertaintyS
+                ))
                 addingAt = null
             },
             onDismiss = { addingAt = null },
@@ -399,7 +433,7 @@ fun ReviewScreen(
 }
 
 @Composable
-private fun ReviewHeader(d: SessionData, onBack: () -> Unit, onRename: () -> Unit, onAskAi: () -> Unit, onCsv: () -> Unit, onDelete: () -> Unit, onResume: (() -> Unit)? = null) {
+private fun ReviewHeader(d: SessionData, onBack: () -> Unit, onRename: () -> Unit, onAskAi: () -> Unit, onCsv: () -> Unit, onResearch: () -> Unit, onDelete: () -> Unit, onResume: (() -> Unit)? = null) {
     val start = Instant.ofEpochMilli(d.session.startTimeMs).atZone(ZoneId.systemDefault())
     BoxWithConstraints(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
         val narrow = maxWidth < 600.dp
@@ -418,22 +452,36 @@ private fun ReviewHeader(d: SessionData, onBack: () -> Unit, onRename: () -> Uni
                         fontSize = 12.sp
                     )
                 }
-                if (!narrow) Actions(onAskAi, onCsv, onDelete, onResume)
+                if (!narrow) Actions(onAskAi, onCsv, onResearch, onDelete, onResume)
             }
-            if (narrow) Row(Modifier.padding(start = 8.dp)) { Actions(onAskAi, onCsv, onDelete, onResume) }
+            if (narrow) Row(Modifier.padding(start = 8.dp)) { Actions(onAskAi, onCsv, onResearch, onDelete, onResume) }
         }
     }
 }
 
 @Composable
-private fun Actions(onAskAi: () -> Unit, onCsv: () -> Unit, onDelete: () -> Unit, onResume: (() -> Unit)?) {
+private fun Actions(onAskAi: () -> Unit, onCsv: () -> Unit, onResearch: () -> Unit, onDelete: () -> Unit, onResume: (() -> Unit)?) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         if (onResume != null) androidx.compose.material3.Button(
             onClick = onResume,
             colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MonitorColors.pelvic, contentColor = MonitorColors.background)
         ) { Text("↻ Continue", fontSize = 13.sp, fontWeight = FontWeight.Bold) }
         OutlinedButton(onClick = onAskAi) { Text("✦ Ask AI", fontSize = 13.sp) }
-        OutlinedButton(onClick = onCsv) { Text("Export CSV", fontSize = 13.sp) }
+        // One button, two exports: keeps the row the same width on a phone.
+        Box {
+            var open by remember { mutableStateOf(false) }
+            OutlinedButton(onClick = { open = true }) { Text("Export ▾", fontSize = 13.sp) }
+            androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Column { Text("CSV", fontSize = 15.sp, fontWeight = FontWeight.Bold); Text("One row per second", fontSize = 12.sp, color = MonitorColors.label) } },
+                    onClick = { open = false; onCsv() }
+                )
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Column { Text("Research ZIP", fontSize = 15.sp, fontWeight = FontWeight.Bold); Text("Every sample, events, sensor log, README", fontSize = 12.sp, color = MonitorColors.label) } },
+                    onClick = { open = false; onResearch() }
+                )
+            }
+        }
         TextButton(onClick = onDelete) { Text("Delete", color = MonitorColors.alarm, fontSize = 13.sp) }
     }
 }
@@ -916,7 +964,8 @@ internal fun EpisodesCard(
     var open by remember { mutableStateOf(initiallyOpen) }
     val near = episodes.count { it.kind == com.pulsepointlabs.sarahmonitor.response.EpisodeKind.NearClimax || it.kind == com.pulsepointlabs.sarahmonitor.response.EpisodeKind.Edge }
     val climax = episodes.count { it.kind == com.pulsepointlabs.sarahmonitor.response.EpisodeKind.Climax }
-    Section(if (exploration) "Arousal peaks (${episodes.size})" else "Sexual response (${episodes.size} episodes)") {
+    // Exploration: a response is not assumed to be sexual arousal.
+    Section(if (exploration) "Response peaks (${episodes.size})" else "Sexual response (${episodes.size} episodes)") {
         if (episodes.isEmpty()) {
             Text("No clear arousal build in this recording.", color = MonitorColors.label, fontSize = 13.sp)
             return@Section
@@ -973,7 +1022,11 @@ internal fun EpisodesCard(
                         if (e.contractions > 0) com.pulsepointlabs.sarahmonitor.session.InsightFact("Contractions", "${e.contractions}") else null,
                         e.halfRecoveryS?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Half recovery", SessionAnalysis.durationWords(it * 1000L)) },
                         e.drop60?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("HR drop 60 s", "−${it.toInt()} bpm") },
-                        e.breathsAtPeak?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Breathing", "${it.toInt()}/min") }
+                        e.breathsAtPeak?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Breathing", "${it.toInt()}/min") },
+                        e.loadPeak?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Load peak", "$it") },
+                        e.recoveryFraction?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Recovered", "${(it * 100).toInt()}% of rise") },
+                        e.nextGapS?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Next build", "in ${SessionAnalysis.durationWords(it * 1000L)}") },
+                        com.pulsepointlabs.sarahmonitor.session.InsightFact("Data quality", e.confidence + (e.pressureUsablePct?.takeIf { it < 100 }?.let { " · pressure $it% usable" } ?: ""))
                     ), color)
                     val from = e.startMs - 180_000L; val to = e.endMs + 120_000L
                     val win = d.hr.filter { it.timestampMs in from..to }
@@ -986,6 +1039,13 @@ internal fun EpisodesCard(
                     if (e.markedEvents.isNotEmpty()) Text("Marked: " + e.markedEvents.joinToString(", "), color = MonitorColors.label, fontSize = 12.sp)
                 }
             }
+        }
+        // Episode to episode: does each one peak higher, start higher, recover less? Plain numbers, no assumed trend.
+        val progression = remember(episodes) { com.pulsepointlabs.sarahmonitor.response.ResponseEpisodes.progression(episodes) }
+        if (progression.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Episode to episode", color = MonitorColors.text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            progression.forEach { Text(it, color = MonitorColors.label, fontSize = 13.sp, lineHeight = 18.sp) }
+            Text("Candidate episodes from heart rate, HRV and pressure; not confirmed events.", color = MonitorColors.dim, fontSize = 12.sp)
         }
     }
 }

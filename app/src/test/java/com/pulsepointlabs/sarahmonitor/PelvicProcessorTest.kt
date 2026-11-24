@@ -37,6 +37,8 @@ class PelvicProcessorTest {
         var t = feed(p, 0, 2.0) { 5.0 }
         p.startCapture(CaptureKind.Rest, t)
         t = feed(p, t, 5.2) { 5.0 }
+        // 0.25: contractions only count once logging is switched on.
+        assertNull(p.startLogging(t))
         t = feed(p, t, 1.0) { 5.0 }
         t = feed(p, t, 1.0) { 7.0 } // 2 kPa squeeze for 1 s
         val holding = p.ingest(t, 7.0)

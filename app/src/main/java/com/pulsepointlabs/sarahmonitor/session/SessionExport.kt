@@ -23,7 +23,7 @@ object SessionRepository {
         val pelvic = dao.getPelvic(id)
         val markers = dao.getMarkers(id)
         // A session that's still recording has no saved totals yet; work them out from what's recorded so far.
-        val session = if (stored.active) SessionAnalysis.summarize(stored, hr, rr, pelvic, markers.size) else stored
+        val session = if (stored.active) SessionAnalysis.summarize(stored, hr, rr, pelvic, markers.size, markers) else stored
         return SessionData(
             session = session,
             hr = hr,
@@ -33,7 +33,8 @@ object SessionRepository {
             bp = MonitorHub.bp.items.value.filter { it.timestampMs in (session.startTimeMs - BP_BEFORE_MS)..(end + BP_AFTER_MS) },
             glucose = MonitorHub.glucose.items.value.filter { it.timestampMs in (session.startTimeMs - GLUCOSE_BEFORE_MS)..(end + BP_AFTER_MS) },
             hasEcg = dao.ecgChunkCount(id) > 0,
-            emg = dao.getEmg(id)
+            emg = dao.getEmg(id),
+            sensorEvents = dao.getSensorEvents(id)
         )
     }
 
@@ -56,7 +57,7 @@ object SessionExport {
     fun markdown(data: SessionData): String {
         val s = data.session
         val elapsed = { ms: Long -> SessionAnalysis.elapsed(ms - s.startTimeMs) }
-        val pelvic = SessionAnalysis.pelvic(data.pelvic)
+        val pelvic = data.pelvicSummary
         val tz = zone.getDisplayName(TextStyle.FULL, Locale.US)
         return buildString {
             appendLine("# Sarah Monitor Session Review")
@@ -66,8 +67,11 @@ object SessionExport {
                 "Please review this Sarah Monitor session. Times are local ($tz) and elapsed times are from the session start. " +
                     "Summarize the heart rate, HRV, Load and pelvic pressure patterns, relate them to the events I marked and to any blood " +
                     "pressure or glucose readings, and point out data-quality limits. Pelvic pressure is mechanical pressure above my " +
-                    "resting level from a CIVET sensor, not calibrated muscle force. This is for personal insight, not a diagnosis. " +
-                    "The attached CSV has one row per second."
+                    "resting level from a CIVET sensor, not calibrated muscle force. Pressure marked as a sensor problem (suspected " +
+                    "displacement, shifted rest, or reported by me) is excluded from contraction counts and statistics. Events added " +
+                    "after the session are labelled with their source and timing uncertainty; treat them as my recollection, not as " +
+                    "sensor detections. This is for personal insight, not a diagnosis. The attached CSV has one row per second; the " +
+                    "app's research export has every native sample."
             )
             appendLine()
             appendLine("## Session")
@@ -76,7 +80,7 @@ object SessionExport {
             appendLine("- Ended: ${s.endTimeMs?.let { at(it).format(dateTime) } ?: "still recording"}")
             appendLine("- Duration: ${SessionAnalysis.durationWords(data.endMs - s.startTimeMs)}")
             if (s.notes.isNotBlank()) appendLine("- Notes: ${oneLine(s.notes)}")
-            appendLine("- Data: HR ${data.hr.size} samples, RR ${data.rr.size}, pressure ${data.pelvic.size} samples, events ${data.markers.size}, BP ${data.bp.size}, glucose ${data.glucose.size}")
+            appendLine("- Data: HR ${data.hr.size} samples, RR ${data.rr.size}, pressure ${data.pelvic.size} samples, events ${data.markers.size}, sensor events ${data.sensorEvents.size}, BP ${data.bp.size}, glucose ${data.glucose.size}")
             SessionCategory.of(s.category)?.let { appendLine("- Type: ${it.label}") }
             appendLine()
             val details = SessionDetails.parse(s.details)
@@ -98,10 +102,23 @@ object SessionExport {
             appendLine()
             appendLine("## Pelvic pressure")
             if (data.pelvic.isEmpty()) appendLine("- Not recorded.") else {
-                appendLine("- Peak above rest: ${f1(pelvic.maxKpa)} kPa; average above rest ${f1(pelvic.averageKpa)} kPa")
+                appendLine("- Peak above rest: ${f1(pelvic.maxKpa)} kPa; average above rest ${f1(pelvic.averageKpa)} kPa (usable pressure only)")
                 appendLine("- Contractions: ${pelvic.pulses.size}; longest hold ${f1(pelvic.longestHoldS)} s")
                 pelvic.pulses.take(40).forEach { appendLine("  - ${elapsed(it.startMs)}: ${f1(it.durationS)} s, peak ${f1(it.peakKpa)} kPa") }
                 if (pelvic.pulses.size > 40) appendLine("  - …${pelvic.pulses.size - 40} more in the CSV")
+                if (pelvic.sustained.isNotEmpty()) {
+                    appendLine("- Sustained elevations (longer than ${com.pulsepointlabs.sarahmonitor.core.PelvicProcessor.MAX_CONTRACTION_S.toInt()} s; not counted as contractions, origin unknown):")
+                    pelvic.sustained.forEach { appendLine("  - ${elapsed(it.startMs)}–${elapsed(it.endMs)}: peak ${f1(it.peakKpa)} kPa") }
+                }
+                appendLine("- Quality: ${pelvic.usableFraction?.let { "%.0f".format(Locale.US, it * 100) + "% of logged pressure usable" } ?: "logging was never switched on (preview only)"}")
+                pelvic.faults.forEach { appendLine("  - ${elapsed(it.startMs)}–${elapsed(it.endMs)}: ${it.quality.label}${if (it.replayed) " (re-checked older recording)" else ""}; excluded") }
+            }
+            val sensorLines = data.sensorEvents.filter { it.kind != "connection" || it.device == "civet" || it.device == "h10" }
+            if (sensorLines.isNotEmpty()) {
+                appendLine()
+                appendLine("## Sensor log (recorded automatically)")
+                sensorLines.take(80).forEach { appendLine("- ${SessionAnalysis.elapsedSigned(it.timestampMs - s.startTimeMs)} ${it.device}: ${it.kind.replace('_', ' ')}; ${oneLine(it.detail)}") }
+                if (sensorLines.size > 80) appendLine("- …${sensorLines.size - 80} more in the research export")
             }
             appendLine()
             appendLine("## Events (marked by me)")
@@ -112,8 +129,14 @@ object SessionExport {
                     c.delta1Min?.let { "HR 1 min after ${signed(it)} bpm" },
                     c.delta5Min?.let { "5 min after ${signed(it)} bpm" }
                 ).joinToString(", ")
+                val src = EventSource.of(m.source)
+                val timing = listOfNotNull(
+                    m.endTimeMs?.let { "until ${elapsed(it)}" },
+                    m.uncertaintyS?.let { "±$it s" },
+                    src.takeIf { it.retrospective }?.let { "added afterwards: ${it.label.lowercase()}" }
+                ).joinToString(", ").let { if (it.isEmpty()) "" else " [$it]" }
                 appendLine(
-                    "- ${elapsed(m.timestampMs)} (${at(m.timestampMs).format(clock)}): ${m.label}" +
+                    "- ${elapsed(m.timestampMs)} (${at(m.timestampMs).format(clock)}): ${m.label}$timing" +
                         "; HR ${c.hrAt ?: "unknown"}" + (c.rmssdAt?.let { "; RMSSD ${f1(it)} ms" } ?: "") +
                         (c.pressureAt?.let { "; pressure ${f1(it)} kPa" } ?: "") +
                         (c.peakPressureNext30s?.let { "; peak pressure next 30 s ${f1(it)} kPa" } ?: "") +
@@ -124,13 +147,36 @@ object SessionExport {
                         (data.hr.minByOrNull { kotlin.math.abs(it.timestampMs - m.timestampMs) }?.stress?.let { "; estimated stress $it/100" } ?: "")
                 )
             }
+            val category = SessionCategory.of(s.category)
+            if (category != null && category.sexual) {
+                val episodes = runCatching { com.pulsepointlabs.sarahmonitor.response.ResponseEpisodes.detect(data, com.pulsepointlabs.sarahmonitor.response.ResponseSettings.profile.value) }.getOrDefault(emptyList())
+                appendLine()
+                appendLine(if (category == SessionCategory.Exploration) "## Response episodes (candidate; body exploration, not assumed sexual)" else "## Candidate arousal episodes (detected from HR/HRV/pressure, not confirmed)")
+                if (episodes.isEmpty()) appendLine("- None detected.") else {
+                    appendLine("| # | time | kind | trough→peak HR | build | recovery | pressure peak | contractions | load peak | data quality |")
+                    appendLine("|---:|---|---|---|---:|---:|---:|---:|---:|---|")
+                    episodes.forEachIndexed { i, e ->
+                        appendLine(
+                            "| ${i + 1} | ${elapsed(e.startMs)}–${elapsed(e.endMs)} | ${e.kind.label} | ${f0(e.troughHr)}→${f0(e.peakHr)} | " +
+                                "${e.buildS?.let { SessionAnalysis.durationWords(it * 1000L) } ?: ""} | ${e.recoveryFraction?.let { "%.0f".format(Locale.US, it * 100) + "%" } ?: ""} | " +
+                                "${f1(e.pelvicPeakKpa)} | ${e.contractions} | ${e.loadPeak ?: ""} | ${e.confidence} |"
+                        )
+                    }
+                    val progression = com.pulsepointlabs.sarahmonitor.response.ResponseEpisodes.progression(episodes)
+                    if (progression.isNotEmpty()) {
+                        appendLine()
+                        appendLine("Episode to episode:")
+                        progression.forEach { appendLine("- $it") }
+                    }
+                }
+            }
             appendLine()
             val flags = SessionFlags.detect(data)
             appendLine("## Automatic flags (found by the app, not entered by me)")
             if (flags.isEmpty()) appendLine("- Nothing flagged.")
             flags.forEach { f ->
                 appendLine(
-                    "- ${elapsed(f.startMs)}" + (if (f.durationMs >= 1_000L) "–${elapsed(f.endMs)}" else "") +
+                    "- ${SessionAnalysis.elapsedSigned(f.startMs - s.startTimeMs)}" + (if (f.durationMs >= 1_000L) "–${SessionAnalysis.elapsedSigned(f.endMs - s.startTimeMs)}" else "") +
                         " (${at(f.startMs).format(clock)}): ${f.kind.title} [${f.severity.name.lowercase()}]; ${f.detail}" +
                         (if (f.alongside.isNotEmpty()) "; alongside ${f.alongside.joinToString(", ") { it.lowerTitle }}" else "")
                 )
@@ -138,7 +184,8 @@ object SessionExport {
             appendLine()
             appendLine("## Blood pressure")
             if (data.bp.isEmpty()) appendLine("- No readings during the session (±15 min).")
-            data.bp.forEach { appendLine("- ${at(it.timestampMs).format(clock)} (${elapsed(it.timestampMs)}): ${it.systolic}/${it.diastolic}${it.pulse?.let { p -> ", pulse $p" } ?: ""}") }
+            // Readings before the start or after the end say so: they are context, not measurements taken during it.
+            data.bp.forEach { appendLine("- ${at(it.timestampMs).format(clock)} (${SessionAnalysis.bpTiming(it.timestampMs, data) ?: elapsed(it.timestampMs)}): ${it.systolic}/${it.diastolic}${it.pulse?.let { p -> ", pulse $p" } ?: ""}${it.positionLabel?.let { p -> ", $p" } ?: ""}") }
             appendLine()
             appendLine("## Glucose")
             if (data.glucose.isEmpty()) appendLine("- No readings from 2 h before to 15 min after.")
@@ -166,7 +213,7 @@ object SessionExport {
             val from = start + m * 60_000L
             val to = from + step * 60_000L
             val hr = data.hr.filter { it.timestampMs in from until to }
-            val p = data.pelvic.filter { it.timestampMs in from until to }.mapNotNull { it.aboveRestKpa }
+            val p = data.pelvic.indices.filter { data.pelvic[it].timestampMs in from until to && data.pelvicQuality[it].usable }.mapNotNull { data.pelvic[it].aboveRestKpa }
             if (hr.isEmpty() && p.isEmpty()) return@mapNotNull null
             "| ${SessionAnalysis.elapsed(m * 60_000L)} | ${f0(hr.takeIf { it.isNotEmpty() }?.map { it.bpm }?.average())} | ${hr.maxOfOrNull { it.bpm } ?: ""} | " +
                 "${f1(hr.mapNotNull { it.rmssdMs }.lastOrNull())} | ${hr.mapNotNull { it.load }.lastOrNull() ?: ""} | " +
@@ -177,18 +224,27 @@ object SessionExport {
     /** One row per second: HR, rolling HRV, Load, pressure mean/max, and any event in that second. */
     fun csv(data: SessionData): String = buildString {
         val start = data.session.startTimeMs
-        appendLine("local_time,elapsed_s,hr_bpm,rmssd_ms,sdnn_ms,pnn50_pct,load,stress_est,breaths_per_min,pressure_kpa,above_rest_kpa_mean,above_rest_kpa_max,holding,event,event_note,feeling_1_5,self_stress_0_10,event_snapshot_json,bp,glucose_mg_dl,auto_flags")
+        // New columns go at the end so existing column positions never move.
+        appendLine("local_time,elapsed_s,hr_bpm,rmssd_ms,sdnn_ms,pnn50_pct,load,stress_est,breaths_per_min,pressure_kpa,above_rest_kpa_mean,above_rest_kpa_max,holding,event,event_note,feeling_1_5,self_stress_0_10,event_snapshot_json,bp,glucose_mg_dl,auto_flags,pressure_quality,rest_kpa,event_source")
         val flags = SessionFlags.detect(data)
-        val hrBySecond = data.hr.groupBy { (it.timestampMs - start) / 1000 }
-        val pBySecond = data.pelvic.groupBy { (it.timestampMs - start) / 1000 }
-        val mBySecond = data.markers.groupBy { (it.timestampMs - start) / 1000 }
-        val bpBySecond = data.bp.groupBy { (it.timestampMs - start) / 1000 }
-        val gBySecond = data.glucose.groupBy { (it.timestampMs - start) / 1000 }
+        val quality = data.pelvicQuality
+        // floorDiv everywhere, so a reading from before the start lands on its own negative second instead of second 0.
+        fun second(t: Long) = Math.floorDiv(t - start, 1000L)
+        val hrBySecond = data.hr.groupBy { second(it.timestampMs) }
+        // Indices, so each sample keeps its quality.
+        val pBySecond = data.pelvic.indices.groupBy { second(data.pelvic[it].timestampMs) }
+        val mBySecond = data.markers.groupBy { second(it.timestampMs) }
+        val bpBySecond = data.bp.groupBy { second(it.timestampMs) }
+        val gBySecond = data.glucose.groupBy { second(it.timestampMs) }
         val seconds = (hrBySecond.keys + pBySecond.keys + mBySecond.keys + bpBySecond.keys + gBySecond.keys).sorted()
         seconds.forEach { sec ->
             val hr = hrBySecond[sec]?.lastOrNull()
-            val p = pBySecond[sec].orEmpty()
+            val pi = pBySecond[sec].orEmpty()
+            val p = pi.map { data.pelvic[it] }
+            // Raw above-rest values stay (pressure_quality says whether they may be analysed); holds only on usable samples.
             val above = p.mapNotNull { it.aboveRestKpa }
+            val heldUsable = pi.any { data.pelvic[it].holding && quality[it].usable }
+            val worst = pi.map { quality[it] }.let { qs -> qs.firstOrNull { it.fault } ?: qs.firstOrNull { !it.usable } ?: qs.lastOrNull() }
             val markers = mBySecond[sec].orEmpty()
             fun q(v: String) = if (v.contains(',') || v.contains('"') || v.contains('\n')) "\"" + v.replace("\"", "\"\"") + "\"" else v
             append(at(start + sec * 1000).toLocalDateTime()).append(',').append(sec).append(',')
@@ -199,7 +255,7 @@ object SessionExport {
             append(p.lastOrNull()?.pressureKpa?.let { "%.2f".format(Locale.US, it) } ?: "").append(',')
             append(above.takeIf { it.isNotEmpty() }?.average()?.let { "%.2f".format(Locale.US, it) } ?: "").append(',')
             append(above.maxOrNull()?.let { "%.2f".format(Locale.US, it) } ?: "").append(',')
-            append(if (p.isEmpty()) "" else if (p.any { it.holding }) "1" else "0").append(',')
+            append(if (p.isEmpty()) "" else if (heldUsable) "1" else "0").append(',')
             append(q(markers.joinToString(" | ") { it.label })).append(',')
             append(q(markers.joinToString(" | ") { it.note })).append(',')
             append(markers.mapNotNull { it.wellbeing }.joinToString(" | ")).append(',')
@@ -208,7 +264,11 @@ object SessionExport {
             append(bpBySecond[sec]?.joinToString(" | ") { "${it.systolic}/${it.diastolic}" } ?: "").append(',')
             append(gBySecond[sec]?.joinToString(" | ") { "%.0f".format(Locale.US, it.mgDl) } ?: "").append(',')
             val t = start + sec * 1000
-            append(q(flags.filter { t + 999 >= it.startMs && t <= it.endMs }.joinToString(" | ") { it.kind.title }))
+            // Each flag kind once per row: two overlapping flags of the same kind used to print the title twice.
+            append(q(flags.filter { t + 999 >= it.startMs && t <= it.endMs }.map { it.kind.title }.distinct().joinToString(" | "))).append(',')
+            append(worst?.name ?: "").append(',')
+            append(p.lastOrNull()?.let { s -> s.aboveRestKpa?.let { "%.3f".format(Locale.US, s.pressureKpa - it) } } ?: "").append(',')
+            append(q(markers.joinToString(" | ") { EventSource.of(it.source).name }))
             appendLine()
         }
     }

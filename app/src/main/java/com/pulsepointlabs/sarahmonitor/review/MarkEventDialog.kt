@@ -62,9 +62,81 @@ import com.pulsepointlabs.sarahmonitor.session.VoiceNoteRecognizer
 import com.pulsepointlabs.sarahmonitor.ui.MonitorColors
 import com.pulsepointlabs.sarahmonitor.ui.fmt
 
+/** "33:15" or "1:02:05" (elapsed from the session start) → ms, or null if it doesn't parse. */
+internal fun parseElapsed(text: String): Long? {
+    val parts = text.trim().split(':').map { it.trim().toIntOrNull() ?: return null }
+    if (parts.isEmpty() || parts.size > 3 || parts.any { it < 0 } || parts.drop(1).any { it >= 60 }) return null
+    return parts.fold(0L) { acc, v -> acc * 60 + v } * 1000L
+}
+
+internal fun formatElapsed(ms: Long): String = com.pulsepointlabs.sarahmonitor.session.SessionAnalysis.elapsedSigned(ms)
+
+/**
+ * When an event happened, for events added or corrected afterwards: elapsed time (typed, from video or notes),
+ * an optional end for a range, where it came from, and how sure the time is. Sensor data is never touched.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TimingEditor(timing: com.pulsepointlabs.sarahmonitor.session.EventTiming, sessionStartMs: Long, onChange: (com.pulsepointlabs.sarahmonitor.session.EventTiming) -> Unit) {
+    var at by remember { mutableStateOf(formatElapsed(timing.startMs - sessionStartMs)) }
+    var until by remember { mutableStateOf(timing.endMs?.let { formatElapsed(it - sessionStartMs) } ?: "") }
+    val atOk = parseElapsed(at) != null
+    val untilMs = parseElapsed(until)
+    val untilOk = until.isBlank() || (untilMs != null && sessionStartMs + untilMs > timing.startMs)
+    val accent = Color(0xFF93C5FD)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("When", color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = at, singleLine = true, isError = !atOk,
+                onValueChange = { v -> at = v; parseElapsed(v)?.let { onChange(timing.copy(startMs = sessionStartMs + it)) } },
+                label = { Text("At (m:ss)") }, modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = until, singleLine = true, isError = !untilOk,
+                onValueChange = { v ->
+                    until = v
+                    if (v.isBlank()) onChange(timing.copy(endMs = null)) else parseElapsed(v)?.let { onChange(timing.copy(endMs = sessionStartMs + it)) }
+                },
+                label = { Text("Until (optional)") }, modifier = Modifier.weight(1f)
+            )
+        }
+        if (!atOk || !untilOk) Text(if (!atOk) "Type the time as minutes:seconds, e.g. 33:15" else "The end must be after the start", color = MonitorColors.alarm, fontSize = 12.sp)
+        val sources = com.pulsepointlabs.sarahmonitor.session.EventSource.entries.filter {
+            it != com.pulsepointlabs.sarahmonitor.session.EventSource.SensorCandidate &&
+                (it != com.pulsepointlabs.sarahmonitor.session.EventSource.Live || timing.source == com.pulsepointlabs.sarahmonitor.session.EventSource.Live)
+        }
+        Text("Source", color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            sources.forEach { s -> TimingChip(s.label, s == timing.source, accent) { onChange(timing.copy(source = s)) } }
+        }
+        Text("Timing", color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(null to "Exact", 10 to "±10 s", 30 to "±30 s", 60 to "±1 min", 120 to "±2 min", 300 to "±5 min").forEach { (s, label) ->
+                TimingChip(label, timing.uncertaintyS == s, accent) { onChange(timing.copy(uncertaintyS = s)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimingChip(label: String, on: Boolean, color: Color, onClick: () -> Unit) {
+    Text(
+        (if (on) "✓ " else "") + label,
+        color = if (on) MonitorColors.background else color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+        modifier = Modifier
+            .heightIn(min = 34.dp)
+            .background(if (on) color else color.copy(alpha = 0.08f), RoundedCornerShape(17.dp))
+            .border(1.dp, color.copy(alpha = 0.6f), RoundedCornerShape(17.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 7.dp)
+    )
+}
+
 /** Colour per event type, used for chips, chart marker lines and the event list. */
 fun markerColor(types: String): Color = when (MarkerTypes.split(types).firstOrNull()) {
     "symptom" -> MonitorColors.warn
+    "sensor_issue" -> MonitorColors.alarm
     "activity" -> MonitorColors.sdnn
     "position" -> Color(0xFF7DD3FC)
     "intake" -> MonitorColors.glucose
@@ -111,7 +183,12 @@ fun MarkEventDialog(
     /** Drawn as a floating overlay panel (no activity behind it). */
     inOverlay: Boolean = false,
     /** Which event groups to offer (from the session's category); null = the live session's. */
-    category: com.pulsepointlabs.sarahmonitor.session.SessionCategory? = null
+    category: com.pulsepointlabs.sarahmonitor.session.SessionCategory? = null,
+    /** Review only: the event's time, range, source and timing uncertainty, editable. Null while marking live. */
+    timing: com.pulsepointlabs.sarahmonitor.session.EventTiming? = null,
+    onTiming: (com.pulsepointlabs.sarahmonitor.session.EventTiming) -> Unit = {},
+    /** Session start, so times can be typed as elapsed ("33:15"). */
+    sessionStartMs: Long = 0L
 ) {
     val context = LocalContext.current
     val heart by MonitorHub.heart.collectAsState()
@@ -119,7 +196,7 @@ fun MarkEventDialog(
     var checkIn by remember { mutableStateOf(editing?.let { com.pulsepointlabs.sarahmonitor.session.CheckIn.of(it) } ?: com.pulsepointlabs.sarahmonitor.session.CheckIn()) }
     val sessionNow by MonitorHub.session.collectAsState()
     val groups = (category ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(sessionNow?.category) ?: com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid).groups
-    val allowed = MarkerTypes.all.filter { it.group in groups }.map { it.id }.toSet()
+    val allowed = MarkerTypes.offered(groups).map { it.id }.toSet()
     // A new event starts with the type(s) used last time (if they fit this session); editing keeps its own.
     var types by remember {
         mutableStateOf(
@@ -292,12 +369,13 @@ fun MarkEventDialog(
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 // What the sensors read at this moment, so you can agree or disagree with them.
                 if (editing == null) RightNow(checkIn.stressFeedback) { checkIn = checkIn.copy(stressFeedback = it) }
+                if (timing != null) TimingEditor(timing, sessionStartMs, onTiming)
                 // Event types in tabs (one per group this session uses); a dot marks tabs with something picked.
                 var tab by remember { mutableStateOf(groups.firstOrNull { g -> MarkerTypes.inGroup(g).any { it.id in types } } ?: groups.first()) }
                 if (groups.size > 1) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     groups.forEach { g ->
                         // Badge = how many types are picked on that tab, so picks on other tabs aren't forgotten.
-                        val n = MarkerTypes.inGroup(g).count { it.id in types }
+                        val n = (MarkerTypes.inGroup(g) + MarkerTypes.inGroup(MarkerTypes.Group.Sensor)).count { it.id in types }
                         val on = g == tab
                         Row(
                             Modifier.weight(1f).heightIn(min = 34.dp).background(if (on) MonitorColors.text else Color.Transparent, RoundedCornerShape(8.dp))
@@ -317,7 +395,8 @@ fun MarkEventDialog(
                     }
                 }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    MarkerTypes.inGroup(tab).forEach { type ->
+                    // "Sensor problem" sits on every tab: it can happen in any kind of session.
+                    (MarkerTypes.inGroup(tab) + MarkerTypes.inGroup(MarkerTypes.Group.Sensor)).forEach { type ->
                         val on = type.id in types
                         val color = markerColor(type.id)
                         Text(

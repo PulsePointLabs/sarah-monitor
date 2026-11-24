@@ -74,7 +74,11 @@ data class RrEntity(
     val rejectionReason: String?
 )
 
-/** CIVET pressure (about 10/s). [aboveRestKpa] is null until a rest level exists. */
+/**
+ * CIVET pressure (about 10/s, every sample the sensor sends). [aboveRestKpa] is null until a rest level exists;
+ * the rest in force is `pressureKpa - aboveRestKpa`. [quality] is a [com.pulsepointlabs.sarahmonitor.core.PressureQuality]
+ * name (0.25.0+); null on older recordings.
+ */
 @Entity(tableName = "pelvic_samples", indices = [Index("sessionId", "timestampMs")])
 data class PelvicSampleEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -82,7 +86,23 @@ data class PelvicSampleEntity(
     val timestampMs: Long,
     val pressureKpa: Double,
     val aboveRestKpa: Double?,
-    val holding: Boolean
+    val holding: Boolean,
+    val quality: String? = null
+)
+
+/**
+ * Something that changed what a sensor's data means, recorded automatically: connection changes, calibration
+ * (rest/reference captures, zeroing), logging on/off, suspected displacement, user resumes. Never entered by hand.
+ */
+@Entity(tableName = "sensor_events", indices = [Index("sessionId", "timestampMs")])
+data class SensorEventEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: String,
+    val timestampMs: Long,
+    /** "civet", "h10", "omron", "emg". */
+    val device: String,
+    val kind: String,
+    val detail: String
 )
 
 /** EMG envelope from the Arduino/MyoWare (25 Hz averages). pct = % of the calibrated hold. */
@@ -122,8 +142,35 @@ data class MarkerEntity(
     /** Self-reported stress, 0 (none) – 10 (extreme). */
     val selfStress: Int? = null,
     /** JSON: everything live at the moment it was marked (see EventSnapshot). Null for events added in review. */
-    val snapshot: String? = null
+    val snapshot: String? = null,
+    /** Where the event came from ([EventSource] name); null = marked live during the recording. */
+    val source: String? = null,
+    /** End of a time range (null = a single moment). */
+    val endTimeMs: Long? = null,
+    /** How far off the time may be, ± seconds (null = exact / as pressed). */
+    val uncertaintyS: Int? = null
 )
+
+/** When an event happened and how well that's known (edited in review). */
+data class EventTiming(val startMs: Long, val endMs: Long?, val source: EventSource, val uncertaintyS: Int?) {
+    companion object {
+        fun of(m: MarkerEntity) = EventTiming(m.timestampMs, m.endTimeMs, EventSource.of(m.source), m.uncertaintyS)
+    }
+}
+
+/** Where an event's time and content came from. Live presses and spoken notes are contemporaneous; the rest are not. */
+enum class EventSource(val label: String, val retrospective: Boolean) {
+    Live("Marked live", false),
+    Recollection("From memory", true),
+    Video("Video review", true),
+    Observation("Direct observation", true),
+    Notes("Written notes", true),
+    SensorCandidate("Confirmed sensor candidate", true);
+
+    companion object {
+        fun of(name: String?): EventSource = entries.firstOrNull { it.name == name } ?: Live
+    }
+}
 
 @Dao
 interface SessionDao {
@@ -145,6 +192,9 @@ interface SessionDao {
     @Insert suspend fun insertPelvic(rows: List<PelvicSampleEntity>)
     @Insert suspend fun insertEcg(rows: List<EcgChunkEntity>)
     @Insert suspend fun insertEmg(rows: List<EmgSampleEntity>)
+    @Insert suspend fun insertSensorEvents(rows: List<SensorEventEntity>)
+    @Query("SELECT * FROM sensor_events WHERE sessionId = :id ORDER BY timestampMs, id") suspend fun getSensorEvents(id: String): List<SensorEventEntity>
+    @Query("DELETE FROM sensor_events WHERE sessionId = :id") suspend fun deleteSensorEvents(id: String)
     @Query("SELECT * FROM emg_samples WHERE sessionId = :id ORDER BY timestampMs") suspend fun getEmg(id: String): List<EmgSampleEntity>
     @Query("DELETE FROM emg_samples WHERE sessionId = :id") suspend fun deleteEmg(id: String)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertMarker(marker: MarkerEntity)
@@ -166,13 +216,13 @@ interface SessionDao {
     @Query("DELETE FROM markers WHERE sessionId = :id") suspend fun deleteMarkers(id: String)
 
     suspend fun deleteEverything(id: String) {
-        deleteHr(id); deleteRr(id); deletePelvic(id); deleteEcg(id); deleteEmg(id); deleteMarkers(id); deleteSession(id)
+        deleteHr(id); deleteRr(id); deletePelvic(id); deleteEcg(id); deleteEmg(id); deleteSensorEvents(id); deleteMarkers(id); deleteSession(id)
     }
 }
 
 @Database(
-    entities = [SessionEntity::class, HrSampleEntity::class, RrEntity::class, PelvicSampleEntity::class, EcgChunkEntity::class, MarkerEntity::class, EmgSampleEntity::class],
-    version = 6,
+    entities = [SessionEntity::class, HrSampleEntity::class, RrEntity::class, PelvicSampleEntity::class, EcgChunkEntity::class, MarkerEntity::class, EmgSampleEntity::class, SensorEventEntity::class],
+    version = 7,
     exportSchema = false
 )
 abstract class SessionDatabase : RoomDatabase() {
@@ -180,6 +230,21 @@ abstract class SessionDatabase : RoomDatabase() {
 
     companion object {
         @Volatile private var instance: SessionDatabase? = null
+
+        /**
+         * 0.25.0: pressure quality per sample, sensor events, and retrospective event fields (source, range,
+         * timing uncertainty). Additive only: existing rows keep their data, new columns are null.
+         */
+        val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `pelvic_samples` ADD COLUMN `quality` TEXT")
+                db.execSQL("ALTER TABLE `markers` ADD COLUMN `source` TEXT")
+                db.execSQL("ALTER TABLE `markers` ADD COLUMN `endTimeMs` INTEGER")
+                db.execSQL("ALTER TABLE `markers` ADD COLUMN `uncertaintyS` INTEGER")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `sensor_events` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` TEXT NOT NULL, `timestampMs` INTEGER NOT NULL, `device` TEXT NOT NULL, `kind` TEXT NOT NULL, `detail` TEXT NOT NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_sensor_events_sessionId_timestampMs` ON `sensor_events` (`sessionId`, `timestampMs`)")
+            }
+        }
 
         /** 0.20.0: structured session details (check-ins, devices, wrap-up, video link). */
         val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
@@ -221,7 +286,7 @@ abstract class SessionDatabase : RoomDatabase() {
         }
         fun get(context: Context): SessionDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, SessionDatabase::class.java, "sarah_monitor_sessions.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .build().also { instance = it }
         }
     }

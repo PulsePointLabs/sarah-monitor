@@ -442,9 +442,12 @@ private fun PelvicCard() {
         else -> "hold --"
     }
     val recent by MonitorHub.recent.collectAsState()
-    val color = trendColor(recent.trend(Metric.Pelvic))
+    // Not logging or faulted: the number is still shown (for positioning) but greyed, so it doesn't read as data.
+    val color = if (p.quality.usable) trendColor(recent.trend(Metric.Pelvic)) else MonitorColors.label
+    val overlay = LocalOverlayMode.current
+    val connected = state == ConnectionState.Connected || state == ConnectionState.Stale
     FitColumn(Modifier.fillMaxSize()) {
-        fixed { CardTitle(if (s.widthDp < 230f) "Pelvic" else "Pelvic pressure", if (LocalOverlayMode.current) color else MonitorColors.pelvic, "kPa") { Text(link, color = linkColor, fontSize = s.sp(11f), maxLines = 1) } }
+        fixed { CardTitle(if (s.widthDp < 230f) "Pelvic" else "Pelvic pressure", if (overlay) color else MonitorColors.pelvic, "kPa") { Text(link, color = linkColor, fontSize = s.sp(11f), maxLines = 1) } }
         flex { BigReading(
             value = if (fresh) fmt(p.aboveRestKpa, 1) else "--",
             color = color,
@@ -453,7 +456,9 @@ private fun PelvicCard() {
             trendStrength = recent.trend(Metric.Pelvic),
             modifier = Modifier.fillMaxSize()
         ) }
-        fixed(drop = 1) { Chips {
+        // In a fault the stats are meaningless and the warning matters: chips give way first.
+        val faulted = p.quality.fault
+        fixed(drop = if (faulted) 3 else 1) { Chips {
             if (p.referenceKpa != null) StatChip("of ref", p.percentOfReference?.takeIf { fresh }?.let { "${"%.0f".format(it)}%" } ?: "--", MonitorColors.pelvic)
             StatChip("30s avg", fmt(p.average30s, 1))
             StatChip("30s max", fmt(p.max30s, 1))
@@ -474,24 +479,70 @@ private fun PelvicCard() {
         val capture = p.capture
         val status = when {
             capture != null -> "${capture.message} ${"%.0f".format(kotlin.math.ceil(capture.remainingS))}s"
+            // Narrow cards get the short reason; the buttons below say what to do.
+            p.quality.fault -> if (s.widthDp < 320f) "⚠ ${p.quality.label}" else p.message ?: p.quality.label
             error != null && !fresh -> error!!
             p.message != null -> p.message!!
-            p.restSource == RestSource.Auto -> "Auto rest"
-            p.restSource == RestSource.Captured -> "Rest ${fmt(p.restKpa, 2)} kPa · threshold ${fmt(p.thresholdKpa, 2)}"
+            !p.logging && p.restSource == RestSource.None -> "Preview, not logging. Relax for auto rest or capture rest."
+            !p.logging -> "Preview, not logging · ${if (p.restSource == RestSource.Captured) "rest ${fmt(p.restKpa, 2)} kPa" else "auto rest"}"
+            p.sustained -> "Sustained elevation, not counted as a contraction"
+            p.restSource == RestSource.Auto -> "Logging · auto rest"
+            p.restSource == RestSource.Captured -> "Logging · rest ${fmt(p.restKpa, 2)} kPa · threshold ${fmt(p.thresholdKpa, 2)}"
             else -> ""
         }
-        fixed(drop = 2) { StatusLine(status, if (capture != null) MonitorColors.warn else MonitorColors.label) }
+        val statusColor = when {
+            p.quality.fault -> MonitorColors.alarm
+            capture != null || p.sustained -> MonitorColors.warn
+            else -> MonitorColors.label
+        }
+        fixed(drop = if (faulted) 0 else 2) { StatusLine(status, statusColor) }
+        // The one action that matters right now, full width so it stays reachable on the narrow phone card.
+        if (actions != null && !overlay && connected && fresh && capture == null) {
+            when {
+                p.quality.fault -> fixed {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        ActionPill("New rest", MonitorColors.pelvic, true, Modifier.weight(1f)) {
+                            MonitorHub.startPelvicCapture(CaptureKind.Rest)?.let(actions.onMessage)
+                        }
+                        ActionPill("Resume", MonitorColors.alarm, false, Modifier.weight(1f)) { MonitorHub.resumePelvic()?.let(actions.onMessage) }
+                    }
+                }
+                !p.logging && p.restSource != RestSource.None -> fixed {
+                    ActionPill("Start logging", MonitorColors.pelvic, true, Modifier.fillMaxWidth()) {
+                        MonitorHub.startPelvicLogging()?.let(actions.onMessage)
+                    }
+                }
+            }
+        }
         if (actions != null && !s.compact) fixed(drop = 4) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
                 MiniButton("Capture rest", MonitorColors.pelvic) {
                     MonitorHub.startPelvicCapture(CaptureKind.Rest)?.let(actions.onMessage)
                 }
-                MiniButton("Reference hold", MonitorColors.pelvic) {
+                if (p.logging) MiniButton("Reference hold", MonitorColors.pelvic) {
                     MonitorHub.startPelvicCapture(CaptureKind.Reference)?.let(actions.onMessage)
                 }
-                MiniButton("Auto rest", MonitorColors.label) { MonitorHub.clearPelvicCalibration() }
+                if (p.logging) MiniButton("Stop logging", MonitorColors.label) { MonitorHub.stopPelvicLogging() }
+                else if (p.restSource == RestSource.Captured) MiniButton("Auto rest", MonitorColors.label) { MonitorHub.clearPelvicCalibration() }
             }
         }
+    }
+}
+
+/** A full-width card action: big enough to hit on a phone, never truncated (labels are kept short). */
+@Composable
+private fun ActionPill(label: String, color: Color, filled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val s = LocalCardScale.current
+    Box(
+        modifier
+            .heightIn(min = 36.dp)
+            .background(if (filled) color else color.copy(alpha = 0.10f), RoundedCornerShape(8.dp))
+            .border(1.dp, color.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = if (filled) MonitorColors.background else color, fontSize = s.sp(14f), fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
     }
 }
 
