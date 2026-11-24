@@ -69,7 +69,10 @@ class BoardShotTest {
         val d = a.resources.displayMetrics.density
         a.setContent {
             MaterialTheme(colorScheme = darkColorScheme(background = MonitorColors.background, surface = MonitorColors.panel)) {
-                Box(Modifier.size(wDp.dp, hDp.dp).background(MonitorColors.background).padding(6.dp)) { content() }
+                // The real app provides card actions (buttons); without them the shots would hide controls.
+                androidx.compose.runtime.CompositionLocalProvider(com.pulsepointlabs.sarahmonitor.ui.LocalCardActions provides com.pulsepointlabs.sarahmonitor.ui.CardActions()) {
+                    Box(Modifier.size(wDp.dp, hDp.dp).background(MonitorColors.background).padding(6.dp)) { content() }
+                }
             }
         }
         val w = (wDp * d).toInt(); val h = (hDp * d).toInt()
@@ -91,5 +94,32 @@ class BoardShotTest {
         shot("response-phone", 411, 780) { Dashboard(FitLayout.responseDefaults, false, {}, {}, Modifier.fillMaxSize(), compact = true) }
         shot("monitor-landscape", 891, 340) { Dashboard(FitLayout.monitorDefaults, false, {}, {}, Modifier.fillMaxSize(), compact = true) }
         shot("monitor-dex", 1360, 700) { Dashboard(GridLayoutEngine.defaultLayout, false, {}, {}, Modifier.fillMaxSize(), compact = false) }
+        pelvicStates()
+    }
+
+    /** The pressure card while previewing (logging off) and during a suspected displacement, with live pressure. */
+    private fun pelvicStates() {
+        @Suppress("UNCHECKED_CAST")
+        val civetState = com.pulsepointlabs.sarahmonitor.ble.CivetClient::class.java.getDeclaredField("_state").apply { isAccessible = true }
+            .get(MonitorHub.civet) as MutableStateFlow<com.pulsepointlabs.sarahmonitor.ble.ConnectionState>
+        civetState.value = com.pulsepointlabs.sarahmonitor.ble.ConnectionState.Connected
+        val live = System.currentTimeMillis() + 600_000L
+        val trace = (0 until 200).map { i ->
+            val t = live - (200 - i) * 100L
+            com.pulsepointlabs.sarahmonitor.core.PelvicPoint(t, 6.0 + 0.4 * kotlin.math.sin(i / 6.0), 0.4 * kotlin.math.sin(i / 6.0), false)
+        }
+        flow<PelvicSnapshot>("_pelvic").value = PelvicSnapshot(pressureKpa = 6.2, aboveRestKpa = 0.2, restKpa = 6.0,
+            restSource = com.pulsepointlabs.sarahmonitor.core.RestSource.Auto, trace = trace, logging = false,
+            quality = com.pulsepointlabs.sarahmonitor.core.PressureQuality.Preview)
+        shot("pelvic-preview-phone", 411, 780) { Dashboard(FitLayout.monitorDefaults, false, {}, {}, Modifier.fillMaxSize(), compact = true) }
+        shot("pelvic-preview-landscape", 891, 340) { Dashboard(FitLayout.monitorDefaults, false, {}, {}, Modifier.fillMaxSize(), compact = true) }
+        shot("pelvic-preview-dex", 1360, 700) { Dashboard(GridLayoutEngine.defaultLayout, false, {}, {}, Modifier.fillMaxSize(), compact = false) }
+        flow<PelvicSnapshot>("_pelvic").value = PelvicSnapshot(pressureKpa = 0.9, aboveRestKpa = -5.1, restKpa = 6.0,
+            restSource = com.pulsepointlabs.sarahmonitor.core.RestSource.Captured, trace = trace, logging = true, sessionMax = 4.2, pulseCount = 7,
+            quality = com.pulsepointlabs.sarahmonitor.core.PressureQuality.SuspectedDisplacement,
+            message = "Possible CIVET sensor displacement. Check the probe, then capture rest or tap Resume.")
+        shot("pelvic-fault-phone", 411, 780) { Dashboard(FitLayout.monitorDefaults, false, {}, {}, Modifier.fillMaxSize(), compact = true) }
+        shot("pelvic-fault-landscape", 891, 340) { Dashboard(FitLayout.monitorDefaults, false, {}, {}, Modifier.fillMaxSize(), compact = true) }
+        shot("pelvic-fault-dex", 1360, 700) { Dashboard(GridLayoutEngine.defaultLayout, false, {}, {}, Modifier.fillMaxSize(), compact = false) }
     }
 }

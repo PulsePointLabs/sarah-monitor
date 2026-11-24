@@ -11,7 +11,7 @@ bedside-monitor dashboards, floating overlays and a review screen.
 
 - Repo: `PulsePointLabs/sarah-monitor`, branch `main`. Every push to `main` builds a signed release
   (GitHub Actions); it appears under Releases about 4–5 minutes later as `vX.Y.Z-main-<versionCode>`.
-- Bump `versionCode` and `versionName` in `app/build.gradle.kts` with every release. Current: **0.24.2 (41)**.
+- Bump `versionCode` and `versionName` in `app/build.gradle.kts` with every release. Current: **0.25.0 (42)**, released from branch `rc/0.25-research-integrity` as a pre-release (main is still 0.24.2).
 - The older app (`PulsePointLabs/Sarah`, "SarahVS") is reference only. Don't copy its code; engineer it better.
 
 ## How Ben wants to work (important)
@@ -35,7 +35,13 @@ bedside-monitor dashboards, floating overlays and a review screen.
   `app/src/test/java/com/pulsepointlabs/sarahmonitor/shot/BoardShotTest.kt` for any other screen you touch
   (Kegel, Health, Sessions, Settings, Review, overlays have **not** been audited yet).
 - On a Windows box with Android Studio, an emulator (Pixel-size phone + a large tablet/desktop size for
-  DeX) is the best real check.
+  DeX) is the best real check. Ben's Windows box (`F:\sarah-monitor`) has `sarah_phone` and `sarah_dex` (exactly 1360×700 dp).
+  `tools/device-shots.ps1 [-Serial X] [-Build]` installs, grants permissions, launches and screenshots every display
+  (phone + DeX) of an emulator or the real S25 (wireless debugging). Empty/no-data states only show up there.
+- **Real recordings:** `./gradlew :app:testDebugUnitTest -Precordings=<folder of exported CSVs> --tests "*RecordingCheck*"`
+  replays per-second CSVs through the pressure-integrity checks → `app/build/recording-check/*.txt`.
+- Windows gotcha: a stray `"` in the system PATH breaks Gradle's test JVM. Until fixed: `$env:Path = $env:Path.Replace('"','')`
+  and `JAVA_HOME` = Android Studio's `jbr`.
 
 ## Key code (app/src/main/java/com/pulsepointlabs/sarahmonitor/)
 
@@ -49,6 +55,12 @@ bedside-monitor dashboards, floating overlays and a review screen.
   nothing overlaps), `ChipGrid` (even rows, label-over-value tiles when narrow, never a lone chip),
   `FitOrHide` (header status shown whole or not at all). `ui/Dashboard.kt` + `ui/GridLayout.kt` — phone
   fit-to-screen rows (`FitLayout`) and the DeX 24-column grid.
+- `core/PelvicProcessor.kt` + `core/PressureIntegrity.kt` — CIVET pressure: logging only after the user switches it on
+  (calibrate first), a `PressureQuality` on every sample, suspected displacement / shifted rest latch until the user
+  recaptures rest or resumes, 5 s stabilising after a link gap, holds over 30 s = sustained elevation (not contractions).
+- `session/PressureReview.kt` — the review's per-sample quality (stored live; replayed for pre-0.25 recordings;
+  "Sensor problem" events exclude their range). `session/ResearchExport.kt` — research ZIP (every native sample + README).
+- `docs/research/AUDIT-2026-11-23.md` — what the ChatGPT research brief claimed vs what the code did.
 - `response/ResponseCards.kt` — Phase, Near-climax, Phase timeline, Sarah live, etc.
 - `review/ReviewScreen.kt` — session review; Events card (All / Marked / Sarah heard tabs, metric chips with
   trend arrows, mini graph, expandable with zoom + ECG, delete).
@@ -69,7 +81,22 @@ bedside-monitor dashboards, floating overlays and a review screen.
   (read as a minus sign), consistent number sizes, phone rows sized by need, phase timeline smoothed,
   ECG sweep delay capped.
 
+## 0.25.0 (research integrity, from the ChatGPT brief; see docs/research/AUDIT-2026-11-23.md)
+
+- CIVET: Start logging / Stop logging; preview and calibration never count; displacement alarm with New rest / Resume;
+  sensor events (connections, rest captures, zeroing, logging, faults) stored per session (DB v7, sensor_events table).
+- "Sensor problem" event type in every session type (voice: "the probe slipped out"); hands-free no longer files CIVET
+  notes under the Foley.
+- Review: quality-aware pressure stats, fault and sustained-elevation flags, events editable with typed elapsed time,
+  range, source (memory/video/observation/notes) and ± timing; Export ▾ → CSV or Research ZIP; episode progression.
+- Fixed: duplicate flag titles in CSV rows; pre-session BP printed as 0:00; session-type context carrying over.
+
 ## Open / unverified
+
+- **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the
+  recording check on the Nov 23 CSVs (`sarah-monitor-2026-11-23-0312.csv`, `…-0516(2).csv`) and tune.
+- EMG already feeds the arousal engine when connected (pre-existing; brief says EMG is unvalidated). Ben to decide.
+- The real S25 Ultra is not yet connected over wireless debugging; layouts verified on harness + emulators only.
 
 - ECG drawing only at the screen edges: likely a Bluetooth stall; drawing delay is now capped. Unverified
   with the strap on.

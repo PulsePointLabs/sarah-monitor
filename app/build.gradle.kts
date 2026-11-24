@@ -15,8 +15,8 @@ android {
         // 64-bit ARM only (every current Samsung): keeps the offline speech libraries from quadrupling the APK.
         ndk { abiFilters += listOf("arm64-v8a") }
         targetSdk = 35
-        versionCode = 41
-        versionName = "0.24.2"
+        versionCode = 42
+        versionName = "0.25.0"
     }
 
     // One signing key for every build (this machine, CI, anyone's PC), kept in the repo, so each
@@ -94,4 +94,7 @@ android.testOptions.unitTests.all {
     System.getenv("ROBOLECTRIC_REPO")?.let { url -> it.systemProperty("robolectric.dependency.repo.url", url) }
     it.systemProperty("shots.dir", layout.buildDirectory.dir("shots").get().asFile.absolutePath)
     if (!project.hasProperty("shots")) it.exclude("**/shot/**")
+    // Real recordings check: -Precordings=<folder of exported CSVs> → reports in app/build/recording-check.
+    project.findProperty("recordings")?.let { dir -> it.systemProperty("recordings.dir", dir.toString()) }
+    it.systemProperty("recording.report.dir", layout.buildDirectory.dir("recording-check").get().asFile.absolutePath)
 }
