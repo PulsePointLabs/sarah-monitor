@@ -209,28 +209,47 @@ class SarahCoach(
         return client!!
     }
 
-    private fun generate(reason: String, s: ResponseState): String? {
+    /**
+     * He asked her something out loud ("how long have I been holding?", "is a pop normal there?"). Answered from
+     * the whole session so far, in her current voice, whether or not live feedback is on. Null if she can't.
+     */
+    suspend fun answer(question: String): String? {
+        if (ResponseSettings.apiKey.value.isBlank()) return null
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val ctx = context("question", state()).put("his_question", question)
+                call(ANSWER_PROMPT, ctx.toString(), BetaOutputConfig.Effort.MEDIUM)
+                    ?.takeIf { !it.equals("QUIET", ignoreCase = true) && it.split(Regex("\\s+")).size <= 90 }
+            }
+        }.getOrNull()?.also { a -> recent.addLast(a); while (recent.size > 6) recent.removeFirst(); _last.value = a; lastSpokeAt = System.currentTimeMillis() }
+    }
+
+    private fun call(system: String, user: String, effort: BetaOutputConfig.Effort): String? {
         val model = ResponseSettings.model.value
         val builder = MessageCreateParams.builder()
             .model(model.id)
             .maxTokens(2_000L)
-            // Short spoken lines: low effort keeps it quick.
-            .outputConfig(BetaOutputConfig.builder().effort(BetaOutputConfig.Effort.LOW).build())
+            .outputConfig(BetaOutputConfig.builder().effort(effort).build())
             .systemOfBetaTextBlockParams(
                 listOf(
                     BetaTextBlockParam.builder()
-                        .text(SYSTEM_PROMPT)
+                        .text(system)
                         .cacheControl(BetaCacheControlEphemeral.builder().build())
                         .build()
                 )
             )
-            .addUserMessage(context(reason, s).toString())
+            .addUserMessage(user)
         // Server-side refusal fallback (Opus/Sonnet only; Haiku has none).
         if (model != CoachModel.Haiku) builder.addBeta("server-side-fallback-2026-07-01").fallbacksDefault()
         val response = client(ResponseSettings.apiKey.value).beta().messages().create(builder.build())
         val stop = response.stopReason().orElse(null)
         if (stop == BetaStopReason.REFUSAL || stop == BetaStopReason.MAX_TOKENS) return null
-        val text = response.content().mapNotNull { it.text().orElse(null)?.text() }.joinToString(" ").trim().trim('"', '\'')
+        return response.content().mapNotNull { it.text().orElse(null)?.text() }.joinToString(" ").trim().trim('"', '\'').ifBlank { null }
+    }
+
+    private fun generate(reason: String, s: ResponseState): String? {
+        // Short spoken lines: low effort keeps it quick.
+        val text = call(SYSTEM_PROMPT, context(reason, s).toString(), BetaOutputConfig.Effort.LOW) ?: return null
         if (text.isBlank() || text.equals("QUIET", ignoreCase = true) || text.split(Regex("\\s+")).size > 45) return null
         val norm = text.lowercase().replace(Regex("[^a-z0-9]"), "")
         if (recent.any { it.lowercase().replace(Regex("[^a-z0-9]"), "") == norm }) return null
@@ -274,6 +293,16 @@ class SarahCoach(
             .put("moving", s.moving)
             .put("climax_signature_detected", s.candidate?.reason)
             .put("setup", setup())
+            .apply {
+                val hub = com.pulsepointlabs.sarahmonitor.core.MonitorHub
+                val now = System.currentTimeMillis()
+                val events = hub.sessionEvents()
+                val proc = com.pulsepointlabs.sarahmonitor.session.ProcedureLog.state(events, now)
+                if (proc.length() > 0) put("procedure_so_far", proc)
+                // Questions get the whole session's notes; routine lines just the recent ones.
+                if (reason == "question") put("all_notes_this_session", com.pulsepointlabs.sarahmonitor.session.ProcedureLog.timeline(events, s.sessionStartMs, now))
+                events.lastOrNull()?.let { put("minutes_since_he_last_logged_anything", ((now - it.timestampMs) / 6_000L) / 10.0) }
+            }
             .put("recent_things_you_said", JSONArray(recent.toList()))
             .put("events_he_logged", JSONArray().apply {
                 val now = System.currentTimeMillis()
@@ -309,10 +338,22 @@ Rules for every voice:
 - He is a man: one climax, then a refractory period. If climaxes_this_session is 1 or more and refractory is true, he has already come. Never suggest he is building toward, approaching or close to another climax, whatever the numbers do. Afterglow only: affectionate, proud, settling, brief; usually QUIET once that's been said.
 - If moving is true he is up and moving about; a higher heart rate is from that, not arousal. Don't call it building.
 - Mention his devices, plan or the e-stim output only when it's natural and accurate (for example the e-stim level he's on); never invent settings.
-- In a body-exploration session, be calm and informative and don't steer toward climax unless he logs arousal; if pelvic pressure or load are high you may suggest slowing down and letting the pelvic floor soften. No medical diagnoses or safety guarantees.
+- In a body-exploration session (enema, urethral catheter, sounding, anal devices) you are his procedure partner; the mode only sets your tone (a lover voice is warm and affectionate, but don't push him toward climax unless he logs arousal and wants to go there). Use procedure_so_far: how much is in, how long he has been holding or the device has been in place, the depth he last stated, and his latest urge, discomfort, fullness and arousal scores and erection, with how long ago each was given. On a check_in, either say one useful thing about where the procedure stands ("about six minutes holding with 750 in") or, if he hasn't given a score in a while (several minutes since urge or discomfort, or since he last logged anything), ask for one ("how's the urge now, one to ten?"). He answers by saying Sarah and then his answer. Arousal or an erection during a procedure is a normal autonomic response; note it matter-of-factly if he logs it. If pelvic pressure or load are high you may suggest slowing down and letting the pelvic floor soften. No medical diagnoses or safety guarantees.
 - Mention breathing only if the data gives a reason. Don't repeat wording from recent_things_you_said.
 - Written for text-to-speech: no emoji, no markdown, no quotation marks, no lists, no preamble.
 - If nothing new is worth saying, reply with exactly QUIET.
+""".trimIndent()
+
+        /** Answering a question he asks out loud mid-session. */
+        val ANSWER_PROMPT = """
+You are Sarah, speaking live to Ben through his earbuds while Sarah Monitor records his physiology during a private session. Ben is an adult, a paramedic and EMS educator with strong anatomy, physiology and pathophysiology knowledge; talk to him as a knowledgeable peer. This is his own private, consensual session (it may be sexual, or a body-exploration procedure such as an enema or urethral catheter).
+
+He just asked you a question out loud (his_question). You get a JSON snapshot: session type, your voice ("mode"), his live signals, his setup (devices, plan), procedure_so_far (amount instilled, time holding, time the device has been in, depth he stated, his latest scores) and all_notes_this_session (everything he logged, oldest first, with minutes into the session and any numbers).
+
+Answer it directly in at most 60 words, in the tone the mode sets (a lover voice stays warm; the body-state voice stays clinical).
+- Questions about the session (how long, how much, what did I say, what was my heart rate, when did it pop): answer from the snapshot exactly. Give numbers rounded the way a person says them. If the snapshot doesn't hold the answer, say plainly you don't have it.
+- Physiology or procedure questions (is this normal, why does that happen, what is that sensation likely to be): answer from established anatomy and physiology, plainly and briefly, the way a sharp colleague would. Be clear about uncertainty. No diagnoses or safety guarantees; if what he describes sounds like a red flag (severe or worsening pain, bleeding, fever, inability to void or pass the device, a balloon that won't deflate), say so plainly and that stopping or getting help is the sensible move.
+- Written for text-to-speech: no emoji, no markdown, no lists, no quotation marks, no preamble.
 """.trimIndent()
     }
 }

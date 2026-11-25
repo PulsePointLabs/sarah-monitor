@@ -186,12 +186,14 @@ object MonitorHub {
             mark = { at, e, raw, heardBy ->
                 val voice = org.json.JSONObject().put("raw", raw).put("bucket", e.bucket).put("parsed_by", e.parsedBy).put("heard_by", heardBy)
                     .put("intensity", e.intensity ?: org.json.JSONObject.NULL).put("site", e.site ?: org.json.JSONObject.NULL)
+                    .put("measures", e.measures.toJson()).put("question", e.question).put("answer", e.answer ?: org.json.JSONObject.NULL)
                 markEvent(at, e.types, e.note, com.pulsepointlabs.sarahmonitor.session.CheckIn(gearId = e.gearId), extra = "voice" to voice)
                 // Show what she understood and how she filed it.
                 val typeLabel = com.pulsepointlabs.sarahmonitor.session.MarkerTypes.label(e.types)
                 val bucket = e.bucket.replace('_', ' ')
                 val filed = typeLabel + (if (bucket == "general" || typeLabel.contains(bucket, ignoreCase = true)) "" else " · $bucket") +
-                    (e.intensity?.let { " · $it/10" } ?: "")
+                    (e.measures.short().takeIf { it.isNotBlank() }?.let { " · $it" } ?: e.intensity?.let { " · $it/10" } ?: "") +
+                    (e.answer?.let { "\nSarah: $it" } ?: "")
                 val how = when {
                     heardBy == "offline" && e.parsedBy != "claude" -> "\n(offline: no network for the transcript or Claude)"
                     heardBy == "offline" -> "\n(phone's own transcript)"
@@ -210,6 +212,8 @@ object MonitorHub {
             allowedTypes = { com.pulsepointlabs.sarahmonitor.session.MarkerTypes.offered(liveCategory().groups) },
             gear = { _sessionDetails.value.gear },
             hush = { audio.hush() },
+            answer = { q -> coach.answer(q) },
+            tally = { com.pulsepointlabs.sarahmonitor.session.ProcedureLog.state(sessionEvents(), System.currentTimeMillis()).toString() },
             endSession = {
                 if (recorder.active.value != null) {
                     markEvent(System.currentTimeMillis(), setOf("event"), "Ended the session by voice.")
@@ -533,6 +537,11 @@ object MonitorHub {
                 synchronized(recentEvents) {
                     recentEvents.addLast(RecentEvent(timestampMs, types, note, checkIn.label))
                     while (recentEvents.size > 5) recentEvents.removeFirst()
+                    // The whole session, with the numbers in each note, for the procedure tally and her answers.
+                    val m = extra?.second?.optJSONObject("measures")?.let { com.pulsepointlabs.sarahmonitor.session.Measures.fromJson(it) }?.takeIf { !it.empty }
+                        ?: com.pulsepointlabs.sarahmonitor.session.ProcedureLog.parseLocal(note)
+                    loggedEvents.addLast(com.pulsepointlabs.sarahmonitor.session.LoggedEvent(timestampMs, types, note, m))
+                    while (loggedEvents.size > 300) loggedEvents.removeFirst()
                 }
             }
             onDone(marker != null)
@@ -566,6 +575,9 @@ object MonitorHub {
     data class RecentEvent(val timestampMs: Long, val types: Set<String>, val note: String, val checkIn: String?)
     private val recentEvents = ArrayDeque<RecentEvent>()
     fun recentEvents(): List<RecentEvent> = synchronized(recentEvents) { recentEvents.toList() }
+    private val loggedEvents = ArrayDeque<com.pulsepointlabs.sarahmonitor.session.LoggedEvent>()
+    /** Every event this session (guarded by the recentEvents lock). */
+    fun sessionEvents(): List<com.pulsepointlabs.sarahmonitor.session.LoggedEvent> = synchronized(recentEvents) { loggedEvents.toList() }
 
     /** Sleep mode: overnight epochs from the H10 (no full recording needed). */
     fun startSleep() {
@@ -614,7 +626,7 @@ object MonitorHub {
         audio.resetSession()
         arousal.reset()
         stressTracker.reset()
-        synchronized(recentEvents) { recentEvents.clear() }
+        synchronized(recentEvents) { recentEvents.clear(); loggedEvents.clear() }
         if (::stressVoice.isInitialized) stressVoice.reset()
         _stress.value = StressReading()
         _response.value = ResponseState()

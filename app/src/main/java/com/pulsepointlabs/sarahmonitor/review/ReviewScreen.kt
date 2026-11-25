@@ -674,6 +674,24 @@ private fun EventSpark(d: SessionData, t: Long, spanMs: Long, color: Color, modi
 
 private fun isVoice(m: MarkerEntity) = m.snapshot?.contains("\"voice\"") == true
 
+/** Chips for the numbers he gave in a note (from Sarah's read, or the plain read of a typed note) and her answer to a question. */
+private fun procedureChips(m: MarkerEntity): Pair<List<EventMetric>, String?> {
+    val voice = runCatching { org.json.JSONObject(m.snapshot ?: "").optJSONObject("voice") }.getOrNull()
+    val ms = com.pulsepointlabs.sarahmonitor.session.Measures.fromJson(voice?.optJSONObject("measures")).takeIf { !it.empty }
+        ?: com.pulsepointlabs.sarahmonitor.session.ProcedureLog.parseLocal(m.note)
+    val out = mutableListOf<EventMetric>()
+    fun chip(label: String, value: String, color: Color) { out += EventMetric(label, value, color, 0.0, 1.0, true) }
+    ms.totalMl?.let { chip("In", "$it mL", MonitorColors.pelvic) }
+    ms.addedMl?.let { chip("Added", "+$it mL", MonitorColors.pelvic) }
+    ms.depthCm?.let { chip("Depth", "${com.pulsepointlabs.sarahmonitor.session.Measures.fmt(it)} cm", MonitorColors.label) }
+    ms.urge?.let { chip("Urge", "$it/10", com.pulsepointlabs.sarahmonitor.ui.StressColor) }
+    ms.discomfort?.let { chip("Discomfort", "$it/10", MonitorColors.alarm) }
+    ms.fullness?.let { chip("Fullness", "$it/10", MonitorColors.pelvic) }
+    ms.arousal?.let { chip("Arousal", "$it/10", MonitorColors.hr) }
+    ms.erection?.let { chip("Erection", it, MonitorColors.hr) }
+    return out to voice?.optString("answer")?.takeIf { it.isNotBlank() && it != "null" }
+}
+
 /** Events, split by how they were made: marked by you, or heard by Sarah ("Sarah, …"). */
 @Composable
 private fun EventsCard(
@@ -721,6 +739,10 @@ private fun EventsCard(
                     Text("${clockLabel(m.timestampMs, seconds = true)} · +${SessionAnalysis.elapsed(m.timestampMs - d.session.startTimeMs)}", color = MonitorColors.label, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                 }
                 if (m.note.isNotBlank()) Text(m.note, color = MonitorColors.text, fontSize = 13.sp, lineHeight = 18.sp)
+                // The numbers in what he said (mL, depth, scores, erection) and, for a question, Sarah's answer.
+                val said = remember(m) { procedureChips(m) }
+                if (said.first.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) { said.first.forEach { MetricChip(it) } }
+                said.second?.let { Text("Sarah: $it", color = MonitorColors.rmssd, fontSize = 13.sp, lineHeight = 18.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic) }
                 com.pulsepointlabs.sarahmonitor.session.CheckIn.of(m).label?.let { Text("Check-in: $it", color = com.pulsepointlabs.sarahmonitor.ui.StressColor, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                 if (metrics.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) { metrics.forEach { MetricChip(it) } }
                 if (!expanded) EventSpark(d, m.timestampMs, 120_000L, color, Modifier.fillMaxWidth().height(36.dp))

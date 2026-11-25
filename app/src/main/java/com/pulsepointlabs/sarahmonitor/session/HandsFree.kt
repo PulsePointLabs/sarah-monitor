@@ -46,7 +46,13 @@ data class SpokenEvent(
     val intensity: Int? = null,
     val site: String? = null,
     val confirm: String,
-    val parsedBy: String
+    val parsedBy: String,
+    /** Numbers he gave: mL in, depth, scores, erection. */
+    val measures: Measures = Measures(),
+    /** He asked Sarah something (she answers out loud; the question is kept as an event). */
+    val question: Boolean = false,
+    /** What she answered. */
+    val answer: String? = null
 )
 
 /** Pure parsing for hands-free commands (unit-tested). */
@@ -132,7 +138,9 @@ object VoiceCommand {
         val note = verbatim(command)
         val level = intensity(command)
         val what = MarkerTypes.label(types).lowercase()
-        return SpokenEvent(types, device?.id, note, bucket, level, null, "Logged: $what" + (level?.let { ", $it out of 10" } ?: "") + ".", "keywords")
+        val m = ProcedureLog.parseLocal(command)
+        return SpokenEvent(types, device?.id, note, bucket, level, null, "Logged: $what" + (m.short().takeIf { it.isNotBlank() }?.let { ", ${it.replace("/10", " out of 10")}" } ?: level?.let { ", $it out of 10" } ?: "") + ".", "keywords",
+            m, ProcedureLog.isQuestion(command))
     }
 
     // "End the session", "you can conclude the session", "stop recording", "wrap up the session now please", "we're
@@ -172,7 +180,9 @@ Allowed event types (id: label): ${allowed.joinToString("; ") { "${it.id}: ${it.
 Devices in use (id: label): ${gear.joinToString("; ") { "${it.id}: ${it.label}" }.ifBlank { "none" }}.
 The CIVET rectal pressure probe/sensor is the measuring instrument, not one of these devices: if he is talking about the probe, the sensor or a balloon without naming the catheter, set "device" to null. Use "sensor_issue" (if allowed) when the sensor slipped, came out, moved, deflated or was re-seated or re-inflated.
 Buckets: ${BUCKETS.joinToString(", ")}.
-Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or null,"bucket":one bucket,"intensity":0-10 or null (only if he gave a number or a clear severity),"site":anatomical site or null,"confirm":a spoken confirmation of at most 10 words, no names}.
+Procedure notes (enema, catheter, sounding, anal devices) often carry numbers: amount instilled, estimated depth of the tip or device, and 0-10 scores for urge to defecate or void, discomfort (pinch, pop, cramp, burning), arousal and fullness, plus erection state. Pull each number he actually said into "measures"; never guess one. Volume: "total_ml" when he states how much is in altogether, "added_ml" when he states an amount added on top of what was already in (use the running tally he gives you, if any, to tell which). Convert litres to mL and inches to cm.
+He may also be asking Sarah a question ("how long have I been holding?", "is that normal?", "what was my heart rate when it popped?"): set "question" true only when he wants an answer from her.
+Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or null,"bucket":one bucket,"intensity":0-10 or null (only if he gave a number or a clear severity),"site":anatomical site or null,"measures":{"total_ml":n,"added_ml":n,"depth_cm":n,"urge_0_10":n,"discomfort_0_10":n,"arousal_0_10":n,"fullness_0_10":n,"erection":"none|building|partial|full|softening" } with only the keys he gave (or {}),"question":true or false,"confirm":a spoken confirmation of at most 12 words that repeats any numbers he gave so he can catch a mishearing, no names}.
 """.trimIndent()
 
     fun parseClaude(json: String, command: String, allowed: Set<String>, gear: List<GearItem>): SpokenEvent? = runCatching {
@@ -186,7 +196,9 @@ Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or nu
             o.optInt("intensity", -1).takeIf { !o.isNull("intensity") && it in 0..10 },
             o.optString("site").takeIf { it.isNotBlank() && it != "null" },
             o.optString("confirm").trim().ifBlank { "Logged." }.replace(Regex("(?i)\\bsarah\\b"), "").trim(),
-            "claude"
+            "claude",
+            Measures.fromJson(o.optJSONObject("measures")).orElse(ProcedureLog.parseLocal(command)),
+            o.optBoolean("question", false)
         )
     }.getOrNull()
 }
@@ -213,7 +225,11 @@ class HandsFree(
     /** She heard "Sarah": stop talking (media is paused here). */
     private val hush: () -> Unit = {},
     /** "Sarah, end the session." */
-    private val endSession: () -> Unit = {}
+    private val endSession: () -> Unit = {},
+    /** Her spoken answer to a question he asked, from the whole session so far (null = couldn't answer). */
+    private val answer: suspend (String) -> String? = { null },
+    /** The running procedure tally (JSON), so "another 250" can be told from "750 in". */
+    private val tally: () -> String = { "{}" }
 ) {
     private val _status = MutableStateFlow(HandsFreeStatus())
     val status: StateFlow<HandsFreeStatus> = _status
@@ -344,12 +360,23 @@ class HandsFree(
         val allowed = allowedTypes()
         val ids = allowed.map { it.id }.toSet()
         val g = gear()
-        val event = ClaudeText.ask(VoiceCommand.claudePrompt(allowed, g), command, maxTokens = 400)?.let { VoiceCommand.parseClaude(it, command, ids, g) }
+        val sorted = ClaudeText.ask(VoiceCommand.claudePrompt(allowed, g), "Running tally so far: ${tally()}\nHis note: $command", maxTokens = 500)
+            ?.let { VoiceCommand.parseClaude(it, command, ids, g) }
             ?: VoiceCommand.parseLocal(command, ids, g)
-        mark(at, event, raw, heardBy)
+        if (sorted.question) {
+            // A question: answer it out loud (media stays paused until she's done), and keep it with her answer.
+            cue(false)
+            _status.value = _status.value.copy(message = "Thinking about your question…")
+            val reply = answer(command)
+            mark(at, sorted.copy(types = (sorted.types - "event") + "question", answer = reply), raw, heardBy)
+            speak(reply ?: "Sorry, I couldn't work that out just now.")
+            _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = sorted.note)
+            return
+        }
+        mark(at, sorted, raw, heardBy)
         cue(false)
-        if (HandsFreeSettings.sayBack.value) speak(event.confirm)
-        _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = event.note)
+        if (HandsFreeSettings.sayBack.value) speak(sorted.confirm)
+        _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = sorted.note)
     }
 
     private companion object { const val HOLD = "hands-free" }

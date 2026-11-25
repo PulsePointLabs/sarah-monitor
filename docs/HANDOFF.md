@@ -117,6 +117,20 @@ bedside-monitor dashboards, floating overlays and a review screen.
   session's devices, plan/notes, pre-session check-in and the Howl output, plus refractory/moving flags; after a climax
   she's brief and affectionate, then mostly quiet.
 
+## 0.28.0 (procedures: numbers, running tally, questions)
+
+- Spoken notes now carry numbers (`session/ProcedureLog.kt`, `Measures`): mL instilled (total vs added, using the
+  running tally), depth in cm (inches converted), 0–10 urge / discomfort / arousal / fullness, erection state. Claude
+  reads them; a keyword read fills gaps and works offline. Stored in the event's `voice.measures`; typed notes are read
+  the plain way. Sarah's confirmation repeats the numbers so a mishearing gets caught.
+- "Sarah, how long have I been holding?" (any question): she answers out loud from the whole session (all notes with
+  times, procedure tally, live signals) in her current voice, even with live feedback off; media stays paused until
+  she's done. Kept as an "Asked Sarah" event with her answer.
+- Coach in body exploration: procedure partner. Knows amount in, time holding / device in place, last depth, latest
+  scores and how long ago; check-ins say where things stand or ask for a score when he hasn't given one in a while.
+- Review: number chips (In / Added / Depth / Urge / Discomfort / Fullness / Arousal / Erection) and Sarah's answers
+  under each event. Not yet seen rendered.
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

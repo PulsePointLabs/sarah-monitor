@@ -263,7 +263,7 @@ enum class SessionCategory(val label: String, val groups: List<MarkerTypes.Group
 /** Event types: SarahVS's general set plus sexual-response types, shown in two groups. */
 object MarkerTypes {
     /** [Sensor] types are offered in every session type (on every tab), whatever the category's groups. */
-    enum class Group(val title: String) { General("General"), Sexual("Sexual"), Procedure("Procedure steps"), Sensor("Sensor") }
+    enum class Group(val title: String) { General("General"), Sexual("Sexual"), Procedure("Procedure steps"), Sensor("Sensor"), Voice("Asked Sarah") }
 
     data class Type(val id: String, val label: String, val group: Group)
 
@@ -304,7 +304,9 @@ object MarkerTypes {
         Type("sensation", "Sensation", Group.Sexual),
         Type("finding", "Body finding", Group.Sexual),
         // The measuring sensor itself (CIVET slipped, re-seated, re-inflated): stops pressure analysis until recalibrated.
-        Type("sensor_issue", "Sensor problem", Group.Sensor)
+        Type("sensor_issue", "Sensor problem", Group.Sensor),
+        // A question he asked Sarah out loud (her answer is kept with it). Added by hands-free, never offered as a chip.
+        Type("question", "Asked Sarah", Group.Voice)
     )
 
     fun inGroup(group: Group): List<Type> = all.filter { it.group == group }
