@@ -82,6 +82,13 @@ data class PmdControlResponse(
 object PolarPmdControl {
     private const val GET_MEASUREMENT_SETTINGS = 0x01
     private const val REQUEST_MEASUREMENT_START = 0x02
+    private const val REQUEST_MEASUREMENT_STOP = 0x03
+
+    /** PMD status: the measurement is already running (left on by an earlier link). */
+    const val STATUS_ALREADY_IN_STATE = 6
+
+    fun stopMeasurement(measurement: PmdMeasurement): ByteArray =
+        byteArrayOf(REQUEST_MEASUREMENT_STOP.toByte(), measurement.id.toByte())
 
     fun querySettings(measurement: PmdMeasurement): ByteArray =
         byteArrayOf(GET_MEASUREMENT_SETTINGS.toByte(), measurement.id.toByte())

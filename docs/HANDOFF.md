@@ -210,6 +210,16 @@ bedside-monitor dashboards, floating overlays and a review screen.
   camera shutter.
 - Untested: Sarah's photo reading (no API key on the emulator).
 
+## 0.31.1 (Load: motion stream stalls)
+
+- Load showed "H10 motion stream hasn't started" while ECG ran. The PMD chain (ECG start → ACC settings query → ACC
+  start) writes the next command from inside the strap's reply; when the previous write's callback hadn't landed yet,
+  `writeCharacteristic` returned false and nothing retried, so motion sat in Configuring all session. Now `writePmd`
+  retries refused writes (12 × 250 ms); `motionWatchdog` (on every ECG frame) restarts motion setup and resets its
+  parser clock if no motion sample was accepted for 12 s while ECG streams (max 6 per link, logged as a breadcrumb);
+  an "already in state" (6) reply to ACC start stops then re-starts motion.
+- Unverified on the strap (no H10 on the emulator).
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

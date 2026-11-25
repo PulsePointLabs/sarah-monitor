@@ -96,6 +96,11 @@ class BluetoothHrClient(private val context: Context) {
     private var pmdControlCharacteristic: BluetoothGattCharacteristic? = null
     private var pendingPmdCommand: Int? = null
     private var selectedAccelerometerRateHz = 25
+    // Motion watchdog: when ECG started streaming on this link, when the last motion sample was accepted, and how many
+    // times motion setup has been restarted on this link.
+    @Volatile private var ecgStreamingSinceMs = 0L
+    @Volatile private var lastAccSampleMs = 0L
+    @Volatile private var accRestarts = 0
     private var setupStage = SetupStage.Idle
     private val pmdClock = PmdHostClock()
     private val ecgParserState = PmdParserState(sampleRateHz = 130, clock = pmdClock)
@@ -288,6 +293,7 @@ class BluetoothHrClient(private val context: Context) {
         markSensorInputUnavailable("Waiting for strap input")
         pmdControlCharacteristic = null
         pendingPmdCommand = null
+        ecgStreamingSinceMs = 0L; lastAccSampleMs = 0L; accRestarts = 0
         setupStage = SetupStage.Idle
         // Only one GATT client at a time: closing the old one also cancels any pending background connect.
         runCatching { gatt?.close() }
@@ -331,6 +337,7 @@ class BluetoothHrClient(private val context: Context) {
         subscribed = false
         pmdControlCharacteristic = null
         pendingPmdCommand = null
+        ecgStreamingSinceMs = 0L; lastAccSampleMs = 0L; accRestarts = 0
         setupStage = SetupStage.Idle
         markSensorInputUnavailable("Disconnected")
         _state.value = ConnectionState.Disconnected
@@ -403,6 +410,7 @@ class BluetoothHrClient(private val context: Context) {
         subscribed = false
         pmdControlCharacteristic = null
         pendingPmdCommand = null
+        ecgStreamingSinceMs = 0L; lastAccSampleMs = 0L; accRestarts = 0
         setupStage = SetupStage.Idle
     }
 
@@ -687,11 +695,7 @@ class BluetoothHrClient(private val context: Context) {
     private fun startEcgStream(gatt: BluetoothGatt) {
         val control = pmdControlCharacteristic ?: return
         setupStage = SetupStage.Idle
-        runCatching {
-            pendingPmdCommand = 0x02
-            control.value = START_ECG_STREAM
-            gatt.writeCharacteristic(control)
-        }.onFailure {
+        runCatching { writePmd(gatt, control, START_ECG_STREAM, 0x02) }.onFailure {
             _pmdStreamStatus.value = _pmdStreamStatus.value.copy(
                 ecg = PmdStreamState.Failed,
                 ecgMessage = it.message
@@ -699,13 +703,43 @@ class BluetoothHrClient(private val context: Context) {
         }
     }
 
+    /**
+     * Writes a PMD control command. Android refuses a write while another GATT operation is still in flight (the
+     * strap's reply can arrive before the previous write's callback), and that refusal used to be ignored: motion setup
+     * then stalled in "configuring" for the whole session while ECG ran fine (Load: "motion stream hasn't started").
+     * Now a refused write is retried a few times, 250 ms apart.
+     */
+    @SuppressLint("MissingPermission")
+    private fun writePmd(target: BluetoothGatt, control: BluetoothGattCharacteristic, bytes: ByteArray, command: Int, attempt: Int = 0) {
+        pendingPmdCommand = command
+        control.value = bytes
+        val ok = runCatching { target.writeCharacteristic(control) }.getOrDefault(false)
+        if (!ok && attempt < 12) handler.postDelayed({ if (gatt === target) writePmd(target, control, bytes, command, attempt + 1) }, 250L)
+    }
+
+    /**
+     * Called on every ECG frame: if ECG is flowing but no motion sample has been accepted for 12 s, set motion up again
+     * (and reset its clock, in case frames are being rejected as "older" after the strap restarted). At most 6 times
+     * per link, 12 s apart.
+     */
+    private fun motionWatchdog(now: Long) {
+        if (!accelerometerEnabled) return
+        if (ecgStreamingSinceMs == 0L) { ecgStreamingSinceMs = now; return }
+        val since = maxOf(ecgStreamingSinceMs, lastAccSampleMs)
+        if (now - since < MOTION_WATCHDOG_MS || accRestarts >= 6 || setupStage != SetupStage.Idle) return
+        val control = pmdControlCharacteristic ?: return
+        val activeGatt = gatt ?: return
+        accRestarts += 1
+        lastAccSampleMs = now   // wait another 12 s before trying again
+        accelerometerParserState.resetClock()
+        DiagnosticsStore.breadcrumb(context, "ble", "No motion data for ${(now - since) / 1000} s while ECG streams; restarting motion (try $accRestarts)")
+        _pmdStreamStatus.value = _pmdStreamStatus.value.copy(accelerometer = PmdStreamState.Configuring, accelerometerMessage = "Restarting motion stream")
+        handler.post { if (gatt === activeGatt) queryAccelerometerSettings(activeGatt, control) }
+    }
+
     @SuppressLint("MissingPermission")
     private fun queryAccelerometerSettings(gatt: BluetoothGatt, control: BluetoothGattCharacteristic) {
-        runCatching {
-            pendingPmdCommand = 0x01
-            control.value = PolarPmdControl.querySettings(PmdMeasurement.Accelerometer)
-            gatt.writeCharacteristic(control)
-        }.onFailure {
+        runCatching { writePmd(gatt, control, PolarPmdControl.querySettings(PmdMeasurement.Accelerometer), 0x01) }.onFailure {
             _pmdStreamStatus.value = _pmdStreamStatus.value.copy(
                 accelerometer = PmdStreamState.Failed,
                 accelerometerMessage = it.message
@@ -864,6 +898,7 @@ class BluetoothHrClient(private val context: Context) {
         }
         setupFailures = 0
         _pmdStreamStatus.value = _pmdStreamStatus.value.copy(ecg = PmdStreamState.Streaming, ecgMessage = null)
+        motionWatchdog(System.currentTimeMillis())
         emitOrCountDrop(STREAM_ECG, _ecgBatches.tryEmit(parsed))
         ecgBuffer.addAll(parsed)
         while (ecgBuffer.size > 900) ecgBuffer.removeFirst()
@@ -914,6 +949,7 @@ class BluetoothHrClient(private val context: Context) {
             if (result.isSuccess) countDuplicate(duplicateAcc)
             return
         }
+        lastAccSampleMs = System.currentTimeMillis()
         _pmdStreamStatus.value = _pmdStreamStatus.value.copy(accelerometer = PmdStreamState.Streaming, accelerometerMessage = null)
         emitOrCountDrop(STREAM_ACC, _accelerometerBatches.tryEmit(parsed))
         accelBuffer.addAll(parsed)
@@ -972,6 +1008,14 @@ class BluetoothHrClient(private val context: Context) {
         val response = runCatching { PmdControlResponse.parse(value) }.getOrNull() ?: return
         if (!response.success) {
             if (!accelerometerEnabled && response.measurement == PmdMeasurement.Accelerometer.id) return
+            // Motion was left running by an earlier link: stop it, then set it up again (we need its settings).
+            if (response.measurement == PmdMeasurement.Accelerometer.id && response.command == 0x02 && response.status == PolarPmdControl.STATUS_ALREADY_IN_STATE) {
+                val control = pmdControlCharacteristic ?: return
+                val activeGatt = gatt ?: return
+                DiagnosticsStore.breadcrumb(context, "ble", "Motion stream already running on the strap; restarting it")
+                writePmd(activeGatt, control, PolarPmdControl.stopMeasurement(PmdMeasurement.Accelerometer), 0x03)
+                return
+            }
             if (response.measurement == PmdMeasurement.Ecg.id) {
                 _pmdStreamStatus.value = _pmdStreamStatus.value.copy(
                     ecg = PmdStreamState.Failed,
@@ -1012,15 +1056,16 @@ class BluetoothHrClient(private val context: Context) {
             accelerometerParserState.accelerometerFactor = settings.available[PmdSettingType.Factor]?.firstOrNull()?.let(Float::fromBits)
             val control = pmdControlCharacteristic ?: return
             val activeGatt = gatt ?: return
-            runCatching {
-                pendingPmdCommand = 0x02
-                control.value = PolarPmdControl.startMeasurement(PmdMeasurement.Accelerometer, selected)
-                activeGatt.writeCharacteristic(control)
-            }.onFailure {
+            runCatching { writePmd(activeGatt, control, PolarPmdControl.startMeasurement(PmdMeasurement.Accelerometer, selected), 0x02) }.onFailure {
                 _pmdStreamStatus.value = _pmdStreamStatus.value.copy(accelerometer = PmdStreamState.Failed, accelerometerMessage = it.message)
             }
         } else if (response.command == 0x02 && response.measurement == PmdMeasurement.Accelerometer.id) {
             _pmdStreamStatus.value = _pmdStreamStatus.value.copy(accelerometer = PmdStreamState.Streaming, accelerometerMessage = null)
+        } else if (response.command == 0x03 && response.measurement == PmdMeasurement.Accelerometer.id) {
+            // Stopped (after "already running"): set it up fresh.
+            val control = pmdControlCharacteristic ?: return
+            val activeGatt = gatt ?: return
+            queryAccelerometerSettings(activeGatt, control)
         }
     }
 
@@ -1055,6 +1100,7 @@ class BluetoothHrClient(private val context: Context) {
         private const val DIRECT_ATTEMPT_WAKE_MS = 40_000L
         private const val MAX_WAKE_LOCK_MS = 2 * 60_000L
         private const val BATTERY_REFRESH_MS = 10 * 60_000L
+        private const val MOTION_WATCHDOG_MS = 12_000L
         private const val BATTERY_BUSY_RETRY_MS = 5_000L
         private const val BATTERY_FAILED_RETRY_MS = 30_000L
         private const val STREAM_BUFFER_BATCHES = 256
