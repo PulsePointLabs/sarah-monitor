@@ -31,6 +31,8 @@ object MediaHold {
         val am = manager ?: return
         val first = holders.isEmpty()
         if (!holders.add(who) || !first) return
+        // Pausing music is fine; taking focus from a call or a voice chat is not.
+        if (OtherAudio.busy.value != null) return
         if (Build.VERSION.SDK_INT >= 26) {
             val r = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
                 .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())

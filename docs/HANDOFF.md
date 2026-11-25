@@ -161,6 +161,18 @@ bedside-monitor dashboards, floating overlays and a review screen.
 - Not done: v1's conversation database (not on this PC; v1 server data lives elsewhere), v1 language profile /
   correction memory, custom-instructions field.
 
+## 0.29.1 (never interrupt a conversation)
+
+- `audio/OtherAudio`: polls every 1 s for a phone call (audio mode), a voice chat (MODE_IN_COMMUNICATION or someone
+  else's voice-communication playback) or another app recording through the mic (any capture session that isn't
+  ours; our own AudioRecords register their session ids; hotword source 1999 ignored). While busy: Sarah doesn't speak
+  (lines wait 20 s then drop), no beeps/tones/cues, alerts only vibrate, coach doesn't think, MediaHold/MicRoute
+  take no focus, and hands-free listening stops ("Paused: voice chat going on") and restarts after.
+- Bug found: always-on wake listening (LocalEars) went through MicRoute.open, which took permanent AUDIOFOCUS_GAIN
+  for the whole session. Now `holdMedia = false`; media pauses only on "Sarah" (MediaHold).
+- Unverified on the phone: whether Claude/ChatGPT voice mode shows up as IN_COMMUNICATION / a recording config on
+  One UI (it should), and whether a camera video recording should also silence her (it does now).
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

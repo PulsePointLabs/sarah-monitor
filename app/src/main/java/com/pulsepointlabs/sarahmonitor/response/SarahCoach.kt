@@ -152,6 +152,7 @@ class SarahCoach(
         if (generalSession()) { _status.value = "Quiet in this session type"; lastPhase = null; return }
         // He's talking to her (or dictating an event): wait, don't think up a line that'd be stale by then.
         if (com.pulsepointlabs.sarahmonitor.audio.MediaHold.held) { _status.value = "Listening to you"; return }
+        com.pulsepointlabs.sarahmonitor.audio.OtherAudio.busy.value?.let { _status.value = "Quiet: $it going on"; return }
         val s = state()
         val now = System.currentTimeMillis()
         val phaseChanged = lastPhase != null && s.phase != lastPhase

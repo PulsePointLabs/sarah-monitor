@@ -180,7 +180,9 @@ class LocalEars(
     private suspend fun loop(model: org.vosk.Model) {
         // The phone's own mic unless asked otherwise: a headset mic would put the headset in call-quality mode
         // for the whole session (music and Sarah's voice would sound like a phone call).
-        val route = MicRoute.open(context, useHeadset = HandsFreeSettings.headsetMic.value)
+        // Always-on listening must not take audio focus: that stopped other apps for the whole session (and cut off
+        // voice chats). Media is paused only once she hears her name (MediaHold).
+        val route = MicRoute.open(context, useHeadset = HandsFreeSettings.headsetMic.value, holdMedia = false)
         val source = if (route.headset) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION
         val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val rec = AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, CHUNK * 2 * 4))
@@ -204,6 +206,8 @@ class LocalEars(
             capturing = maxOf(0L, from - LEAD_IN); captureText = StringBuilder(text); partialNow = ""
             onWake()
         }
+        val ownId = rec.audioSessionId
+        com.pulsepointlabs.sarahmonitor.audio.OtherAudio.ownRecording(ownId, true)
         rec.startRecording()
         try {
             while (scope.isActive && running) {
@@ -259,6 +263,7 @@ class LocalEars(
             }
         } finally {
             runCatching { rec.stop() }; rec.release()
+            com.pulsepointlabs.sarahmonitor.audio.OtherAudio.ownRecording(ownId, false)
             recognizer.close()
             MicRoute.close(context, route)
         }

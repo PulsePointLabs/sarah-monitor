@@ -279,6 +279,7 @@ class RealtimeTranscriber(private val context: android.content.Context) {
             return
         }
         record = r
+        com.pulsepointlabs.sarahmonitor.audio.OtherAudio.ownRecording(r.audioSessionId, true)
         r.startRecording()
         micStartedAtMs = System.currentTimeMillis()
         recordJob = scope.launch {
@@ -381,7 +382,7 @@ class RealtimeTranscriber(private val context: android.content.Context) {
 
     private fun releaseMic() {
         MicRoute.close(context, route)
-        record?.let { runCatching { it.stop() }; runCatching { it.release() } }
+        record?.let { com.pulsepointlabs.sarahmonitor.audio.OtherAudio.ownRecording(it.audioSessionId, false); runCatching { it.stop() }; runCatching { it.release() } }
         record = null
     }
 

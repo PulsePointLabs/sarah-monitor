@@ -105,6 +105,7 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
                 if (id != null) toneIds[t] = id
             }
         }
+        OtherAudio.start(app, scope)
         scope.launch { for (alert in queue) deliver(alert) }
         // Catch HR data stopping altogether.
         scope.launch {
@@ -154,6 +155,8 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
     private suspend fun deliver(alert: LiveAlert) {
         // Stale by the time its turn came (a backlog): only high-severity ones still get said.
         if (System.currentTimeMillis() - alert.atMs > 30_000L && alert.severity != FlagSeverity.High) return
+        // A call or voice chat going on: a buzz only (if set), never a sound over it.
+        if (OtherAudio.busy.value != null) { if (alert.kind in AudioSettings.vibrate.value) vibrate(alert.severity); return }
         val mode = AudioSettings.mode(alert.kind)
         _lastAlert.value = alert
         if (alert.kind in AudioSettings.vibrate.value) vibrate(alert.severity)
@@ -180,6 +183,10 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
             while (MediaHold.held && System.currentTimeMillis() - asked < 20_000L) delay(150)
             if (MediaHold.held) return
         }
+        // Never talk over a phone call or a voice chat (Claude / ChatGPT voice, live dictation): she'd take audio
+        // focus and cut it off. A line that can't be said within 20 s is dropped.
+        while (OtherAudio.now(app) != null && System.currentTimeMillis() - asked < 20_000L) delay(500)
+        if (OtherAudio.busy.value != null) return
         speechLock.withLock {
             if (!urgent && hushedAt >= asked) return
             _speaking.value = true
@@ -225,6 +232,7 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
         if (latestHr == null || System.currentTimeMillis() - lastHeartAt > 5_000L) return false
         if (AudioSettings.beepOnlyRecording.value && !isRecording()) return false
         if (AudioSettings.muteOnContactLoss.value && contact == false) return false
+        if (OtherAudio.busy.value != null) return false // quiet during calls and voice chats
         return true
     }
 
@@ -271,12 +279,14 @@ class AudioEngine(context: Context, private val isRecording: () -> Boolean) {
 
     /** Voice notes: rising cue when listening starts, falling when it stops. */
     fun listenCue(start: Boolean) = handler.post {
+        if (OtherAudio.busy.value != null) return@post
         val id = cueIds[start]?.takeIf(::isLoaded) ?: return@post
         val v = AudioSettings.alertVolume.value
         pool.play(id, v, v, 3, 0, 1f)
     }
 
     private fun playTone(tone: AlertTone, volume: Float) {
+        if (OtherAudio.busy.value != null) return
         val id = toneIds[tone]?.takeIf(::isLoaded) ?: return
         pool.play(id, volume, volume, 2, 0, 1f)
     }

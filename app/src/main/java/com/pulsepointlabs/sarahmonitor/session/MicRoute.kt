@@ -27,6 +27,7 @@ object MicRoute {
 
     @Synchronized
     private fun hold(context: Context, route: Route) {
+        if (com.pulsepointlabs.sarahmonitor.audio.OtherAudio.now(context) != null) return // never grab focus from a call or voice chat
         if (!openRoutes.add(route) || openRoutes.size > 1 || Build.VERSION.SDK_INT < 26) return
         val am = context.getSystemService(AudioManager::class.java) ?: return
         hush = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -42,8 +43,9 @@ object MicRoute {
         hush = null
     }
 
-    fun open(context: Context, useHeadset: Boolean = VoiceSettings.preferHeadsetMic(context)): Route =
-        pick(context, useHeadset).also { hold(context, it) }
+    /** [holdMedia]: pause other apps' media while this mic is open (dictation yes; always-on wake listening no). */
+    fun open(context: Context, useHeadset: Boolean = VoiceSettings.preferHeadsetMic(context), holdMedia: Boolean = true): Route =
+        pick(context, useHeadset).also { if (holdMedia) hold(context, it) }
 
     private fun pick(context: Context, useHeadset: Boolean): Route {
         val am = context.getSystemService(AudioManager::class.java) ?: return Route(null, "Phone mic", false)

@@ -227,7 +227,8 @@ object MonitorHub {
             }
         )
         scope.launch {
-            kotlinx.coroutines.flow.combine(com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.enabled, recorder.active) { _, a -> a != null }
+            // Also re-checked when a call or voice chat starts or ends: her mic steps aside for it.
+            kotlinx.coroutines.flow.combine(com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.enabled, recorder.active, com.pulsepointlabs.sarahmonitor.audio.OtherAudio.busy) { _, a, _ -> a != null }
                 .collect { handsFree.sync(it) }
         }
         ObsSettings.load(app)

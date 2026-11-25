@@ -281,6 +281,8 @@ class HandsFree(
         wanted = HandsFreeSettings.enabled.value && recording
         val mic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         when {
+            com.pulsepointlabs.sarahmonitor.audio.OtherAudio.busy.value?.let { wanted && !paused } == true ->
+                stop("Paused: ${com.pulsepointlabs.sarahmonitor.audio.OtherAudio.busy.value} going on")
             !wanted || paused -> stop(if (!HandsFreeSettings.enabled.value) "Off" else if (paused) "Paused while you dictate" else "On · listens when you record")
             !mic -> stop("Needs microphone permission")
             ears.active || preparing?.isActive == true -> Unit
