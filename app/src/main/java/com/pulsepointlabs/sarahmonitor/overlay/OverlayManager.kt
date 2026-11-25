@@ -134,6 +134,11 @@ object OverlaySettings {
     val appInFront: StateFlow<Boolean> = _appInFront
     fun setAppInFront(inFront: Boolean) { _appInFront.value = inFront }
 
+    /** While the app has handed over to the camera or photo picker, overlays step aside (they covered the shutter). */
+    private val _lent = MutableStateFlow(false)
+    val lent: StateFlow<Boolean> = _lent
+    fun setLent(on: Boolean) { _lent.value = on }
+
     /** While the Settings page is open, overlays stay visible even with the app in front, as a live preview. */
     private val _previewing = MutableStateFlow(false)
     val previewing: StateFlow<Boolean> = _previewing
@@ -302,7 +307,8 @@ class OverlayManager(private val base: Context) {
         val display = OverlayDisplay.targetDisplayId(base)
         OverlaySettings.setProfile(OverlayProfile.forDisplay(display))
         val requested = OverlaySettings.showing.value
-        val enabled = (if (OverlaySettings.appInFront.value && !OverlaySettings.previewing.value) emptySet() else requested).toList()
+        val hidden = (OverlaySettings.appInFront.value && !OverlaySettings.previewing.value) || OverlaySettings.lent.value
+        val enabled = (if (hidden) emptySet() else requested).toList()
         val canDraw = OverlaySettings.canDraw(base)
         // Hide removed ones and ones that are on the wrong display.
         shown.keys.toList().forEach { kind ->

@@ -9,6 +9,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MonitorHeart
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.SelfImprovement
@@ -369,7 +370,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-internal enum class Screen(val label: String) { Monitor("Monitor"), Response("Response"), Kegel("Kegels"), Health("Health"), Sessions("Sessions"), Sensors("Sensors"), Settings("Settings") }
+internal enum class Screen(val label: String) { Monitor("Monitor"), Response("Response"), Kegel("Kegels"), Health("Health"), Sessions("Sessions"), Gear("Gear"), Sensors("Sensors"), Settings("Settings") }
 
 @Composable
 private fun MonitorScreen(
@@ -503,6 +504,7 @@ private fun MonitorScreen(
                 )
                 screen == Screen.Health -> com.pulsepointlabs.sarahmonitor.vitals.HealthScreen(onCsvImport, onHealthConnect, Modifier.fillMaxSize()) { m -> com.pulsepointlabs.sarahmonitor.sleep.SleepScreen(m) }
                 screen == Screen.Sessions -> SessionsScreen(onOpen = { reviewId = it }, modifier = Modifier.fillMaxSize())
+                screen == Screen.Gear -> com.pulsepointlabs.sarahmonitor.gear.GearScreen(Modifier.fillMaxSize())
                 screen == Screen.Sensors -> SensorsScreen(onHealthConnect, onCsvImport, onMessage, Modifier.fillMaxSize())
                 screen == Screen.Settings -> SettingsScreen(onMessage, Modifier.fillMaxSize(), onHealthConnect = onHealthConnect, onCsvImport = onCsvImport)
                 else -> Dashboard(
@@ -828,6 +830,7 @@ private fun Tabs(screen: Screen, compact: Boolean, fill: Boolean = false, onScre
                         when (s) {
                             Screen.Monitor -> Icons.Default.MonitorHeart
                             Screen.Sessions -> Icons.Default.History
+                            Screen.Gear -> Icons.Default.Inventory2
                             Screen.Response -> Icons.Default.Favorite
                             Screen.Kegel -> Icons.Default.SelfImprovement
                             Screen.Health -> Icons.Default.MonitorWeight

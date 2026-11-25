@@ -56,6 +56,39 @@ object ClaudeText {
             text
         }.onFailure { lastProblem = it.message?.take(120) ?: it.javaClass.simpleName }.getOrNull()
     }
+
+    /**
+     * One turn with photos: [images] are JPEG bytes (already downscaled), sent before [text]. Uses [model] (Sarah's own
+     * brain, for looking at gear). Returns the text, or null (see [lastProblem]).
+     */
+    suspend fun askWithImages(system: String, text: String, images: List<ByteArray>, model: String, maxTokens: Long = 2_000L): String? = withContext(Dispatchers.IO) {
+        val key = ResponseSettings.apiKey.value
+        if (key.isBlank()) { lastProblem = "no Anthropic key"; return@withContext null }
+        runCatching {
+            val blocks = images.map { bytes ->
+                com.anthropic.models.beta.messages.BetaContentBlockParam.ofImage(
+                    com.anthropic.models.beta.messages.BetaImageBlockParam.builder().source(
+                        com.anthropic.models.beta.messages.BetaBase64ImageSource.builder()
+                            .data(android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+                            .mediaType(com.anthropic.models.beta.messages.BetaBase64ImageSource.MediaType.IMAGE_JPEG)
+                            .build()
+                    ).build()
+                )
+            } + com.anthropic.models.beta.messages.BetaContentBlockParam.ofText(text)
+            val params = MessageCreateParams.builder()
+                .model(model)
+                .maxTokens(maxTokens)
+                .thinking(com.anthropic.models.beta.messages.BetaThinkingConfigDisabled.builder().build())
+                .systemOfBetaTextBlockParams(listOf(BetaTextBlockParam.builder().text(system).build()))
+                .addUserMessageOfContentBlockParams(blocks)
+                .build()
+            val response = AnthropicOkHttpClient.builder().apiKey(key).timeout(Duration.ofSeconds(60)).maxRetries(1).build()
+                .beta().messages().create(params)
+            if (response.stopReason().orElse(null) == BetaStopReason.REFUSAL) { lastProblem = "declined"; return@runCatching null }
+            response.content().mapNotNull { it.text().orElse(null)?.text() }.joinToString("").trim().ifBlank { null }
+                .also { lastProblem = if (it == null) "empty reply" else null }
+        }.onFailure { lastProblem = it.message?.take(120) ?: it.javaClass.simpleName }.getOrNull()
+    }
 }
 
 /** Claude tidies dictated text: punctuation and capitals only, the same words in the same order. */

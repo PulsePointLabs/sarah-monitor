@@ -51,7 +51,7 @@ class MonitorService : Service() {
         }
         MonitorHub.connectRemembered()
         scope.launch {
-            combine(OverlaySettings.showing, OverlaySettings.appInFront, OverlaySettings.previewing) { _, _, _ -> Unit }.collect { overlays.sync() }
+            combine(OverlaySettings.showing, OverlaySettings.appInFront, OverlaySettings.previewing, OverlaySettings.lent) { _, _, _, _ -> Unit }.collect { overlays.sync() }
         }
         scope.launch {
             OverlaySettings.on.collect {

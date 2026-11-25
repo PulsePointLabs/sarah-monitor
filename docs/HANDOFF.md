@@ -196,6 +196,20 @@ bedside-monitor dashboards, floating overlays and a review screen.
   squeezed to vertical letters), `ChoiceRow` = `EvenGrid` (no lone chip, never drops a choice), session card says
   why the HR line is empty, Sarah card shows "General" in general sessions.
 
+## 0.31.0 (Gear catalog)
+
+- New **Gear** tab (`gear/GearCatalog.kt`, `gear/GearScreen.kt`): his devices and supplies by category (sounds,
+  catheters, enema, anal, sleeves, vibrators, e-stim/TENS, sensors, lube, other). Photos (camera via FileProvider
+  cache/shared, or the photo picker) are downscaled to 1600 px and kept in filesDir/gear/photos; the catalog is
+  filesDir/gear/catalog.json. "Let Sarah fill this in" sends up to 4 photos + what he said to the coach model
+  (`ClaudeText.askWithImages`) and fills category, name, measurements in US units (only from his words, labels or a
+  visible scale; photo reads marked "≈ estimated"), material, what it is, where it sits, prep (incl. enema prep),
+  cautions and a line from Sarah. His own numbers always win. Detail view: photos, measurement table, sections,
+  "Ask Sarah about this". SarahChat gets the catalog (`his_gear_catalog`) so naming an item mid-session means something.
+- Overlays step aside while the camera or photo picker is open (`OverlaySettings.lent`): the Stress overlay covered the
+  camera shutter.
+- Untested: Sarah's photo reading (no API key on the emulator).
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

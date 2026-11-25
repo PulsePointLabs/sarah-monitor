@@ -182,6 +182,7 @@ object MonitorHub {
         recorder = SessionRecorder(app, scope)
         com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.load(app)
         com.pulsepointlabs.sarahmonitor.response.SarahMemory.load(app)
+        com.pulsepointlabs.sarahmonitor.gear.GearCatalog.load(app)
         handsFree = com.pulsepointlabs.sarahmonitor.session.HandsFree(
             app, scope,
             mark = { at, e, raw, heardBy ->
