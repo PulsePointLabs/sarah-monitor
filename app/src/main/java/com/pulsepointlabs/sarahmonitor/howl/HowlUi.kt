@@ -185,7 +185,7 @@ fun HowlPanel(modifier: Modifier = Modifier) {
     }
 }
 
-/** One channel: big number coloured by level, a bar against what's allowed, big − and +. */
+/** One channel: big number colored by level, a bar against what's allowed, big − and +. */
 @Composable
 private fun ChannelPanel(name: String, power: Int, allowed: Int, color: Color, modifier: Modifier, onStep: (Int) -> Unit) {
     val level = howlLevelColor(power, allowed)

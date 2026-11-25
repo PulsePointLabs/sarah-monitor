@@ -64,7 +64,7 @@ private val deviceColor = Color(0xFF93C5FD)
 /** What the details dialog is for. */
 enum class DetailsMode(val title: String) { Setup("Session setup"), WrapUp("How did it go?"), Edit("Session details") }
 
-/** Chip for a choice; selected chips fill with the colour. */
+/** Chip for a choice; selected chips fill with the color. */
 @Composable
 private fun Pill(label: String, on: Boolean, color: Color, onClick: () -> Unit) {
     Text(

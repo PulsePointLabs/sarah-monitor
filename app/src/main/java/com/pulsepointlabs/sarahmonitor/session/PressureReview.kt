@@ -4,7 +4,7 @@ import com.pulsepointlabs.sarahmonitor.core.PelvicProcessor
 import com.pulsepointlabs.sarahmonitor.core.PressureIntegrity
 import com.pulsepointlabs.sarahmonitor.core.PressureQuality
 
-/** A stretch of pressure that may not be analysed, and why. */
+/** A stretch of pressure that may not be analyzed, and why. */
 data class QualitySpan(val quality: PressureQuality, val startMs: Long, val endMs: Long, val replayed: Boolean)
 
 /**
@@ -22,7 +22,7 @@ data class QualitySpan(val quality: PressureQuality, val startMs: Long, val endM
 object PressureReview {
     const val REPLAY_TAIL_MS = 10_000L
     const val POINT_EXCLUSION_MS = 30_000L
-    /** Same as the live processor: after a gap this long the signal re-stabilises before it counts. */
+    /** Same as the live processor: after a gap this long the signal re-stabilizes before it counts. */
     const val GAP_MS = PelvicProcessor.RECONNECT_GAP_MS
 
     fun qualities(samples: List<PelvicSampleEntity>, markers: List<MarkerEntity> = emptyList()): Array<PressureQuality> {

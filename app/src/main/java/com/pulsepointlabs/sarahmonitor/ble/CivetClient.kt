@@ -474,7 +474,7 @@ class CivetClient(private val context: Context) {
         val PRESSURE_UUID: UUID = uuid("150b")
         val BATTERY_UUID: UUID = uuid("1500")
         val CCCD_UUID: UUID = uuid("2902")
-        /** 0x50 header, 01 indicator colour (yellow), D0 = start pressure reporting, 14 bytes padding. */
+        /** 0x50 header, 01 indicator color (yellow), D0 = start pressure reporting, 14 bytes padding. */
         val START_COMMAND: ByteArray = byteArrayOf(0x50, 0x01, 0xD0.toByte()) + ByteArray(14)
         val STOP_COMMAND: ByteArray = byteArrayOf(0x50, 0x01, 0x00) + ByteArray(14)
         val ZERO_COMMAND: ByteArray = CivetPacket.fromHex("66000000000000000000000002")

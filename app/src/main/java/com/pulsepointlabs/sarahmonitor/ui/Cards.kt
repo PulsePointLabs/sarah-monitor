@@ -445,7 +445,7 @@ private fun PelvicCard() {
         else -> "hold --"
     }
     val recent by MonitorHub.recent.collectAsState()
-    // Not logging or faulted: the number is still shown (for positioning) but greyed, so it doesn't read as data.
+    // Not logging or faulted: the number is still shown (for positioning) but grayed, so it doesn't read as data.
     val color = if (p.quality.usable) trendColor(recent.trend(Metric.Pelvic)) else MonitorColors.label
     val overlay = LocalOverlayMode.current
     val connected = state == ConnectionState.Connected || state == ConnectionState.Stale

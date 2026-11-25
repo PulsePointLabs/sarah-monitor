@@ -15,8 +15,8 @@ android {
         // 64-bit ARM only (every current Samsung): keeps the offline speech libraries from quadrupling the APK.
         ndk { abiFilters += listOf("arm64-v8a") }
         targetSdk = 35
-        versionCode = 48
-        versionName = "0.28.0"
+        versionCode = 49
+        versionName = "0.28.1"
     }
 
     // One signing key for every build (this machine, CI, anyone's PC), kept in the repo, so each

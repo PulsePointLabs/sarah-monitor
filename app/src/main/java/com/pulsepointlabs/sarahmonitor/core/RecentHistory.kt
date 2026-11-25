@@ -1,6 +1,6 @@
 package com.pulsepointlabs.sarahmonitor.core
 
-/** The last couple of minutes of each live metric, for the small trend lines and trend colours. */
+/** The last couple of minutes of each live metric, for the small trend lines and trend colors. */
 enum class Metric(
     /** A change of this size over a minute counts as a strong rise or fall. */
     val fullScale: Double

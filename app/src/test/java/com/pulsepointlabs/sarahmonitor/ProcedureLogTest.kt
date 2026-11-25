@@ -19,7 +19,7 @@ class ProcedureLogTest {
         }
         ProcedureLog.parseLocal("Added another 250 milliliters").let { assertEquals(250, it.addedMl); assertNull(it.totalMl) }
         ProcedureLog.parseLocal("that's a liter in total").let { assertEquals(1000, it.totalMl) }
-        ProcedureLog.parseLocal("half a litre going in now").let { assertEquals(500, it.totalMl) }
+        ProcedureLog.parseLocal("half a liter going in now").let { assertEquals(500, it.totalMl) }
         ProcedureLog.parseLocal("tip is at about 16 centimeters, felt a little pop, discomfort 3").let {
             assertEquals(16.0, it.depthCm!!, 0.01); assertEquals(3, it.discomfort)
         }
@@ -28,6 +28,20 @@ class ProcedureLogTest {
         ProcedureLog.parseLocal("partial erection when the device went in").let { assertEquals("partial", it.erection) }
         ProcedureLog.parseLocal("urge to go").let { assertNull(it.urge) }
         assertTrue(ProcedureLog.parseLocal("balloon seated, no issues").empty)
+    }
+
+    @Test fun usUnitsInAndOut() {
+        ProcedureLog.parseLocal("about 16 ounces in so far, urge 5").let { assertEquals(473, it.totalMl); assertEquals(5, it.urge) }
+        ProcedureLog.parseLocal("added another 8 oz").let { assertEquals(237, it.addedMl) }
+        ProcedureLog.parseLocal("that's a quart in total").let { assertEquals(946, it.totalMl) }
+        ProcedureLog.parseLocal("2 quarts in").let { assertEquals(1893, it.totalMl) }
+        ProcedureLog.parseLocal("balloon took 10 cc").let { assertEquals(10, it.totalMl) }
+        ProcedureLog.parseLocal("tip about 6 inches in, felt a pop").let { assertEquals(15.2, it.depthCm!!, 0.05) }
+        // Shown and said in his units, never metric.
+        assertEquals("16 oz in · depth 6 in · urge 5/10", Measures(totalMl = 473, depthCm = 15.24, urge = 5).short())
+        assertEquals("8 ounces more, depth 6 inches", Measures(addedMl = 237, depthCm = 15.24).spoken())
+        assertEquals("10 cc", com.pulsepointlabs.sarahmonitor.session.UsUnits.volume(10))
+        assertEquals("34 oz (1.1 qt)", com.pulsepointlabs.sarahmonitor.session.UsUnits.volume(1000))
     }
 
     @Test fun claudeVolumeCallIsNeverMixedWithTheKeywordGuess() {
@@ -50,7 +64,8 @@ class ProcedureLogTest {
             LoggedEvent(10 * m, setOf("finding"), "partial erection", Measures(erection = "partial"))
         )
         val s = ProcedureLog.state(events, 13 * m)
-        assertEquals(750, s.getInt("instilled_total_ml"))
+        assertEquals(750, s.getInt("instilled_total_cc"))
+        assertEquals(25.5, s.getDouble("instilled_total_oz"), 0.01)
         assertEquals(6.0, s.getDouble("holding_for_minutes"), 0.01)
         assertEquals(13.0, s.getDouble("device_in_place_minutes"), 0.01)
         assertEquals(6, s.getJSONObject("urge_last").getInt("value"))

@@ -565,11 +565,11 @@ private fun LiveSetGraph(p: com.pulsepointlabs.sarahmonitor.core.PelvicSnapshot,
     }
 }
 
-/** A bar per squeeze so far (peak), coloured by time on target, with empty slots for the ones to come. */
+/** A bar per squeeze so far (peak), colored by time on target, with empty slots for the ones to come. */
 @Composable
 private fun LiveBars(cs: List<Contraction>, hasRef: Boolean, total: Int, modifier: Modifier) {
     Column(modifier.background(MonitorColors.panel, RoundedCornerShape(10.dp)).border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(10.dp)).padding(10.dp)) {
-        Text("Each squeeze · height = peak · colour = on target", color = MonitorColors.label, fontSize = 12.sp)
+        Text("Each squeeze · height = peak · color = on target", color = MonitorColors.label, fontSize = 12.sp)
         Canvas(Modifier.fillMaxSize().padding(top = 4.dp)) {
             val slots = total.coerceAtLeast(1)
             val w = size.width / slots

@@ -103,7 +103,7 @@ class TranscriptAssembler(private val prefix: String = "") {
 /**
  * Live, punctuated speech-to-text with OpenAI's Realtime transcription over a WebSocket: words appear while you
  * speak. Microphone audio (24 kHz, mono, 16-bit PCM) streams in 100 ms chunks; a turn is committed after 0.7 s of
- * quiet so each sentence finalises quickly. Uses gpt-live-transcribe; if the account can't use it, falls back to
+ * quiet so each sentence finalizes quickly. Uses gpt-live-transcribe; if the account can't use it, falls back to
  * gpt-4o-transcribe with server-side turn detection.
  */
 class RealtimeTranscriber(private val context: android.content.Context) {

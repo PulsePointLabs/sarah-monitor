@@ -29,7 +29,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * Keeps the sensor links alive while Sarah Monitor is in the background or minimised on DeX, and hosts the
+ * Keeps the sensor links alive while Sarah Monitor is in the background or minimized on DeX, and hosts the
  * floating overlays.
  */
 class MonitorService : Service() {

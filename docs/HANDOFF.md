@@ -23,7 +23,7 @@ bedside-monitor dashboards, floating overlays and a review screen.
   small to read, items squashed to unusable, overlapping, clipped, chopped labels ("Conn…"), tiny buttons,
   something alone on a row wasting space. Monitor screens don't scroll.
 - Body exploration, sexual and general sessions are separate "lanes".
-- Hands-free notes must be his words verbatim; Claude only categorises.
+- Hands-free notes must be his words verbatim; Claude only categorizes.
 - Don't re-ask decisions already made; don't turn brainstorming into a rebuild without a go-ahead.
 
 ## Testing (use this before every UI change ships)
@@ -57,7 +57,7 @@ bedside-monitor dashboards, floating overlays and a review screen.
   fit-to-screen rows (`FitLayout`) and the DeX 24-column grid.
 - `core/PelvicProcessor.kt` + `core/PressureIntegrity.kt` — CIVET pressure: logging only after the user switches it on
   (calibrate first), a `PressureQuality` on every sample, suspected displacement / shifted rest latch until the user
-  recaptures rest or resumes, 5 s stabilising after a link gap, holds over 30 s = sustained elevation (not contractions).
+  recaptures rest or resumes, 5 s stabilizing after a link gap, holds over 30 s = sustained elevation (not contractions).
 - `session/PressureReview.kt` — the review's per-sample quality (stored live; replayed for pre-0.25 recordings;
   "Sensor problem" events exclude their range). `session/ResearchExport.kt` — research ZIP (every native sample + README).
 - `docs/research/AUDIT-2026-11-23.md` — what the ChatGPT research brief claimed vs what the code did.
@@ -65,7 +65,7 @@ bedside-monitor dashboards, floating overlays and a review screen.
 - `review/ReviewScreen.kt` — session review; Events card (All / Marked / Sarah heard tabs, metric chips with
   trend arrows, mini graph, expandable with zoom + ECG, delete).
 - `session/HandsFree.kt`, `session/LocalEars.kt`, `session/MicRoute.kt` — "Sarah, …" wake word (offline
-  Vosk on the phone), clip sent to OpenAI for transcription, Claude Haiku only for categorising. Any open
+  Vosk on the phone), clip sent to OpenAI for transcription, Claude Haiku only for categorizing. Any open
   mic takes audio focus so YouTube/music pauses.
 - `core/ObsLink.kt` — obs-websocket 5 client (start/stop/pause sessions with OBS recording).
 - `core/ClaudeText.kt` — Claude calls (thinking disabled, effort low, 1500-token floor; Haiku's default
@@ -130,6 +130,15 @@ bedside-monitor dashboards, floating overlays and a review screen.
   scores and how long ago; check-ins say where things stand or ask for a score when he hasn't given one in a while.
 - Review: number chips (In / Added / Depth / Urge / Discomfort / Fullness / Arousal / Erection) and Sarah's answers
   under each event. Not yet seen rendered.
+
+## 0.28.1 (American)
+
+- US spelling throughout (color, gray, analyzed, canceled, categorize…). Ben is American: keep it that way.
+- US units for everything he sees or hears: depth in inches, volumes in fl oz / quarts (cc under 4 oz), via
+  `session/UsUnits`. Stored numbers stay mL / cm (one unit for research data). Speech accepts oz, quarts, pints, cups,
+  cc, inches (and metric). Device fields: balloon/lube in cc, depths in inches, enema volume in oz; old metric values
+  still show on old sessions. Sarah's prompts say he's American.
+- Still metric/other: pelvic pressure in kPa, the top-bar clock is 24-hour. Asked Ben.
 
 ## Open / unverified
 

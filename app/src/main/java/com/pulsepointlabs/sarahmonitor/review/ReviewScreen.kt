@@ -633,7 +633,7 @@ private fun eventMetrics(d: SessionData, t: Long, snapshot: String?, sexual: Boo
     return out
 }
 
-/** Chip like the overlays: value in its colour, then ↑ / ↑↑ / ↑↑↑ (red when the change is the bad direction). */
+/** Chip like the overlays: value in its color, then ↑ / ↑↑ / ↑↑↑ (red when the change is the bad direction). */
 @Composable
 private fun MetricChip(m: EventMetric) {
     val n = (kotlin.math.abs(m.delta) / m.scale).let { when { it >= 3 -> 3; it >= 1.5 -> 2; it >= 0.6 -> 1; else -> 0 } }
@@ -681,9 +681,9 @@ private fun procedureChips(m: MarkerEntity): Pair<List<EventMetric>, String?> {
         ?: com.pulsepointlabs.sarahmonitor.session.ProcedureLog.parseLocal(m.note)
     val out = mutableListOf<EventMetric>()
     fun chip(label: String, value: String, color: Color) { out += EventMetric(label, value, color, 0.0, 1.0, true) }
-    ms.totalMl?.let { chip("In", "$it mL", MonitorColors.pelvic) }
-    ms.addedMl?.let { chip("Added", "+$it mL", MonitorColors.pelvic) }
-    ms.depthCm?.let { chip("Depth", "${com.pulsepointlabs.sarahmonitor.session.Measures.fmt(it)} cm", MonitorColors.label) }
+    ms.totalMl?.let { chip("In", com.pulsepointlabs.sarahmonitor.session.UsUnits.volume(it), MonitorColors.pelvic) }
+    ms.addedMl?.let { chip("Added", "+" + com.pulsepointlabs.sarahmonitor.session.UsUnits.volume(it), MonitorColors.pelvic) }
+    ms.depthCm?.let { chip("Depth", com.pulsepointlabs.sarahmonitor.session.UsUnits.depth(it), MonitorColors.label) }
     ms.urge?.let { chip("Urge", "$it/10", com.pulsepointlabs.sarahmonitor.ui.StressColor) }
     ms.discomfort?.let { chip("Discomfort", "$it/10", MonitorColors.alarm) }
     ms.fullness?.let { chip("Fullness", "$it/10", MonitorColors.pelvic) }

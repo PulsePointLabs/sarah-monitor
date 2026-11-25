@@ -253,11 +253,11 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
                             break
                         }
                         val centroid = Offset(pressed.map { it.position.x }.average().toFloat(), pressed.map { it.position.y }.average().toFloat()) + origin
-                        val travelled = ((pressed.firstOrNull { it.id == down.id }?.position ?: pressed.first().position) - down.position).getDistance()
+                        val traveled = ((pressed.firstOrNull { it.id == down.id }?.position ?: pressed.first().position) - down.position).getDistance()
                         when {
                             mode == 0 && pressed.size >= 2 -> begin(centroid)
-                            mode == 0 && travelled > slop -> if (hit == sel) begin(centroid) else break // ordinary scroll/drag on a card
-                            mode == 2 && travelled > slop -> begin(centroid)
+                            mode == 0 && traveled > slop -> if (hit == sel) begin(centroid) else break // ordinary scroll/drag on a card
+                            mode == 2 && traveled > slop -> begin(centroid)
                         }
                         if (mode != 0 || hit == sel) ev.changes.forEach { it.consume() }
                         if (mode == 1) {

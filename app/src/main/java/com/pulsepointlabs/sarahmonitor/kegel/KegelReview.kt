@@ -149,7 +149,7 @@ private fun Header(r: KegelRecord, onDismiss: () -> Unit) {
     }
 }
 
-/** A labelled number tile: big value in its colour, optional trend arrows (grow with the size of the shift). */
+/** A labelled number tile: big value in its color, optional trend arrows (grow with the size of the shift). */
 @Composable
 internal fun KTile(label: String, value: String, color: Color, modifier: Modifier = Modifier, unit: String = "", trend: Double? = null) {
     Column(
@@ -303,12 +303,12 @@ private fun Pill(label: String, value: String?, color: Color) {
     }
 }
 
-/** A bar per contraction (peak), coloured by time on target; tap a bar to see it. */
+/** A bar per contraction (peak), colored by time on target; tap a bar to see it. */
 @Composable
 private fun ContractionBars(cs: List<Contraction>, hasRef: Boolean, selected: Contraction?, onSelect: (Contraction) -> Unit, modifier: Modifier) {
     Panel(modifier) {
         Text("Each squeeze", color = MonitorColors.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text("height = peak · colour = time on target · tap a bar", color = MonitorColors.label, fontSize = 12.sp)
+        Text("height = peak · color = time on target · tap a bar", color = MonitorColors.label, fontSize = 12.sp)
         if (cs.isEmpty()) { Text("No squeezes in this set.", color = MonitorColors.label, fontSize = 14.sp); return@Panel }
         val top = maxOf(if (hasRef) 110.0 else 1.0, (cs.mapNotNull { it.peak }.maxOrNull() ?: 0.0) * 1.08)
         Canvas(

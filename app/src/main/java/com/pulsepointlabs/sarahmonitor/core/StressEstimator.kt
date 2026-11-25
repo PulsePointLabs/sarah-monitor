@@ -43,7 +43,7 @@ data class StressInputs(
  *  - faster breathing (from respiratory sinus arrhythmia in the RR intervals)
  *  - muscle tension (pelvic floor pressure, EMG) when not in a sexual session
  *  - restlessness (small, frequent movement)
- * Weights are re-normalised over the inputs that are available.
+ * Weights are re-normalized over the inputs that are available.
  */
 object StressEstimator {
     private const val W_HRV = 0.35

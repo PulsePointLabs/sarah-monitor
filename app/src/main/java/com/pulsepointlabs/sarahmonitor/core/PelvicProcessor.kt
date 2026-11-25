@@ -55,7 +55,7 @@ data class PelvicSnapshot(
     /** The current hold has lasted longer than a contraction can: sustained elevation, origin unknown. */
     val sustained: Boolean = false
 ) {
-    /** Above-rest pressure only when it may be analysed (null while previewing, calibrating or faulted). */
+    /** Above-rest pressure only when it may be analyzed (null while previewing, calibrating or faulted). */
     val usableAboveRestKpa: Double? get() = aboveRestKpa?.takeIf { quality.usable }
 }
 
@@ -367,7 +367,7 @@ class PelvicProcessor {
     }
 
     private fun snapshot(nowMs: Long, pressure: Double, above: Double?, rest: Double?, threshold: Double, quality: PressureQuality): PelvicSnapshot {
-        // Statistics only from samples that may be analysed.
+        // Statistics only from samples that may be analyzed.
         val recent = trace.filter { nowMs - it.timestampMs <= 30_000L && it.quality.usable }.mapNotNull { it.aboveRestKpa }
         val previous = trace.filter { nowMs - it.timestampMs in 30_001L..60_000L && it.quality.usable }.mapNotNull { it.aboveRestKpa }
         val avg = recent.takeIf { it.isNotEmpty() }?.average()
@@ -418,7 +418,7 @@ class PelvicProcessor {
     companion object {
         const val MIN_THRESHOLD_KPA = 0.3
         const val GAP_MS = 1_000L
-        /** A gap this long (link stall or reconnect) makes the signal re-stabilise before it counts again. */
+        /** A gap this long (link stall or reconnect) makes the signal re-stabilize before it counts again. */
         const val RECONNECT_GAP_MS = 3_000L
         const val STABILIZE_MS = 5_000L
         const val TRACE_MS = 120_000L

@@ -19,7 +19,7 @@ class SessionDetailsTest {
             ObsLink.auth("supersecret", "lM1GncleQOaCu9lT1yeUZhFYnqhsLLP1G5lAGo3ixaI=", "+IxH4CnCiqpX1rM9scsNynZzbOe4KhDeYcTNS3PDaeY="))
     }
 
-    @Test fun obsAddressIsNormalised() {
+    @Test fun obsAddressIsNormalized() {
         assertEquals("ws://192.168.1.10:4455", ObsSettings.normalize("192.168.1.10"))
         assertEquals("ws://pc.local:4456", ObsSettings.normalize(" pc.local:4456/ "))
         assertEquals("ws://pc:4455", ObsSettings.normalize("ws://pc"))
@@ -50,6 +50,6 @@ class SessionDetailsTest {
 
     @Test fun deviceSummaryReadsCleanly() {
         val s = GearType.Foley.summary(mapOf("size_fr" to "16", "material" to "Silicone", "lube_instilled" to "true", "lube_ml" to "10", "notes" to "x"))
-        assertEquals("16 Fr · Silicone · 10 mL", s)
+        assertEquals("16 Fr · Silicone · 10 cc", s)
     }
 }

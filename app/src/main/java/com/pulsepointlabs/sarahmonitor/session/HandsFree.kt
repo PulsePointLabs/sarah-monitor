@@ -139,7 +139,7 @@ object VoiceCommand {
         val level = intensity(command)
         val what = MarkerTypes.label(types).lowercase()
         val m = ProcedureLog.parseLocal(command)
-        return SpokenEvent(types, device?.id, note, bucket, level, null, "Logged: $what" + (m.short().takeIf { it.isNotBlank() }?.let { ", ${it.replace("/10", " out of 10")}" } ?: level?.let { ", $it out of 10" } ?: "") + ".", "keywords",
+        return SpokenEvent(types, device?.id, note, bucket, level, null, "Logged: $what" + (m.spoken().takeIf { it.isNotBlank() }?.let { ", $it" } ?: level?.let { ", $it out of 10" } ?: "") + ".", "keywords",
             m, ProcedureLog.isQuestion(command))
     }
 
@@ -169,20 +169,20 @@ object VoiceCommand {
         return END_SESSION.any { it.containsMatchIn(c) }
     }
 
-    /** His words exactly as heard: only the first letter capitalised and a closing full stop added. Never rewritten. */
+    /** His words exactly as heard: only the first letter capitalized and a closing full stop added. Never rewritten. */
     fun verbatim(command: String): String =
         command.trim().replaceFirstChar { it.uppercase() }.let { if (it.isEmpty() || it.last() in ".!?…") it else "$it." }
 
     /** Prompt for Claude: map a spoken note to this session's event types and devices. */
     fun claudePrompt(allowed: List<MarkerTypes.Type>, gear: List<GearItem>): String = """
-You categorise a short spoken note from a paramedic logging his own body during a physiology session. His words are saved verbatim; you only classify them.
+You categorize a short spoken note from a paramedic logging his own body during a physiology session. His words are saved verbatim; you only classify them.
 Allowed event types (id: label): ${allowed.joinToString("; ") { "${it.id}: ${it.label}" }}.
 Devices in use (id: label): ${gear.joinToString("; ") { "${it.id}: ${it.label}" }.ifBlank { "none" }}.
 The CIVET rectal pressure probe/sensor is the measuring instrument, not one of these devices: if he is talking about the probe, the sensor or a balloon without naming the catheter, set "device" to null. Use "sensor_issue" (if allowed) when the sensor slipped, came out, moved, deflated or was re-seated or re-inflated.
 Buckets: ${BUCKETS.joinToString(", ")}.
-Procedure notes (enema, catheter, sounding, anal devices) often carry numbers: amount instilled, estimated depth of the tip or device, and 0-10 scores for urge to defecate or void, discomfort (pinch, pop, cramp, burning), arousal and fullness, plus erection state. Pull each number he actually said into "measures"; never guess one. Volume: "total_ml" when he states how much is in altogether, "added_ml" when he states an amount added on top of what was already in (use the running tally he gives you, if any, to tell which). Convert litres to mL and inches to cm.
+Procedure notes (enema, catheter, sounding, anal devices) often carry numbers: amount instilled, estimated depth of the tip or device, and 0-10 scores for urge to defecate or void, discomfort (pinch, pop, cramp, burning), arousal and fullness, plus erection state. Pull each number he actually said into "measures"; never guess one. Volume: "total_ml" when he states how much is in altogether, "added_ml" when he states an amount added on top of what was already in (use the running tally he gives you, if any, to tell which). He is American and talks in inches, fluid ounces, quarts, pints, cups and cc: convert to mL (1 oz = 29.57 mL, 1 quart = 946 mL, 1 cc = 1 mL) and cm (1 in = 2.54 cm) for the measures fields only. The running tally gives both.
 He may also be asking Sarah a question ("how long have I been holding?", "is that normal?", "what was my heart rate when it popped?"): set "question" true only when he wants an answer from her.
-Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or null,"bucket":one bucket,"intensity":0-10 or null (only if he gave a number or a clear severity),"site":anatomical site or null,"measures":{"total_ml":n,"added_ml":n,"depth_cm":n,"urge_0_10":n,"discomfort_0_10":n,"arousal_0_10":n,"fullness_0_10":n,"erection":"none|building|partial|full|softening" } with only the keys he gave (or {}),"question":true or false,"confirm":a spoken confirmation of at most 12 words that repeats any numbers he gave so he can catch a mishearing, no names}.
+Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or null,"bucket":one bucket,"intensity":0-10 or null (only if he gave a number or a clear severity),"site":anatomical site or null,"measures":{"total_ml":n,"added_ml":n,"depth_cm":n,"urge_0_10":n,"discomfort_0_10":n,"arousal_0_10":n,"fullness_0_10":n,"erection":"none|building|partial|full|softening" } with only the keys he gave (or {}),"question":true or false,"confirm":a spoken confirmation of at most 12 words that repeats any numbers he gave, in the units he said them (ounces, inches, cc; never converted to metric), so he can catch a mishearing, no names}.
 """.trimIndent()
 
     fun parseClaude(json: String, command: String, allowed: Set<String>, gear: List<GearItem>): SpokenEvent? = runCatching {

@@ -94,7 +94,7 @@ object HrvCalculator {
 
     /**
      * Classifies one interval against the local normal interval [median], given the two intervals before it and how
-     * they were classified. Ectopy is recognised from the RR pattern alone: an abrupt early interval, then the
+     * they were classified. Ectopy is recognized from the RR pattern alone: an abrupt early interval, then the
      * interval that starts at the ectopic beat (compensatory pause, reset or interpolated), or a run of early beats.
      */
     private fun classify(
@@ -183,7 +183,7 @@ object HrvCalculator {
      * [recentRawRrMs] holds the raw intervals that immediately preceded [rawMs], accepted or not.
      * When they form a steady run with [rawMs], the rhythm has genuinely shifted (posture change,
      * exercise onset) and the run is accepted instead of being judged forever against a stale baseline.
-     * They are also replayed to recognise ectopic patterns (premature beat, compensatory pause, bigeminy).
+     * They are also replayed to recognize ectopic patterns (premature beat, compensatory pause, bigeminy).
      */
     fun filterContextual(rawMs: Int, priorAcceptedRrMs: List<Int>, recentRawRrMs: List<Int> = emptyList()): RrFilterResult {
         val absolute = filter(rawMs)

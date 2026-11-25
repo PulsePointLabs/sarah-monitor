@@ -38,7 +38,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
 
-/** Bedside-monitor palette from the SarahVS telemetry monitor, plus pressure, BP and glucose colours. */
+/** Bedside-monitor palette from the SarahVS telemetry monitor, plus pressure, BP and glucose colors. */
 object MonitorColors {
     val background = Color(0xFF02060B)
     val panel = Color(0xFF07111A)
@@ -133,7 +133,7 @@ val LocalPanelAlpha = compositionLocalOf { 1f }
 fun CardTitle(label: String, color: Color, unit: String = "", modifier: Modifier = Modifier, trailing: @Composable () -> Unit = {}) {
     val s = LocalCardScale.current
     if (LocalOverlayMode.current) {
-        // Overlays: one bold label in the reading's live colour (glowing slightly), unit as a small tag, room
+        // Overlays: one bold label in the reading's live color (glowing slightly), unit as a small tag, room
         // on the right for the close button.
         val shown by androidx.compose.animation.animateColorAsState(color, androidx.compose.animation.core.tween(400), label = "title-color")
         Row(modifier.padding(end = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -185,7 +185,7 @@ fun UnitTag(unit: String, color: Color) {
 @Composable
 fun StatChip(label: String, value: String, accent: Color = MonitorColors.text, tint: Color? = null) {
     val s = LocalCardScale.current
-    // tint: the chip's background takes the value's colour (green low → red high).
+    // tint: the chip's background takes the value's color (green low → red high).
     val bg by androidx.compose.animation.animateColorAsState(tint?.copy(alpha = 0.26f) ?: Color(0x1FFFFFFF), androidx.compose.animation.core.tween(500), label = "chip-bg")
     val chrome = Modifier
         .background(bg, RoundedCornerShape(6.dp))
@@ -328,7 +328,7 @@ fun BigReading(
 
 /**
  * Up to three stacked chevrons: more appear (fading in one by one) the stronger and more sustained the
- * rise or fall, coloured on the same blue→red spectrum. Always occupies its slot, so nothing shifts.
+ * rise or fall, colored on the same blue→red spectrum. Always occupies its slot, so nothing shifts.
  */
 @Composable
 fun TrendArrows(strength: Double, modifier: Modifier) {
@@ -449,7 +449,7 @@ fun loadLabel(score: Int?): String = when {
     else -> "High"
 }
 
-/** AHA-style blood pressure category colour. */
+/** AHA-style blood pressure category color. */
 fun bpColor(systolic: Int, diastolic: Int): Color = when {
     systolic >= 180 || diastolic >= 120 -> MonitorColors.alarm
     systolic >= 140 || diastolic >= 90 -> Color(0xFFFF7A45)
@@ -578,7 +578,7 @@ fun TrendAxesChart(values: List<Double>, color: Color, modifier: Modifier) {
 }
 
 
-/** Colour band for a heart rate: blue (low) → green → yellow → orange → red (high). */
+/** Color band for a heart rate: blue (low) → green → yellow → orange → red (high). */
 fun hrBandColor(bpm: Double?): Color? = when {
     bpm == null -> null
     bpm < 55 -> MonitorColors.sdnn
@@ -588,7 +588,7 @@ fun hrBandColor(bpm: Double?): Color? = when {
     else -> MonitorColors.alarm
 }
 
-/** Colour for a 0–100 % strain-type value: green → yellow → orange → red. */
+/** Color for a 0–100 % strain-type value: green → yellow → orange → red. */
 fun percentBandColor(p: Int?): Color? = when {
     p == null -> null
     p < 35 -> MonitorColors.good

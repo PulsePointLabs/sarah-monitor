@@ -130,7 +130,7 @@ object ResponseEpisodes {
                 val p = data.pelvic[pIdx]
                 while (pulseIdx < pulses.size && pulses[pulseIdx].endMs <= p.timestampMs) pulseIdx++
                 val last = pulses.getOrNull(pulseIdx - 1)?.let { PelvicPulse(it.startMs, it.endMs, it.peakKpa) }
-                // Pressure that may not be analysed (displaced sensor, preview, calibration) doesn't feed the read.
+                // Pressure that may not be analyzed (displaced sensor, preview, calibration) doesn't feed the read.
                 val usable = quality[pIdx].usable
                 engine.onPelvic(p.timestampMs, p.aboveRestKpa.takeIf { usable }, p.holding && usable, pulseIdx, last)
                 pIdx++

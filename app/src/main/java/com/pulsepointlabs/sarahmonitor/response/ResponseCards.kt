@@ -62,7 +62,7 @@ import kotlin.math.sin
 
 val ClimaxPink = Color(0xFFFF7AB6)
 
-/** Colour for an approach level: building → plateau → near → threshold. */
+/** Color for an approach level: building → plateau → near → threshold. */
 fun approachColor(a: Int): Color = when {
     a >= 90 -> ClimaxPink
     a >= 75 -> MonitorColors.alarm
@@ -178,7 +178,7 @@ private fun Pill(label: String, color: Color, filled: Boolean, onClick: () -> Un
 }
 
 /**
- * Near-climax watch: a big arc gauge with coloured zones; at 75+ it flashes "NEAR CLIMAX", at climax "CLIMAX".
+ * Near-climax watch: a big arc gauge with colored zones; at 75+ it flashes "NEAR CLIMAX", at climax "CLIMAX".
  * In body exploration it becomes the HR response (change from baseline).
  */
 @Composable

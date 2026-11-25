@@ -149,7 +149,7 @@ object MonitorHub {
 
     private val recentRecorder = RecentHistoryRecorder()
     private val _recent = MutableStateFlow(RecentHistory())
-    /** Last 2 minutes of each metric, for trend lines and trend colours. */
+    /** Last 2 minutes of each metric, for trend lines and trend colors. */
     val recent: StateFlow<RecentHistory> = _recent
 
     private val _trends = MutableStateFlow<List<TrendPoint>>(emptyList())
@@ -348,7 +348,7 @@ object MonitorHub {
                 recorder.onPelvic(sample.timestampMs, sample.pressureKpa, snapshot.aboveRestKpa, snapshot.holding, snapshot.quality.name)
                 pelvicProcessor.drainEvents().forEach { recorder.onSensorEvent(it.timestampMs, "civet", it.kind, it.detail) }
                 audio.onPelvic(sample.timestampMs, snapshot)
-                // Only pressure that may be analysed reaches the arousal read (not preview, calibration or a fault).
+                // Only pressure that may be analyzed reaches the arousal read (not preview, calibration or a fault).
                 arousal.onPelvic(sample.timestampMs, snapshot.usableAboveRestKpa, snapshot.holding, snapshot.pulseCount, snapshot.lastPulse)
                 // Pressure can arrive faster than the screen refreshes; publish at most every 33 ms.
                 if (sample.monotonicMs - lastPublish >= 33L || snapshot.capture != null) {

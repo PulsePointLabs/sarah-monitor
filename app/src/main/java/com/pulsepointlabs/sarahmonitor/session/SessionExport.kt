@@ -241,7 +241,7 @@ object SessionExport {
             val hr = hrBySecond[sec]?.lastOrNull()
             val pi = pBySecond[sec].orEmpty()
             val p = pi.map { data.pelvic[it] }
-            // Raw above-rest values stay (pressure_quality says whether they may be analysed); holds only on usable samples.
+            // Raw above-rest values stay (pressure_quality says whether they may be analyzed); holds only on usable samples.
             val above = p.mapNotNull { it.aboveRestKpa }
             val heldUsable = pi.any { data.pelvic[it].holding && quality[it].usable }
             val worst = pi.map { quality[it] }.let { qs -> qs.firstOrNull { it.fault } ?: qs.firstOrNull { !it.usable } ?: qs.lastOrNull() }

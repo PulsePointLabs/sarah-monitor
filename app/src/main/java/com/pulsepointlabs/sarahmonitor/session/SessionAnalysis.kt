@@ -22,7 +22,7 @@ data class PelvicSummary(
     val sampleCount: Int,
     /** Rises that lasted longer than a contraction can: sustained elevation, origin unknown (tension, posture, drift). */
     val sustained: List<RecordedPulse> = emptyList(),
-    /** Samples that may be analysed (logging on, no fault). */
+    /** Samples that may be analyzed (logging on, no fault). */
     val usableCount: Int = sampleCount,
     /** Samples recorded while logging was on or during a fault (excludes preview/calibration). */
     val loggedCount: Int = sampleCount,
@@ -247,7 +247,7 @@ object SessionAnalysis {
         if (data.pelvic.isNotEmpty()) {
             val p = data.pelvicSummary
             lines += when {
-                p.loggedCount == 0 -> "Pelvic pressure was only previewed (logging was never switched on), so no contractions were analysed."
+                p.loggedCount == 0 -> "Pelvic pressure was only previewed (logging was never switched on), so no contractions were analyzed."
                 p.maxKpa != null -> "Pelvic pressure peaked at ${"%.1f".format(p.maxKpa)} kPa above rest with ${p.pulses.size} contraction${if (p.pulses.size == 1) "" else "s"}" +
                     (p.longestHoldS?.let { "; longest hold ${"%.1f".format(it)} s" } ?: "") +
                     (if (p.sustained.isNotEmpty()) "; ${p.sustained.size} sustained elevation${if (p.sustained.size == 1) "" else "s"} over ${com.pulsepointlabs.sarahmonitor.core.PelvicProcessor.MAX_CONTRACTION_S.toInt()} s (not counted as contractions)" else "") + "."

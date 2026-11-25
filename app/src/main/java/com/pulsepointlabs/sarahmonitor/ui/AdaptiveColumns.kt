@@ -50,7 +50,7 @@ fun AdaptiveColumns(sections: List<PageSection>, modifier: Modifier = Modifier, 
     }
 }
 
-/** Splits [weights] (in order) into [k] consecutive groups, minimising the heaviest group. */
+/** Splits [weights] (in order) into [k] consecutive groups, minimizing the heaviest group. */
 fun partition(weights: List<Int>, k: Int): List<IntRange> {
     val n = weights.size
     if (n == 0) return emptyList()

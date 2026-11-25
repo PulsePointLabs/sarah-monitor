@@ -64,7 +64,7 @@ class ScaleClient(context: Context, private val onReading: (BodyEntry) -> Unit) 
         runCatching { a.bluetoothLeScanner?.startScan(null, settings, scan) }.onFailure { finish("Couldn't scan: ${it.message}") }
     }
 
-    fun cancel() = finish("Cancelled")
+    fun cancel() = finish("Canceled")
 
     private val scan = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {

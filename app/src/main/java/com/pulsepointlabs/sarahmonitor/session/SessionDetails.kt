@@ -38,6 +38,8 @@ private fun choice(key: String, label: String, vararg o: String, more: Boolean =
 private fun multi(key: String, label: String, vararg o: String, more: Boolean = false, showIf: ((Map<String, String>) -> Boolean)? = null) = FieldSpec(key, label, FieldKind.Multi, o.toList(), more = more, showIf = showIf)
 private fun number(key: String, label: String, unit: String, more: Boolean = false, showIf: ((Map<String, String>) -> Boolean)? = null) = FieldSpec(key, label, FieldKind.Number, unit = unit, more = more, showIf = showIf)
 private fun text(key: String, label: String, hint: String? = null, more: Boolean = false, showIf: ((Map<String, String>) -> Boolean)? = null) = FieldSpec(key, label, FieldKind.Text, more = more, hint = hint, showIf = showIf)
+/** A metric field from before 0.28: shown only on old sessions that have a value in it. */
+private fun legacy(key: String, label: String, unit: String) = FieldSpec(key, label, FieldKind.Number, unit = unit, more = true, showIf = { !it[key].isNullOrBlank() })
 private fun toggle(key: String, label: String, more: Boolean = false) = FieldSpec(key, label, FieldKind.Toggle, more = more)
 private fun scale(key: String, label: String, hint: String? = null, more: Boolean = false, showIf: ((Map<String, String>) -> Boolean)? = null) = FieldSpec(key, label, FieldKind.Scale, more = more, hint = hint, showIf = showIf)
 
@@ -51,15 +53,16 @@ private val MATERIALS = arrayOf("Silicone", "TPE", "Glass", "Steel", "ABS", "Oth
 enum class GearType(val label: String, val lane: Set<Lane>, val fields: List<FieldSpec>) {
     Foley("Foley catheter", setOf(Lane.Exploration), listOf(
         number("size_fr", "Size", "Fr"),
-        number("balloon_ml", "Balloon", "mL"),
+        number("balloon_ml", "Balloon", "cc"),
         choice("material", "Material", "Silicone", "Latex", "Coated latex", "Hydrophilic", "PVC"),
         toggle("lube_instilled", "Lube instilled into urethra"),
         choice("lube_type", "Instilled lube", *LUBES, showIf = on("lube_instilled")),
-        number("lube_ml", "Amount", "mL", showIf = on("lube_instilled")),
+        number("lube_ml", "Amount", "cc", showIf = on("lube_instilled")),
         choice("tip", "Tip", "Straight", "Coudé", "Council", more = true),
         choice("balloon_fluid", "Balloon fluid", "Sterile water", "Saline", "Air", more = true),
         choice("drainage", "Drainage", "Leg bag", "Night bag", "Valve", "Plug", "Open", more = true),
-        number("depth_cm", "Inserted length", "cm", more = true),
+        number("depth_in", "Inserted length", "in", more = true),
+        legacy("depth_cm", "Inserted length", "cm"),
         text("notes", "Notes", more = true)
     )),
     Sound("Urethral sound", setOf(Lane.Exploration), listOf(
@@ -67,20 +70,23 @@ enum class GearType(val label: String, val lane: Set<Lane>, val fields: List<Fie
         number("size_mm", "Size", "mm"),
         choice("lube_type", "Lube", *LUBES),
         choice("material", "Material", "Steel", "Titanium", "Silicone", more = true),
-        number("lube_ml", "Lube instilled", "mL", more = true),
-        number("depth_cm", "Depth reached", "cm", more = true),
+        number("lube_ml", "Lube instilled", "cc", more = true),
+        number("depth_in", "Depth reached", "in", more = true),
+        legacy("depth_cm", "Depth reached", "cm"),
         toggle("estim", "Used as an e-stim electrode", more = true),
         text("notes", "Notes", more = true)
     )),
     Enema("Enema", setOf(Lane.Exploration), listOf(
-        number("volume_ml", "Volume", "mL"),
+        number("volume_oz", "Volume", "oz"),
+        legacy("volume_ml", "Volume", "mL"),
         multi("solution", "Solution", "Water", "Saline", "Castile soap", "Other"),
-        text("additive", "How much soap / additive", "e.g. 1 tbsp per litre", showIf = has("solution", "Castile soap", "Other")),
+        text("additive", "How much soap / additive", "e.g. 1 tbsp per quart", showIf = has("solution", "Castile soap", "Other")),
         choice("temperature", "Temperature", "Warm", "Body temp", "Room temp", "Cool"),
         choice("nozzle", "Nozzle", "Rigid short", "Rigid long", "Soft flexible", "Deep tube", "Inflatable", "Double balloon", "Bulb tip"),
         choice("delivery", "Delivery", "Bag", "Bulb", "Shower", "Syringe", more = true),
         choice("flow", "Flow", "Slow", "Moderate", "Fast", more = true),
-        number("nozzle_depth_cm", "Nozzle depth", "cm", more = true),
+        number("nozzle_depth_in", "Nozzle depth", "in", more = true),
+        legacy("nozzle_depth_cm", "Nozzle depth", "cm"),
         number("retention_min", "Held for", "min", more = true),
         number("rounds", "Rounds", "×", more = true),
         text("notes", "Notes", more = true)
@@ -96,7 +102,7 @@ enum class GearType(val label: String, val lane: Set<Lane>, val fields: List<Fie
     )),
     AnalToy("Anal toy", setOf(Lane.Sexual, Lane.Exploration), listOf(
         choice("kind", "Kind", "Plug", "Dilator", "Dildo", "Prostate", "Vibrator", "Beads"),
-        text("size", "Size", "e.g. 3.5 cm / #4"),
+        text("size", "Size", "e.g. 1.5 in / #4"),
         choice("material", "Material", *MATERIALS, more = true),
         toggle("vibration", "Vibration on", more = true)
     )),
@@ -120,7 +126,7 @@ enum class GearType(val label: String, val lane: Set<Lane>, val fields: List<Fie
         text("details", "Details", more = true)
     ));
 
-    /** Short summary for lists: "16 Fr · 10 mL · Silicone". */
+    /** Short summary for lists: "16 Fr · 10 cc · Silicone". */
     fun summary(v: Map<String, String>): String = fields.filter { it.applies(v) && it.key != "notes" && it.kind != FieldKind.Toggle && !v[it.key].isNullOrBlank() }
         .take(4).joinToString(" · ") { f -> v[f.key]!!.replace("|", ", ") + (f.unit?.let { u -> if (u == "×") "×" else " $u" } ?: "") }
 }
@@ -155,7 +161,7 @@ object DetailForms {
         choice("ejac_volume", "Volume", "Small", "Moderate", "Large", showIf = eq("outcome", "Climax with ejaculation")),
         choice("ejac_force", "Force", "Dribble", "Steady", "Spurts", "Strong spurts", showIf = eq("outcome", "Climax with ejaculation")),
         choice("ejac_consistency", "Consistency", "Watery", "Normal", "Thick", "Gel / clumpy", showIf = eq("outcome", "Climax with ejaculation")),
-        choice("ejac_color", "Colour", "Clear", "White / grey", "Yellowish", "Pink / red", showIf = eq("outcome", "Climax with ejaculation")),
+        choice("ejac_color", "Color", "Clear", "White / gray", "Yellowish", "Pink / red", showIf = eq("outcome", "Climax with ejaculation")),
         scale("satisfaction", "Satisfaction"),
         scale("erection_stability", "Erection stability", "0 couldn't keep it · 10 firm throughout"),
         scale("discomfort", "Discomfort"),

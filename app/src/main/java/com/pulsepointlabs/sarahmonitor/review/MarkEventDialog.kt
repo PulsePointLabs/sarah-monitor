@@ -133,7 +133,7 @@ private fun TimingChip(label: String, on: Boolean, color: Color, onClick: () -> 
     )
 }
 
-/** Colour per event type, used for chips, chart marker lines and the event list. */
+/** Color per event type, used for chips, chart marker lines and the event list. */
 fun markerColor(types: String): Color = when (MarkerTypes.split(types).firstOrNull()) {
     "symptom" -> MonitorColors.warn
     "sensor_issue" -> MonitorColors.alarm
@@ -229,7 +229,7 @@ fun MarkEventDialog(
         onDispose {
             recognizer.stop(); whisper.cancel(); realtime.release()
             MonitorHub.handsFree.pause(false, MonitorHub.session.value != null)
-            // Saved or cancelled: whatever was playing when you started dictating carries on.
+            // Saved or canceled: whatever was playing when you started dictating carries on.
             com.pulsepointlabs.sarahmonitor.audio.MediaHold.release("mark-event")
         }
     }

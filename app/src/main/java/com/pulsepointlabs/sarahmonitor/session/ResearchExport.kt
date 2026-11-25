@@ -175,13 +175,13 @@ UNITS AND DEFINITIONS
 - quality: Valid (logging on, no fault), Preview (logging off), Calibrating, Stabilizing (5 s after a gap of 3 s or more),
   SuspectedDisplacement, BaselineShift, ReportedProblem (a "Sensor problem" event), Unknown (recorded before 0.25).
   quality_source: live = stored when recorded; replayed = recomputed now from the raw samples (older recordings);
-  annotation = overridden by a "Sensor problem" event. usable = 1 when the sample may be analysed.
+  annotation = overridden by a "Sensor problem" event. usable = 1 when the sample may be analyzed.
 - Contraction: a hold of 0.2 to ${PelvicProcessor.MAX_CONTRACTION_S.toInt()} s on usable samples. Longer holds are "sustained elevation", origin unknown.
 - HRV (hr.csv): RMSSD/SDNN/pNN50 over a rolling 2-minute window of accepted normal-to-normal intervals. Short-window values are
   exploratory and not equivalent to standard 5-minute recordings. Whole-session values (summary.md) use all accepted NN intervals.
 - RR: packet_t_ms is when the H10 packet arrived (several intervals share it). est_beat_t_ms subtracts the later intervals in the
   same packet: an estimate of when each beat ended, not a measured beat time.
-- Load (0-100): relative physiological load from HR and HRV against a personal resting baseline. Not a standardised measure.
+- Load (0-100): relative physiological load from HR and HRV against a personal resting baseline. Not a standardized measure.
 - stress_est: Sarah's estimate from HRV, unexplained HR, breathing, tension and movement. Not a validated measure.
 
 SIGNAL-INTEGRITY RULE (PressureIntegrity v${PressureIntegrity.VERSION}; exploratory thresholds, not yet validated on recordings)

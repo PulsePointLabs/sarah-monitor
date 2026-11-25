@@ -198,7 +198,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Glucose results shared to Sarah Monitor from another app (OneTouch Reveal's share/export, a file manager,
-     * email…). Same behaviour as Sarah's share target: a CSV file or shared text, parsed by the glucose importer.
+     * email…). Same behavior as Sarah's share target: a CSV file or shared text, parsed by the glucose importer.
      */
     private fun handleSharedExport(intent: android.content.Intent?) {
         if (intent?.action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED) {
