@@ -248,7 +248,7 @@ object SessionAnalysis {
             val p = data.pelvicSummary
             lines += when {
                 p.loggedCount == 0 -> "Pelvic pressure was only previewed (logging was never switched on), so no contractions were analyzed."
-                p.maxKpa != null -> "Pelvic pressure peaked at ${"%.1f".format(p.maxKpa)} kPa above rest with ${p.pulses.size} contraction${if (p.pulses.size == 1) "" else "s"}" +
+                p.maxKpa != null -> "Pelvic pressure peaked at ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(p.maxKpa)} above rest with ${p.pulses.size} contraction${if (p.pulses.size == 1) "" else "s"}" +
                     (p.longestHoldS?.let { "; longest hold ${"%.1f".format(it)} s" } ?: "") +
                     (if (p.sustained.isNotEmpty()) "; ${p.sustained.size} sustained elevation${if (p.sustained.size == 1) "" else "s"} over ${com.pulsepointlabs.sarahmonitor.core.PelvicProcessor.MAX_CONTRACTION_S.toInt()} s (not counted as contractions)" else "") + "."
                 else -> "Pelvic pressure was recorded but no rest level was set."

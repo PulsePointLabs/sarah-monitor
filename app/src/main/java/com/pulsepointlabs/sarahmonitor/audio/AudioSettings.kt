@@ -23,7 +23,7 @@ enum class AlertKind(val label: String, val detail: String, val defaultMode: Ale
     HighLoad("High load", "Load 58+ for a minute (82+ is high)", AlertMode.Voice, 10 * 60_000L),
     IrregularBeat("Irregular beat", "Premature/ectopic beat in the H10's RR intervals", AlertMode.Off, 5 * 60_000L),
     LongHold("Long pelvic hold", "A hold reaches the set length", AlertMode.Off, 60_000L),
-    StrongContraction("Strong contraction", "Peak at least twice this session's typical (min 3 kPa)", AlertMode.Off, 60_000L),
+    StrongContraction("Strong contraction", "Peak at least twice this session's typical (min 22 mmHg)", AlertMode.Off, 60_000L),
     ContractionBurst("Contraction burst", "4+ quick contractions, each within 3 s of the last", AlertMode.Off, 2 * 60_000L),
     SignalLost("Sensor signal lost", "H10 contact or data gone for 10 s, or a sensor disconnects", AlertMode.Tone, 2 * 60_000L),
     HighBp("High blood pressure", "New reading at 140/90 or above", AlertMode.Voice, 0L),

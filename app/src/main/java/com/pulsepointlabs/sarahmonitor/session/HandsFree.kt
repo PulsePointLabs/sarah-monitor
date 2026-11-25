@@ -75,7 +75,7 @@ object VoiceCommand {
         return afterWake(offline) ?: offline.trim()
     }
 
-    val BUCKETS = listOf("procedure_step", "sensation", "arousal_change", "near_climax", "climax", "physiological_change", "body_finding", "comfort", "general")
+    val BUCKETS = listOf("procedure_step", "sensation", "arousal_change", "near_climax", "climax", "physiological_change", "body_finding", "comfort", "substance_use", "mood", "activity", "general")
 
     private val NUMBER_WORDS = mapOf("zero" to 0, "one" to 1, "two" to 2, "three" to 3, "four" to 4, "five" to 5, "six" to 6, "seven" to 7, "eight" to 8, "nine" to 9, "ten" to 10)
 
@@ -90,6 +90,10 @@ object VoiceCommand {
     private val RULES: List<Pair<Regex, Pair<String, String>>> = listOf(
         // The pressure sensor itself (not a session device): "the probe slipped out", "re-seating the sensor".
         Regex("\\b(probe|sensor|civet)\\b.{0,40}\\b(slip(?:ped|ping|s)?|fell|fall(?:ing|s)?|came|com(?:e|ing) out|moved|dislodg|deflat|re-?seat|re-?inflat|pop(?:ped)?)|\\b(slip(?:ped)?|re-?seat(?:ed|ing)?|re-?inflat(?:ed|ing)?)\\b.{0,30}\\b(probe|sensor|civet)\\b") to ("sensor_issue" to "general"),
+        // What he took, how he feels, what he's doing (the all-day log).
+        Regex("\\b(indica|sativa|weed|cannabis|marijuana|thc|edible|gumm(?:y|ies)|beers?|wine|liquor|whiske?y|bourbon|vodka|drunk|buzzed|tipsy|coffee|caffeine|espresso|energy drink|cold brew|nicotine|vape|vaping|zyns?|cigarettes?|medication|meds)\\b") to ("substance" to "substance_use"),
+        Regex("\\b(relax(?:ed|ing)?|calm|anxious|anxiety|stressed|irritable|tired|exhausted|wired|overstimulated|jittery|focused|foggy|content|happy|sad|down|chill|mellow|intoxicated|stoned|high|sleepy|restless)\\b") to ("state" to "mood"),
+        Regex("\\b(chores?|walking|working|cooking|eating|shower(?:ing)?|laundry|dishes|vacuum|going to bed|watching|gaming|driving|resum(?:e|ing)|getting ready)\\b") to ("activity" to "activity"),
         // Word endings matter: "prepped" is a prep step, "the lab is prepared" isn't.
         Regex("\\b(lube\\b|lubric|prep(?:ping|ped|aring|are|s)?\\b|clean(?:ing|ed)?\\b|betadine|swab)") to ("prep" to "procedure_step"),
         Regex("\\b(resistance|resisting|tight(?:ness)?|stuck)") to ("resistance" to "procedure_step"),
@@ -176,13 +180,15 @@ object VoiceCommand {
     /** Prompt for Claude: map a spoken note to this session's event types and devices. */
     fun claudePrompt(allowed: List<MarkerTypes.Type>, gear: List<GearItem>): String = """
 You categorize a short spoken note from a paramedic logging his own body during a physiology session. His words are saved verbatim; you only classify them.
-Allowed event types (id: label): ${allowed.joinToString("; ") { "${it.id}: ${it.label}" }}.
+Allowed event types (id: label — what it means):
+${allowed.joinToString("\n") { "- ${it.id}: ${it.label}" + (it.hint.takeIf { h -> h.isNotBlank() }?.let { h -> " — $h" } ?: "") }}
+Choosing types: read the whole note for what he means, not single words. Pick the one type that best fits; add a second (at most three) only when the note clearly covers two different things, for example what he is doing and how he feels ("getting ready to resume chores, feeling fairly relaxed" = activity + state). Never use recovery for simply feeling relaxed or calm. Substance use (cannabis such as indica or sativa, alcohol such as beer, caffeine, nicotine, a medication) is substance, including how strongly he feels it ("feeling pretty buzzed from the beer", "overstimulated from the caffeine" = substance + state); note what it is in "measures".
 Devices in use (id: label): ${gear.joinToString("; ") { "${it.id}: ${it.label}" }.ifBlank { "none" }}.
 The CIVET rectal pressure probe/sensor is the measuring instrument, not one of these devices: if he is talking about the probe, the sensor or a balloon without naming the catheter, set "device" to null. Use "sensor_issue" (if allowed) when the sensor slipped, came out, moved, deflated or was re-seated or re-inflated.
 Buckets: ${BUCKETS.joinToString(", ")}.
 Procedure notes (enema, catheter, sounding, anal devices) often carry numbers: amount instilled, estimated depth of the tip or device, and 0-10 scores for urge to defecate or void, discomfort (pinch, pop, cramp, burning), arousal and fullness, plus erection state. Pull each number he actually said into "measures"; never guess one. Volume: "total_ml" when he states how much is in altogether, "added_ml" when he states an amount added on top of what was already in (use the running tally he gives you, if any, to tell which). He is American and talks in inches, fluid ounces, quarts, pints, cups and cc: convert to mL (1 oz = 29.57 mL, 1 quart = 946 mL, 1 cc = 1 mL) and cm (1 in = 2.54 cm) for the measures fields only. The running tally gives both.
 He may also be asking Sarah a question ("how long have I been holding?", "is that normal?", "what was my heart rate when it popped?"): set "question" true only when he wants an answer from her.
-Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or null,"bucket":one bucket,"intensity":0-10 or null (only if he gave a number or a clear severity),"site":anatomical site or null,"measures":{"total_ml":n,"added_ml":n,"depth_cm":n,"urge_0_10":n,"discomfort_0_10":n,"arousal_0_10":n,"fullness_0_10":n,"erection":"none|building|partial|full|softening" } with only the keys he gave (or {}),"question":true or false,"confirm":a spoken confirmation of at most 12 words that repeats any numbers he gave, in the units he said them (ounces, inches, cc; never converted to metric), so he can catch a mishearing, no names}.
+Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or null,"bucket":one bucket,"intensity":0-10 or null (only if he gave a number or a clear severity),"site":anatomical site or null,"measures":{"total_ml":n,"added_ml":n,"depth_cm":n,"urge_0_10":n,"discomfort_0_10":n,"arousal_0_10":n,"fullness_0_10":n,"erection":"none|building|partial|full|softening","substance":"cannabis|alcohol|caffeine|nicotine|medication|other","substance_detail":what and how much in a few of his words (e.g. "indica vape, two hits", "second beer", "16 oz cold brew"),"effect_0_10":how strongly he feels it, only if he gave a number } with only the keys he gave (or {}),"question":true or false,"confirm":a spoken confirmation of at most 12 words that repeats any numbers he gave, in the units he said them (ounces, inches, cc; never converted to metric), so he can catch a mishearing, no names}.
 """.trimIndent()
 
     fun parseClaude(json: String, command: String, allowed: Set<String>, gear: List<GearItem>): SpokenEvent? = runCatching {

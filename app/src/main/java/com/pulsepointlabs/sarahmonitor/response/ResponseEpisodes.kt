@@ -95,7 +95,7 @@ data class ResponseEpisode(
             if (pct >= 15) "HRV tightened by $pct% at the peak (${SessionAnalysis.num(rmssdBefore)} → ${SessionAnalysis.num(rmssdAtPeak)} ms), the usual sign of high sympathetic drive." else null
         } else null
         hrv?.let { parts += it }
-        if (pelvicPeakKpa != null && pelvicPeakKpa >= 0.5) parts += "Pelvic floor peaked at ${SessionAnalysis.num(pelvicPeakKpa)} kPa above rest" + (if (contractions > 0) " with $contractions contraction${if (contractions == 1) "" else "s"}." else ".")
+        if (pelvicPeakKpa != null && pelvicPeakKpa >= 0.5) parts += "Pelvic floor peaked at ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(pelvicPeakKpa)} above rest" + (if (contractions > 0) " with $contractions contraction${if (contractions == 1) "" else "s"}." else ".")
         val rec = when {
             halfRecoveryS != null -> "It came halfway back down in ${SessionAnalysis.durationWords(halfRecoveryS * 1000L)}" + (drop60?.let { " (−${it.roundToInt()} bpm after a minute)." } ?: ".")
             drop60 != null -> "HR was down ${drop60.roundToInt()} bpm a minute after the peak."
@@ -266,7 +266,7 @@ object ResponseEpisodes {
         val recov = episodes.dropLast(1).map { it.recoveryFraction }
         if (recov.count { it != null } >= 1) out += "Recovery before the next build: ${recov.joinToString(" → ") { r -> r?.let { "${(it * 100).roundToInt()}%" } ?: "?" }} of each rise came back down."
         val press = episodes.map { it.pelvicPeakKpa }
-        if (press.count { it != null } >= 2) out += "Peak pressure: ${seq(press) { SessionAnalysis.num(it) }} kPa (${direction(press, 0.3)})."
+        if (press.count { it != null } >= 2) out += "Peak pressure: ${seq(press) { com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(it) }} ${com.pulsepointlabs.sarahmonitor.core.Pressure.label} (${direction(press, 0.3)})."
         val low = episodes.count { it.confidence != "good" }
         if (low > 0) out += "$low of ${episodes.size} episodes have limited or low data quality; read their numbers with care."
         return out

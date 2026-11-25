@@ -116,7 +116,7 @@ private fun SessionCard(s: SessionEntity, onClick: () -> Unit) {
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Stat("Events", s.markerCount.toString(), MonitorColors.text, Modifier.weight(1f))
-            Stat("Max kPa", s.pelvicMaxKpa?.let { "%.1f".format(it) }, MonitorColors.pelvic, Modifier.weight(1f))
+            Stat("Max ${com.pulsepointlabs.sarahmonitor.core.Pressure.label}", s.pelvicMaxKpa?.let { com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(it) }, MonitorColors.pelvic, Modifier.weight(1f))
             Stat("Contract.", s.pelvicPulseCount?.toString(), MonitorColors.pelvic, Modifier.weight(1f))
             Stat("Hold", s.pelvicLongestHoldS?.let { "%.0f s".format(it) }, MonitorColors.pelvic, Modifier.weight(1f))
         }

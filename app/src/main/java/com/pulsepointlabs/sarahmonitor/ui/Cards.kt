@@ -388,7 +388,7 @@ private fun HrvTrendCard() {
     }
 }
 
-/** A live number for a card header, padded to a fixed width so it never shifts its neighbours. */
+/** A live number for a card header, padded to a fixed width so it never shifts its neighbors. */
 @Composable
 private fun LiveValue(label: String?, value: String?, maxChars: Int, color: Color) {
     val s = LocalCardScale.current
@@ -419,11 +419,11 @@ private fun PelvicTrendCard() {
     val trends by MonitorHub.trends.collectAsState()
     val pelvic by MonitorHub.pelvic.collectAsState()
     val recent by MonitorHub.recent.collectAsState()
-    TrendCardFrame("Pressure trend", MonitorColors.pelvic, "kPa", current = {
-        LiveValue(null, pelvic.aboveRestKpa?.let { fmt(it, 1) }, 4, trendColor(recent.trend(Metric.Pelvic)))
+    TrendCardFrame("Pressure trend", MonitorColors.pelvic, com.pulsepointlabs.sarahmonitor.core.Pressure.label, current = {
+        LiveValue(null, pelvic.aboveRestKpa?.let { com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(it) }, 4, trendColor(recent.trend(Metric.Pelvic)))
     }) { start, end ->
         TrendChart(
-            series = listOf(Series("Above rest", MonitorColors.pelvic, trends.map { it.timestampMs to it.pelvic })),
+            series = listOf(Series("Above rest", MonitorColors.pelvic, trends.map { it.timestampMs to it.pelvic?.let(com.pulsepointlabs.sarahmonitor.core.Pressure::value) })),
             startMs = start, endMs = end, modifier = Modifier.fillMaxSize(), minSpan = 1.0, decimals = 1,
             emptyText = "Connect CIVET to see the pressure trend"
         )
@@ -450,12 +450,12 @@ private fun PelvicCard() {
     val overlay = LocalOverlayMode.current
     val connected = state == ConnectionState.Connected || state == ConnectionState.Stale
     FitColumn(Modifier.fillMaxSize()) {
-        fixed { CardTitle(if (s.widthDp < 230f) "Pelvic" else "Pelvic pressure", if (overlay) color else MonitorColors.pelvic, "kPa") { Text(link, color = linkColor, fontSize = s.sp(11f), maxLines = 1) } }
+        fixed { CardTitle(if (s.widthDp < 230f) "Pelvic" else "Pelvic pressure", if (overlay) color else MonitorColors.pelvic, com.pulsepointlabs.sarahmonitor.core.Pressure.label) { Text(link, color = linkColor, fontSize = s.sp(11f), maxLines = 1) } }
         flex { BigReading(
-            value = if (fresh) fmt(p.aboveRestKpa, 1) else "--",
+            value = if (fresh) com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(p.aboveRestKpa) else "--",
             color = color,
             maxChars = 4,
-            trend = recent.values(Metric.Pelvic),
+            trend = recent.values(Metric.Pelvic).map(com.pulsepointlabs.sarahmonitor.core.Pressure::value),
             trendStrength = recent.trend(Metric.Pelvic),
             modifier = Modifier.fillMaxSize()
         ) }
@@ -463,9 +463,9 @@ private fun PelvicCard() {
         val faulted = p.quality.fault
         fixed(drop = if (faulted) 3 else 1) { Chips {
             if (p.referenceKpa != null) StatChip("of ref", p.percentOfReference?.takeIf { fresh }?.let { "${"%.0f".format(it)}%" } ?: "--", MonitorColors.pelvic)
-            StatChip("30s avg", fmt(p.average30s, 1))
-            StatChip("30s max", fmt(p.max30s, 1))
-            StatChip("max", fmt(p.sessionMax, 1))
+            StatChip("30s avg", com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(p.average30s))
+            StatChip("30s max", com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(p.max30s))
+            StatChip("max", com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(p.sessionMax))
             StatChip(if (p.holding) "hold" else "last", holdText.substringAfter(' '), if (p.holding) MonitorColors.pelvic else MonitorColors.text)
             StatChip("pulses", "${p.pulsesLastMinute}/min")
             if (s.roomy) StatChip("longest", p.longestHoldS?.let { "${fmt(it, 1)}s" } ?: "--")
@@ -487,10 +487,10 @@ private fun PelvicCard() {
             error != null && !fresh -> error!!
             p.message != null -> p.message!!
             !p.logging && p.restSource == RestSource.None -> "Preview, not logging. Relax for auto rest or capture rest."
-            !p.logging -> "Preview, not logging · ${if (p.restSource == RestSource.Captured) "rest ${fmt(p.restKpa, 2)} kPa" else "auto rest"}"
+            !p.logging -> "Preview, not logging · ${if (p.restSource == RestSource.Captured) "rest ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(p.restKpa)}" else "auto rest"}"
             p.sustained -> "Sustained elevation, not counted as a contraction"
             p.restSource == RestSource.Auto -> "Logging · auto rest"
-            p.restSource == RestSource.Captured -> "Logging · rest ${fmt(p.restKpa, 2)} kPa · threshold ${fmt(p.thresholdKpa, 2)}"
+            p.restSource == RestSource.Captured -> "Logging · rest ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(p.restKpa)} · threshold ${com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(p.thresholdKpa)}"
             else -> ""
         }
         val statusColor = when {

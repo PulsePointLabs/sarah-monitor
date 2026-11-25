@@ -636,7 +636,7 @@ private fun MonitorScreen(
     }
 }
 
-private val clockFormat = DateTimeFormatter.ofPattern("HH:mm:ss")
+private val clockFormat = DateTimeFormatter.ofPattern("h:mm a")
 
 @Composable
 internal fun TopBar(
@@ -663,7 +663,7 @@ internal fun TopBar(
     var menu by remember { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         // Three widths: full desktop bar (DeX), medium (tablet / phone landscape) and narrow (phone portrait).
-        // Full labelled bar only when everything fits (tabs, record, mark, Sarah, overlays, sensors, card tools).
+        // Full labeled bar only when everything fits (tabs, record, mark, Sarah, overlays, sensors, card tools).
         val full = maxWidth >= 1360.dp
         val narrow = maxWidth < 600.dp
         // Phone-sized windows use the fit-to-screen board (no free arranging).
@@ -694,7 +694,7 @@ internal fun TopBar(
                     Spacer(Modifier.weight(1f))
                     RecordButton(recording, now, compact = false, onClick = onRecord)
                     MarkButton(enabled = recording != null, compact = false, onClick = onMark)
-                    ListenButton(labelled = false)
+                    ListenButton(labeled = false)
                     OverlayToggle()
                     moreMenu()
                 }
@@ -720,7 +720,7 @@ internal fun TopBar(
             }
             RecordButton(recording, now, compact = false, onClick = onRecord)
             MarkButton(enabled = recording != null, compact = !full, onClick = onMark)
-            ListenButton(labelled = true)
+            ListenButton(labeled = true)
             OverlayToggle()
             if (full) {
                 DevicePill("H10", h10, onDevices)
@@ -741,7 +741,7 @@ internal fun TopBar(
  * (filled). Tap to switch. With a label on wider screens; the icon alone on a phone.
  */
 @Composable
-private fun ListenButton(labelled: Boolean) {
+private fun ListenButton(labeled: Boolean) {
     val enabled by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.enabled.collectAsState()
     val status by MonitorHub.handsFree.status.collectAsState()
     val color = when {
@@ -759,11 +759,11 @@ private fun ListenButton(labelled: Boolean) {
             .background(if (status.listening) color.copy(alpha = 0.18f) else Color.Transparent, RoundedCornerShape(8.dp))
             .border(1.dp, color.copy(alpha = if (enabled) 0.9f else 0.5f), RoundedCornerShape(8.dp))
             .clickable { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setEnabled(!enabled) }
-            .padding(horizontal = if (labelled) 10.dp else 7.dp),
+            .padding(horizontal = if (labeled) 10.dp else 7.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Icon(if (enabled) Icons.Default.Hearing else Icons.Default.MicOff, contentDescription = "Hands-free Sarah: ${status.message}", tint = color, modifier = Modifier.size(18.dp))
-        if (labelled) Text(label, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        if (labeled) Text(label, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }
 

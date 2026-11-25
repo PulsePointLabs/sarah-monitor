@@ -138,7 +138,13 @@ bedside-monitor dashboards, floating overlays and a review screen.
   `session/UsUnits`. Stored numbers stay mL / cm (one unit for research data). Speech accepts oz, quarts, pints, cups,
   cc, inches (and metric). Device fields: balloon/lube in cc, depths in inches, enema volume in oz; old metric values
   still show on old sessions. Sarah's prompts say he's American.
-- Still metric/other: pelvic pressure in kPa, the top-bar clock is 24-hour. Asked Ben.
+- 0.28.2: pelvic pressure shown/spoken in mmHg everywhere (`core/Pressure`; storage, thresholds and research
+  columns stay kPa, research CSV gains above_rest_mmhg, sensor-event text keeps kPa alongside). 12-hour clocks
+  everywhere (top bar h:mm a). More US spellings (labeled, modeled, neighbor, math).
+- 0.28.2 sorting: every event type has a definition sent to Claude (`MarkerTypes.Type.hint`); new types Substance
+  (cannabis/alcohol/caffeine/nicotine/medication, with what + how much + 0–10 "feeling it") and How I feel (mood /
+  energy), offered in every session type with Symptom. Recovery = physiological recovery only. Keyword fallback
+  knows substances, feelings, activities. Review shows substance chips.
 
 ## Open / unverified
 

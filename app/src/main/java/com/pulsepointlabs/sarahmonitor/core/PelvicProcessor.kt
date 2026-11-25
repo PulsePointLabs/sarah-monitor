@@ -65,7 +65,7 @@ data class PelvicSnapshot(
  *
  * Workflow: connect and watch the live pressure while positioning (Preview). Capture a relaxed rest (or let auto
  * rest settle), then switch logging on. Only then do contractions, holds and pressure statistics count. Calibration
- * and preview samples are still recorded raw, labelled with their quality, and never feed the analysis.
+ * and preview samples are still recorded raw, labeled with their quality, and never feed the analysis.
  *
  * Rest comes from a 5 s relaxed capture when the user takes one, otherwise from a rolling low percentile of the
  * last 30 s ("auto rest"), which follows slow drift but is not as trustworthy as a captured rest. A reference
@@ -147,8 +147,8 @@ class PelvicProcessor {
         integrity.reset()
         resetStats()
         abortHold()
-        message = "Logging pressure. Rest ${"%.2f".format(rest)} kPa (${if (capturedRest != null) "captured" else "auto"})."
-        event(nowMs, "logging_on", "rest ${"%.2f".format(rest)} kPa ${if (capturedRest != null) "captured" else "auto"}" + (wasFault?.let { "; cleared ${it.label}" } ?: ""))
+        message = "Logging pressure. Rest ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(rest)} (${if (capturedRest != null) "captured" else "auto"})."
+        event(nowMs, "logging_on", "rest ${com.pulsepointlabs.sarahmonitor.core.Pressure.record(rest)} ${if (capturedRest != null) "captured" else "auto"}" + (wasFault?.let { "; cleared ${it.label}" } ?: ""))
         return null
     }
 
@@ -257,7 +257,7 @@ class PelvicProcessor {
             PressureIntegrity.Issue.BaselineShift -> "Rest level shifted. Check the sensor, then capture a new rest or tap Resume."
         }
         event(t, if (issue == PressureIntegrity.Issue.Displacement) "suspected_displacement" else "baseline_shift",
-            "pressure ${"%.2f".format(pressure)} kPa, ${above?.let { "%.2f".format(it) } ?: "?"} vs rest ${rest?.let { "%.2f".format(it) } ?: "?"}")
+            "pressure ${com.pulsepointlabs.sarahmonitor.core.Pressure.record(pressure)}, ${above?.let { com.pulsepointlabs.sarahmonitor.core.Pressure.record(it) } ?: "?"} vs rest ${rest?.let { com.pulsepointlabs.sarahmonitor.core.Pressure.record(it) } ?: "?"}")
     }
 
     private fun event(t: Long, kind: String, detail: String) {
@@ -292,8 +292,8 @@ class PelvicProcessor {
         when (kind) {
             CaptureKind.Rest -> {
                 if (sd > MAX_REST_NOISE_KPA) {
-                    message = "Rest wasn't steady (±${"%.2f".format(sd)} kPa). Relax and repeat."
-                    event(timestampMs, "capture_failed", "rest not steady ±${"%.2f".format(sd)} kPa")
+                    message = "Rest wasn't steady (±${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(sd)}). Relax and repeat."
+                    event(timestampMs, "capture_failed", "rest not steady ±${com.pulsepointlabs.sarahmonitor.core.Pressure.record(sd)}")
                 } else {
                     capturedRest = mean
                     restNoise = sd
@@ -303,9 +303,9 @@ class PelvicProcessor {
                     // Recapturing rest is the user recalibrating: a fault ends here, under their control.
                     fault = null
                     stabilizeUntilMs = null
-                    message = "Rest set at ${"%.2f".format(mean)} kPa." +
+                    message = "Rest set at ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(mean)}." +
                         if (logging) " Logging." else " Tap Start logging when ready."
-                    event(timestampMs, "rest_captured", "rest ${"%.2f".format(mean)} kPa ±${"%.2f".format(sd)}" + (cleared?.let { "; cleared ${it.label}" } ?: ""))
+                    event(timestampMs, "rest_captured", "rest ${com.pulsepointlabs.sarahmonitor.core.Pressure.record(mean)} ±${com.pulsepointlabs.sarahmonitor.core.Pressure.record(sd)}" + (cleared?.let { "; cleared ${it.label}" } ?: ""))
                     resetStats()
                 }
             }
@@ -318,8 +318,8 @@ class PelvicProcessor {
                     "Hold was too small or noisy. Repeat a steady 5 s hold."
                 } else {
                     reference = ref
-                    event(timestampMs, "reference_captured", "reference ${"%.2f".format(ref)} kPa above rest")
-                    "Reference set: ${"%.2f".format(ref)} kPa above rest = 100%."
+                    event(timestampMs, "reference_captured", "reference ${com.pulsepointlabs.sarahmonitor.core.Pressure.record(ref)} above rest")
+                    "Reference set: ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(ref)} above rest = 100%."
                 }
             }
         }

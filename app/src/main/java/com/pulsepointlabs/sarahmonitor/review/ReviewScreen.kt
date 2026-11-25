@@ -96,7 +96,7 @@ private class ReviewSeriesSet(data: SessionData) {
     val pelvic = ReviewSeries(
         "Above rest", MonitorColors.pelvic,
         data.pelvic.map { it.timestampMs }.toLongArray(),
-        data.pelvic.map { it.aboveRestKpa ?: Double.NaN }.toDoubleArray(),
+        data.pelvic.map { it.aboveRestKpa?.let(com.pulsepointlabs.sarahmonitor.core.Pressure::value) ?: Double.NaN }.toDoubleArray(), // shown in mmHg
         SeriesStyle.Area, gapMs = 1_000L
     )
     val sys = ReviewSeries("SYS", MonitorColors.bp, data.bp.map { it.timestampMs }.toLongArray(), data.bp.map { it.systolic.toDouble() }.toDoubleArray(), SeriesStyle.Dots)
@@ -275,7 +275,7 @@ fun ReviewScreen(
         if (series.hasBreaths) add(ChartEntry(90f) { m, fill -> ReviewChart("Breathing", "/min", listOf(series.breaths), viewport, chartMarkers, cursor, setCursor, zoom, 90.dp, m, minSpan = 6.0, fillHeight = fill, describe = describe) })
         if (series.hasLoad) add(ChartEntry(100f) { m, fill -> ReviewChart("Load", "0–100", listOf(series.load), viewport, chartMarkers, cursor, setCursor, zoom, 100.dp, m, fixedBounds = 0.0 to 100.0, refLines = listOf(58.0 to "elevated"), bands = bands(FlagChart.Load), fillHeight = fill, describe = describe) })
         if (d.emg.isNotEmpty()) add(ChartEntry(150f) { m, fill -> ReviewChart("EMG", if (series.emgCalibrated) "% of hold" else "raw ENV", listOfNotNull(series.emg1, series.emg2.takeIf { series.hasEmg2 }), viewport, chartMarkers, cursor, setCursor, zoom, 150.dp, m, minSpan = 20.0, fillHeight = fill, describe = describe) })
-        if (d.pelvic.isNotEmpty()) add(ChartEntry(170f) { m, fill -> ReviewChart("Pelvic pressure", "kPa above rest", listOf(series.pelvic), viewport, chartMarkers, cursor, setCursor, zoom, 170.dp, m, minSpan = 2.0, decimals = 1, bands = bands(FlagChart.Pelvic), fillHeight = fill, describe = describe) })
+        if (d.pelvic.isNotEmpty()) add(ChartEntry(170f) { m, fill -> ReviewChart("Pelvic pressure", "${com.pulsepointlabs.sarahmonitor.core.Pressure.label} above rest", listOf(series.pelvic), viewport, chartMarkers, cursor, setCursor, zoom, 170.dp, m, minSpan = com.pulsepointlabs.sarahmonitor.core.Pressure.value(2.0), decimals = 0, bands = bands(FlagChart.Pelvic), fillHeight = fill, describe = describe) })
         if (d.bp.isNotEmpty()) add(ChartEntry(120f) { m, fill -> ReviewChart("Blood pressure", "mmHg", listOf(series.sys, series.dia), viewport, chartMarkers, cursor, setCursor, zoom, 120.dp, m, minSpan = 40.0,
             emptyText = "Readings are outside the zoomed range", bands = bands(FlagChart.Bp), fillHeight = fill, describe = describe) })
         if (d.glucose.any { it.timestampMs in fullStart..fullEnd }) add(ChartEntry(110f) { m, fill -> ReviewChart("Glucose", "mg/dL", listOf(series.glucose), viewport, chartMarkers, cursor, setCursor, zoom, 110.dp, m, minSpan = 40.0,
@@ -531,7 +531,7 @@ private fun SummaryCard(d: SessionData, flags: List<SessionFlag>) {
             d.hr.mapNotNull { it.breathsPerMin }.takeIf { it.isNotEmpty() }?.let { add(TileSpec("Breathing", "%.0f".format(it.average()), "/min", MonitorColors.pelvic)) }
             add(TileSpec("Events", d.markers.size.toString(), "", MonitorColors.text))
             if (d.pelvic.isNotEmpty()) {
-                add(TileSpec("Pressure peak", fmt(pelvic.maxKpa, 1), "kPa", MonitorColors.pelvic))
+                add(TileSpec("Pressure peak", com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(pelvic.maxKpa), com.pulsepointlabs.sarahmonitor.core.Pressure.label, MonitorColors.pelvic))
                 add(TileSpec("Contractions", pelvic.pulses.size.toString(), "", MonitorColors.pelvic))
                 add(TileSpec("Longest hold", fmt(pelvic.longestHoldS, 1), "s", MonitorColors.pelvic))
             }
@@ -622,7 +622,7 @@ private fun eventMetrics(d: SessionData, t: Long, snapshot: String?, sexual: Boo
     at.load?.let { v -> out += EventMetric("Load", "$v", com.pulsepointlabs.sarahmonitor.ui.percentBandColor(v) ?: MonitorColors.load, v - (avg { it.load?.toDouble() } ?: v.toDouble()), 8.0, true) }
     at.breathsPerMin?.let { v -> out += EventMetric("Breathing", "${v.toInt()}/min", MonitorColors.pelvic, v - (avg { it.breathsPerMin } ?: v), 2.5, true) }
     d.pelvic.minByOrNull { kotlin.math.abs(it.timestampMs - t) }?.takeIf { kotlin.math.abs(it.timestampMs - t) < 2_000L }?.aboveRestKpa?.let { k ->
-        out += EventMetric("Pelvic", "${SessionAnalysis.num(k)} kPa", MonitorColors.pelvic, 0.0, 1.0, true)
+        out += EventMetric("Pelvic", com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(k), MonitorColors.pelvic, 0.0, 1.0, true)
     }
     // Arousal phase only belongs on sexual sessions.
     if (sexual) runCatching { org.json.JSONObject(snapshot ?: "").optJSONObject("response") }.getOrNull()?.let { r ->
@@ -689,6 +689,8 @@ private fun procedureChips(m: MarkerEntity): Pair<List<EventMetric>, String?> {
     ms.fullness?.let { chip("Fullness", "$it/10", MonitorColors.pelvic) }
     ms.arousal?.let { chip("Arousal", "$it/10", MonitorColors.hr) }
     ms.erection?.let { chip("Erection", it, MonitorColors.hr) }
+    ms.substance?.let { chip(it.replaceFirstChar { c -> c.uppercase() }, ms.substanceDetail ?: "taken", com.pulsepointlabs.sarahmonitor.ui.StressColor) }
+    ms.effect?.let { chip("Feeling it", "$it/10", com.pulsepointlabs.sarahmonitor.ui.StressColor) }
     return out to voice?.optString("answer")?.takeIf { it.isNotBlank() && it != "null" }
 }
 
@@ -765,7 +767,7 @@ private fun EventsCard(
                         com.pulsepointlabs.sarahmonitor.session.InsightTrace("Heart rate", "bpm", ts, win.map { it.bpm.toDouble() }.toDoubleArray()),
                         com.pulsepointlabs.sarahmonitor.session.InsightTrace("RMSSD", "ms", ts, win.map { it.rmssdMs ?: Double.NaN }.toDoubleArray()).takeIf { win.any { it.rmssdMs != null } },
                         com.pulsepointlabs.sarahmonitor.session.InsightTrace("Stress", "", ts, win.map { it.stress?.toDouble() ?: Double.NaN }.toDoubleArray()).takeIf { win.any { it.stress != null } },
-                        d.pelvic.filter { it.timestampMs in from..to }.takeIf { it.isNotEmpty() }?.let { p -> com.pulsepointlabs.sarahmonitor.session.InsightTrace("Pelvic", "kPa", p.map { it.timestampMs }.toLongArray(), p.map { it.aboveRestKpa ?: Double.NaN }.toDoubleArray()) }
+                        d.pelvic.filter { it.timestampMs in from..to }.takeIf { it.isNotEmpty() }?.let { p -> com.pulsepointlabs.sarahmonitor.session.InsightTrace("Pelvic", com.pulsepointlabs.sarahmonitor.core.Pressure.label, p.map { it.timestampMs }.toLongArray(), p.map { it.aboveRestKpa?.let(com.pulsepointlabs.sarahmonitor.core.Pressure::value) ?: Double.NaN }.toDoubleArray()) }
                     ), from, to, m.timestampMs - 1_000L, m.timestampMs + 1_000L, color)
                     if (d.hasEcg) EcgAtCursor(sessionId, m.timestampMs)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
@@ -1049,7 +1051,7 @@ internal fun EpisodesCard(
                         e.peakHr?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Peak HR", "${it.toInt()} bpm") },
                         e.riseBpm?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Rise", "+${it.toInt()} bpm") },
                         e.rmssdAtPeak?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("HRV at peak", "${SessionAnalysis.num(it)} ms") },
-                        e.pelvicPeakKpa?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Pelvic peak", "${SessionAnalysis.num(it)} kPa") },
+                        e.pelvicPeakKpa?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Pelvic peak", com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(it)) },
                         if (e.contractions > 0) com.pulsepointlabs.sarahmonitor.session.InsightFact("Contractions", "${e.contractions}") else null,
                         e.halfRecoveryS?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("Half recovery", SessionAnalysis.durationWords(it * 1000L)) },
                         e.drop60?.let { com.pulsepointlabs.sarahmonitor.session.InsightFact("HR drop 60 s", "−${it.toInt()} bpm") },
@@ -1066,7 +1068,7 @@ internal fun EpisodesCard(
                     MiniTraces(listOfNotNull(
                         com.pulsepointlabs.sarahmonitor.session.InsightTrace("Heart rate", "bpm", ts, win.map { it.bpm.toDouble() }.toDoubleArray()),
                         com.pulsepointlabs.sarahmonitor.session.InsightTrace("RMSSD", "ms", ts, win.map { it.rmssdMs ?: Double.NaN }.toDoubleArray()).takeIf { win.any { it.rmssdMs != null } },
-                        d.pelvic.filter { it.timestampMs in from..to }.takeIf { it.isNotEmpty() }?.let { p -> com.pulsepointlabs.sarahmonitor.session.InsightTrace("Pelvic", "kPa", p.map { it.timestampMs }.toLongArray(), p.map { it.aboveRestKpa ?: Double.NaN }.toDoubleArray()) }
+                        d.pelvic.filter { it.timestampMs in from..to }.takeIf { it.isNotEmpty() }?.let { p -> com.pulsepointlabs.sarahmonitor.session.InsightTrace("Pelvic", com.pulsepointlabs.sarahmonitor.core.Pressure.label, p.map { it.timestampMs }.toLongArray(), p.map { it.aboveRestKpa?.let(com.pulsepointlabs.sarahmonitor.core.Pressure::value) ?: Double.NaN }.toDoubleArray()) }
                     ), from, to, e.startMs, e.endMs, color)
                     if (e.markedEvents.isNotEmpty()) Text("Marked: " + e.markedEvents.joinToString(", "), color = MonitorColors.label, fontSize = 12.sp)
                 }

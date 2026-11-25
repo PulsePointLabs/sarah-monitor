@@ -3,7 +3,7 @@ package com.pulsepointlabs.sarahmonitor.session
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** One labelled number in a breakdown ("Peak", "128 bpm"). */
+/** One labeled number in a breakdown ("Peak", "128 bpm"). */
 data class InsightFact(val label: String, val value: String)
 
 /** A time series for a mini chart (timestamps + values, NaN = gap). */
@@ -109,7 +109,7 @@ object FlagInsight {
         } else if (pelvicFlag) {
             val ps = data.pelvic.filter { it.timestampMs in flag.startMs..flag.endMs }
             val peak = ps.mapNotNull { it.aboveRestKpa }.maxOrNull()
-            facts += InsightFact("Peak", n(peak, 1) + " kPa")
+            facts += InsightFact("Peak", com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(peak))
             facts += InsightFact("Lasted", SessionAnalysis.durationWords(flag.durationMs.coerceAtLeast(1_000L)))
             during.maxByOrNull { it.bpm }?.let { facts += InsightFact("HR during", "${it.bpm} bpm max") }
             sentences += flag.detail + "."
@@ -127,7 +127,7 @@ object FlagInsight {
         val traces = buildList {
             if (pelvicFlag) {
                 val p = data.pelvic.filter { it.timestampMs in from..to }
-                add(InsightTrace("Pelvic", "kPa", p.map { it.timestampMs }.toLongArray(), p.map { it.aboveRestKpa ?: Double.NaN }.toDoubleArray()))
+                add(InsightTrace("Pelvic", com.pulsepointlabs.sarahmonitor.core.Pressure.label, p.map { it.timestampMs }.toLongArray(), p.map { it.aboveRestKpa?.let(com.pulsepointlabs.sarahmonitor.core.Pressure::value) ?: Double.NaN }.toDoubleArray()))
             }
             add(InsightTrace("Heart rate", "bpm", ts, win.map { it.bpm.toDouble() }.toDoubleArray()))
             if (win.any { it.rmssdMs != null }) add(InsightTrace("RMSSD", "ms", ts, win.map { it.rmssdMs ?: Double.NaN }.toDoubleArray()))

@@ -22,7 +22,7 @@ import java.util.UUID
 
 /**
  * Reads an Etekcity ESF-551 directly over Bluetooth (no VeSync): scan → connect → notifications on FFF1 →
- * the final packet carries weight + impedance → body composition (Sarah's maths) → saved.
+ * the final packet carries weight + impedance → body composition (Sarah's math) → saved.
  */
 @SuppressLint("MissingPermission") // the Sensors page only offers this once Bluetooth permission is granted
 class ScaleClient(context: Context, private val onReading: (BodyEntry) -> Unit) {

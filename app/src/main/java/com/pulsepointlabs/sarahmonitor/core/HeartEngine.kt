@@ -41,7 +41,7 @@ data class TrendPoint(
 )
 
 /**
- * Live H10 processing: the same contextual RR filter, HRV maths and Load (physiological stress) estimator as
+ * Live H10 processing: the same contextual RR filter, HRV math and Load (physiological stress) estimator as
  * SarahVS, kept in memory for the monitor.
  */
 class HeartEngine(

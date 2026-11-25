@@ -61,7 +61,7 @@ object HrvCalculator {
     private const val RAW_MEAN_MIN_COUNT = 4
     private const val RAW_MEAN_MAX_DEVIATION = 0.45
     private const val ECTOPY_REPLAY_DEPTH = 6
-    // Heart-rate packets arrive about once a second, so neighbouring beats' offsets can differ from the interval by up to that.
+    // Heart-rate packets arrive about once a second, so neighboring beats' offsets can differ from the interval by up to that.
     private const val MAX_NEIGHBOUR_SLACK_MS = 2_000L
     private const val HR_PACKET_INTERVAL_MS = 1_000L
 
@@ -342,7 +342,7 @@ object HrvCalculator {
     /**
      * Beat-to-beat differences for RMSSD and pNN50, taken only between intervals that were truly back to
      * back: both accepted, nothing rejected between them, and no recording gap. Pairing across a removed
-     * beat or a dropout compares beats that were never neighbours and inflates HRV. Ectopic intervals are never
+     * beat or a dropout compares beats that were never neighbors and inflates HRV. Ectopic intervals are never
      * accepted, so pairs touching a premature beat or its post-ectopic pause are skipped as well.
      */
     fun successiveDifferences(rr: List<RrSampleEntity>): List<Int> =

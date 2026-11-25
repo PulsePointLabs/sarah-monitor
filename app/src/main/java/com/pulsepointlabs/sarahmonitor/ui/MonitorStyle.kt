@@ -267,7 +267,7 @@ fun BigReading(
         val belowSize = if (trend == null) 0f else min(maxWidth.value / (textEm + leadingEm + arrowEm + 0.05f), maxHeight.value * 0.9f / 1.4f)
         val below = trend != null && belowSize > besideSize * 1.15f
         // Never bigger than the box (it would spill onto the chips), never below readable unless the box is.
-        // Capped by the card's width too, so one tall card doesn't get a giant number next to its neighbours.
+        // Capped by the card's width too, so one tall card doesn't get a giant number next to its neighbors.
         val cap = min(maxSizeDp, LocalCardScale.current.widthDp * 0.3f)
         val sizeDp = min(if (below) belowSize else besideSize, cap).coerceAtLeast(min(MinTextSp + 6f, maxHeight.value * 0.9f))
         val fontSize = with(LocalDensity.current) { sizeDp.dp.toSp() }

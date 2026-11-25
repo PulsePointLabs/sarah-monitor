@@ -203,7 +203,7 @@ private fun MetricTile(m: BodyMetric, series: List<Pair<Long, Double>>, selected
     }
 }
 
-/** Where the weight is: fat, muscle, bone and the rest, as one bar plus labelled values. */
+/** Where the weight is: fat, muscle, bone and the rest, as one bar plus labeled values. */
 @Composable
 private fun Composition(e: BodyEntry?) {
     if (e?.bodyFatPct == null) {

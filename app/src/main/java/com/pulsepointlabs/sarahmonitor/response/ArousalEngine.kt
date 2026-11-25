@@ -96,7 +96,7 @@ data class ResponseState(
  * signature (a train of rhythmic pelvic contractions ~0.5–1.5 s apart while highly aroused).
  *
  * Generic rules first; [PersonalProfile] scales the approach score to the HR rise this person reaches at the
- * climaxes they mark, so it gets more accurate with use. Loosely modelled on Sarah's live climax prediction
+ * climaxes they mark, so it gets more accurate with use. Loosely modeled on Sarah's live climax prediction
  * (build duration, HRV compression, caps early in a session), rewritten for this app's signals.
  */
 class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
@@ -404,7 +404,7 @@ class ArousalEngine(private var profile: PersonalProfile = PersonalProfile()) {
             "tightening" -> signals += "HRV tightening as HR rises"
             "opening" -> signals += "HRV opening — reads more like settling"
         }
-        if (pAvg != null) signals += "Pelvic floor ${"%.1f".format(pAvg)} kPa above rest (30 s avg)" + if (ppm > 0) ", $ppm contractions/min" else ""
+        if (pAvg != null) signals += "Pelvic floor ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(pAvg)} above rest (30 s avg)" + if (ppm > 0) ", $ppm contractions/min" else ""
         if (train != null) signals += "Rhythmic contraction train: ${train.first} at ~${"%.1f".format(train.second)} s"
         if (holding) signals += "Holding a contraction"
         emg?.let { signals += "EMG ${it.roundToInt()}% of your calibrated hold" }

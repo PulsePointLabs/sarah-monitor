@@ -210,7 +210,7 @@ class LiveAlertEngine(private val limits: () -> AlertLimits = { AlertLimits() })
             val typical = pulsePeaks.sorted().let { if (it.isEmpty()) null else it[it.size / 2] }
             if (typical != null && pulsePeaks.size >= 5 && lastPulse.peakKpa >= max(3.0, typical * 2)) {
                 fire(out, AlertKind.StrongContraction, t, FlagSeverity.Notable,
-                    "Strong contraction, ${"%.1f".format(lastPulse.peakKpa)} kilopascals.", "Strong ${"%.1f".format(lastPulse.peakKpa)} kPa")
+                    "Strong contraction, ${com.pulsepointlabs.sarahmonitor.core.Pressure.spoken(lastPulse.peakKpa)}.", "Strong ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(lastPulse.peakKpa)}")
             }
             pulsePeaks += lastPulse.peakKpa
             pulses.addLast(lastPulse)

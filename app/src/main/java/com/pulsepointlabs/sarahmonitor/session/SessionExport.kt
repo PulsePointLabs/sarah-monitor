@@ -69,7 +69,7 @@ object SessionExport {
                     "pressure or glucose readings, and point out data-quality limits. Pelvic pressure is mechanical pressure above my " +
                     "resting level from a CIVET sensor, not calibrated muscle force. Pressure marked as a sensor problem (suspected " +
                     "displacement, shifted rest, or reported by me) is excluded from contraction counts and statistics. Events added " +
-                    "after the session are labelled with their source and timing uncertainty; treat them as my recollection, not as " +
+                    "after the session are labeled with their source and timing uncertainty; treat them as my recollection, not as " +
                     "sensor detections. This is for personal insight, not a diagnosis. The attached CSV has one row per second; the " +
                     "app's research export has every native sample."
             )
@@ -102,13 +102,13 @@ object SessionExport {
             appendLine()
             appendLine("## Pelvic pressure")
             if (data.pelvic.isEmpty()) appendLine("- Not recorded.") else {
-                appendLine("- Peak above rest: ${f1(pelvic.maxKpa)} kPa; average above rest ${f1(pelvic.averageKpa)} kPa (usable pressure only)")
+                appendLine("- Peak above rest: ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(pelvic.maxKpa)}; average above rest ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(pelvic.averageKpa)} (usable pressure only)")
                 appendLine("- Contractions: ${pelvic.pulses.size}; longest hold ${f1(pelvic.longestHoldS)} s")
-                pelvic.pulses.take(40).forEach { appendLine("  - ${elapsed(it.startMs)}: ${f1(it.durationS)} s, peak ${f1(it.peakKpa)} kPa") }
+                pelvic.pulses.take(40).forEach { appendLine("  - ${elapsed(it.startMs)}: ${f1(it.durationS)} s, peak ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(it.peakKpa)}") }
                 if (pelvic.pulses.size > 40) appendLine("  - …${pelvic.pulses.size - 40} more in the CSV")
                 if (pelvic.sustained.isNotEmpty()) {
                     appendLine("- Sustained elevations (longer than ${com.pulsepointlabs.sarahmonitor.core.PelvicProcessor.MAX_CONTRACTION_S.toInt()} s; not counted as contractions, origin unknown):")
-                    pelvic.sustained.forEach { appendLine("  - ${elapsed(it.startMs)}–${elapsed(it.endMs)}: peak ${f1(it.peakKpa)} kPa") }
+                    pelvic.sustained.forEach { appendLine("  - ${elapsed(it.startMs)}–${elapsed(it.endMs)}: peak ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(it.peakKpa)}") }
                 }
                 appendLine("- Quality: ${pelvic.usableFraction?.let { "%.0f".format(Locale.US, it * 100) + "% of logged pressure usable" } ?: "logging was never switched on (preview only)"}")
                 pelvic.faults.forEach { appendLine("  - ${elapsed(it.startMs)}–${elapsed(it.endMs)}: ${it.quality.label}${if (it.replayed) " (re-checked older recording)" else ""}; excluded") }
@@ -138,8 +138,8 @@ object SessionExport {
                 appendLine(
                     "- ${elapsed(m.timestampMs)} (${at(m.timestampMs).format(clock)}): ${m.label}$timing" +
                         "; HR ${c.hrAt ?: "unknown"}" + (c.rmssdAt?.let { "; RMSSD ${f1(it)} ms" } ?: "") +
-                        (c.pressureAt?.let { "; pressure ${f1(it)} kPa" } ?: "") +
-                        (c.peakPressureNext30s?.let { "; peak pressure next 30 s ${f1(it)} kPa" } ?: "") +
+                        (c.pressureAt?.let { "; pressure ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(it)}" } ?: "") +
+                        (c.peakPressureNext30s?.let { "; peak pressure next 30 s ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(it)}" } ?: "") +
                         (if (response.isNotEmpty()) "; $response" else "") +
                         (m.note.takeIf { it.isNotBlank() }?.let { "; note: ${oneLine(it)}" } ?: "") +
                         (com.pulsepointlabs.sarahmonitor.session.CheckIn.of(m).label?.let { "; check-in: $it" } ?: "") +

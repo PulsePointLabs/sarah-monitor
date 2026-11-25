@@ -2,7 +2,7 @@ package com.pulsepointlabs.sarahmonitor.kegel
 
 import kotlin.math.sqrt
 
-/** One squeeze (or one elevator floor) measured from the pressure trace. Values are % of the reference hold, or kPa without one. */
+/** One squeeze (or one elevator floor) measured from the pressure trace. Values are % of the reference hold, or mmHg (display unit) without one. */
 data class Contraction(
     val index: Int,
     val rep: Int,
@@ -21,21 +21,21 @@ data class Contraction(
     val releaseS: Double?
 )
 
-/** A pressure point for the Kegel views: time and value (% of reference, or kPa above rest without a reference). */
+/** A pressure point for the Kegel views: time and value (% of reference, or mmHg above rest without a reference). */
 data class KegelPoint(val t: Long, val v: Double)
 
 /**
  * Measures every contraction in a set from the raw pressure, so the review can show each one in detail.
- * With a reference hold, values are % of it (target lines apply); without, kPa above rest (targets not drawn).
+ * With a reference hold, values are % of it (target lines apply); without, mmHg above rest (targets not drawn).
  */
 object KegelAnalysis {
     /** Below this (% of reference) counts as let go. Without a reference, half the hold threshold in kPa. */
     const val RELAX_PCT = 20.0
 
     fun toValue(aboveKpa: Double, referenceKpa: Double?): Double =
-        referenceKpa?.takeIf { it > 0.3 }?.let { aboveKpa / it * 100.0 } ?: aboveKpa
+        referenceKpa?.takeIf { it > 0.3 }?.let { aboveKpa / it * 100.0 } ?: com.pulsepointlabs.sarahmonitor.core.Pressure.value(aboveKpa)
 
-    fun relaxLine(referenceKpa: Double?, thresholdKpa: Double): Double = if (referenceKpa != null && referenceKpa > 0.3) RELAX_PCT else thresholdKpa * 0.5
+    fun relaxLine(referenceKpa: Double?, thresholdKpa: Double): Double = if (referenceKpa != null && referenceKpa > 0.3) RELAX_PCT else com.pulsepointlabs.sarahmonitor.core.Pressure.value(thresholdKpa * 0.5)
 
     fun contractions(record: KegelRecord, points: List<KegelPoint>): List<Contraction> {
         val hasRef = record.referenceKpa != null && record.referenceKpa > 0.3

@@ -87,4 +87,27 @@ class ProcedureLogTest {
         )!!
         assertEquals(6, e.measures.urge); assertEquals(750, e.measures.totalMl); assertFalse(e.question)
     }
+
+    @Test fun allDayLogIsSortedSensibly() {
+        val general = com.pulsepointlabs.sarahmonitor.session.MarkerTypes.offered(com.pulsepointlabs.sarahmonitor.session.SessionCategory.General.groups).map { it.id }.toSet()
+        assertTrue("substance" in general && "state" in general)
+        fun sort(s: String) = VoiceCommand.parseLocal(s, general, emptyList())
+        sort("Getting ready to resume doing chores, feeling fairly relaxed").let {
+            assertEquals(setOf("activity", "state"), it.types); assertFalse("recovery" in it.types)
+        }
+        sort("Took a couple hits of indica, feeling pretty high").let { assertTrue("substance" in it.types); assertEquals("cannabis", it.measures.substance) }
+        sort("Second beer, feeling a little buzzed").let { assertTrue("substance" in it.types); assertEquals("alcohol", it.measures.substance) }
+        sort("Overstimulated from all the caffeine").let { assertEquals(setOf("substance", "state"), it.types); assertEquals("caffeine", it.measures.substance) }
+        assertEquals("nicotine", ProcedureLog.substanceIn("just hit the vape"))
+        assertEquals("cannabis", ProcedureLog.substanceIn("THC vape"))
+        assertNull(ProcedureLog.substanceIn("high heart rate after the stairs"))
+        // Substance types are there in a sexual session too.
+        assertTrue("substance" in com.pulsepointlabs.sarahmonitor.session.MarkerTypes.offered(com.pulsepointlabs.sarahmonitor.session.SessionCategory.Masturbation.groups).map { it.id })
+    }
+
+    @Test fun pressureShowsInMmHg() {
+        assertEquals("15", com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(2.0))
+        assertEquals("3.8", com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(0.5))
+        assertEquals("17 mmHg (2.31 kPa)", com.pulsepointlabs.sarahmonitor.core.Pressure.record(2.31))
+    }
 }

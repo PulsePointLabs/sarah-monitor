@@ -274,7 +274,7 @@ class SarahCoach(
             .put("rmssd_ms", s.rmssd?.let { (it * 10).roundToInt() / 10.0 })
             .put("rmssd_vs_session_median", s.rmssdRatio?.let { (it * 100).roundToInt() / 100.0 })
             .put("hrv_signal", s.hrvSignal)
-            .put("pelvic_kpa_above_rest_30s_avg", s.pelvicAvg30?.let { (it * 10).roundToInt() / 10.0 })
+            .put("pelvic_mmhg_above_rest_30s_avg", s.pelvicAvg30?.let { (com.pulsepointlabs.sarahmonitor.core.Pressure.value(it) * 10).roundToInt() / 10.0 })
             .put("pelvic_contractions_per_min", s.pulsesPerMin)
             .put("rhythmic_contraction_spacing_s", s.rhythmSpacingS?.let { (it * 10).roundToInt() / 10.0 })
             .put("load_0_100", s.load)

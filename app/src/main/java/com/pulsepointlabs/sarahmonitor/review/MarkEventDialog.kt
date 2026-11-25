@@ -570,7 +570,7 @@ private fun RightNow(feedback: String?, onFeedback: (String?) -> Unit) {
             heart.load.score?.let { chip("Load", "$it${arrow(com.pulsepointlabs.sarahmonitor.core.Metric.Load)}", MonitorColors.load) }
             heart.rmssdMs?.let { chip("HRV", "${fmt(it, 0)} ms", MonitorColors.rmssd) }
             response.breathsPerMin?.let { chip("Breathing", "${it.toInt()}/min", MonitorColors.pelvic) }
-            pelvic.aboveRestKpa?.let { chip("Pelvic", "${fmt(it, 1)} kPa", MonitorColors.pelvic) }
+            pelvic.aboveRestKpa?.let { chip("Pelvic", com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(it), MonitorColors.pelvic) }
             if (response.phase != com.pulsepointlabs.sarahmonitor.response.ResponsePhase.Baseline) chip("Phase", response.phase.label, Color(0xFFFF7AB6))
         }
         if (stress.score != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

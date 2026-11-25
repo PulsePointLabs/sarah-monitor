@@ -89,7 +89,7 @@ fun KegelSetReviewContent(record: KegelRecord, points: List<KegelPoint>, onDismi
     val cs = remember(record, points) { KegelAnalysis.contractions(record, points) }
     var selected by remember { mutableStateOf<Contraction?>(cs.getOrNull(cs.size / 2)) }
     val hasRef = record.referenceKpa != null && record.referenceKpa > 0.3
-    val unit = if (hasRef) "%" else "kPa"
+    val unit = if (hasRef) "%" else com.pulsepointlabs.sarahmonitor.core.Pressure.label
     run {
         BoxWithConstraints(Modifier.fillMaxSize().background(MonitorColors.background).padding(12.dp)) {
             val wide = maxWidth >= 900.dp
@@ -149,7 +149,7 @@ private fun Header(r: KegelRecord, onDismiss: () -> Unit) {
     }
 }
 
-/** A labelled number tile: big value in its color, optional trend arrows (grow with the size of the shift). */
+/** A labeled number tile: big value in its color, optional trend arrows (grow with the size of the shift). */
 @Composable
 internal fun KTile(label: String, value: String, color: Color, modifier: Modifier = Modifier, unit: String = "", trend: Double? = null) {
     Column(
@@ -216,7 +216,7 @@ private fun SetChart(points: List<KegelPoint>, cs: List<Contraction>, hasRef: Bo
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
     Panel(modifier) {
         Text("The whole set", color = MonitorColors.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text((if (hasRef) "% of your reference hold · dashed = target" else "kPa above rest (capture a reference for % and targets)") + " · drag or hover for a squeeze", color = MonitorColors.label, fontSize = 12.sp)
+        Text((if (hasRef) "% of your reference hold · dashed = target" else "${com.pulsepointlabs.sarahmonitor.core.Pressure.label} above rest (capture a reference for % and targets)") + " · drag or hover for a squeeze", color = MonitorColors.label, fontSize = 12.sp)
         Box(Modifier.fillMaxWidth().weight(1f, fill = true).heightIn(min = 160.dp).onSizeChanged { widthPx = it.width.toFloat() }) {
             Canvas(
                 Modifier.fillMaxSize().pointerInput(cs) {
@@ -271,11 +271,11 @@ private fun SetChart(points: List<KegelPoint>, cs: List<Contraction>, hasRef: Bo
     }
 }
 
-/** One contraction as a compact block of labelled values. */
+/** One contraction as a compact block of labeled values. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ContractionBlock(c: Contraction, hasRef: Boolean) {
-    val unit = if (hasRef) "%" else " kPa"
+    val unit = if (hasRef) "%" else " " + com.pulsepointlabs.sarahmonitor.core.Pressure.label
     Column(
         Modifier.background(MonitorColors.panel.copy(alpha = 0.96f), RoundedCornerShape(10.dp)).border(1.dp, KegelPink.copy(alpha = 0.8f), RoundedCornerShape(10.dp)).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)

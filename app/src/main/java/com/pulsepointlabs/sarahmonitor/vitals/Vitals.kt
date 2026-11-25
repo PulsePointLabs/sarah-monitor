@@ -76,7 +76,7 @@ class BodyStore(context: Context) : JsonListStore<BodyEntry>(context, "body_read
     override fun sameReading(a: BodyEntry, b: BodyEntry) = abs(a.weightKg - b.weightKg) < 0.05 && abs(a.timestampMs - b.timestampMs) < 120_000L
 }
 
-/** Height/age/sex for the scale's body-composition maths, and the display unit. */
+/** Height/age/sex for the scale's body-composition math, and the display unit. */
 object BodyProfile {
     val heightCm = MutableStateFlow<Double?>(null)
     val birthYear = MutableStateFlow<Int?>(null)

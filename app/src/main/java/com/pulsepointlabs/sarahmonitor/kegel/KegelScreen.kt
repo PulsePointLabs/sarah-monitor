@@ -206,7 +206,7 @@ fun KegelScreen(modifier: Modifier = Modifier, focusOnly: Boolean = false) {
                 when {
                     pelvic.pressureKpa == null -> "CIVET not connected"
                     pelvic.referenceKpa == null -> "No reference hold yet"
-                    else -> "Reference ${"%.1f".format(pelvic.referenceKpa)} kPa · rest ${pelvic.restSource.name.lowercase()}"
+                    else -> "Reference ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(pelvic.referenceKpa)} · rest ${pelvic.restSource.name.lowercase()}"
                 },
                 color = MonitorColors.text, fontSize = 13.sp
             )
@@ -538,7 +538,7 @@ internal fun DetailTrainer(
 private fun LiveSetGraph(p: com.pulsepointlabs.sarahmonitor.core.PelvicSnapshot, s: KegelSession, now: Long, ref: Double?, modifier: Modifier) {
     val windows = s.stepWindows().filter { it.first.targetPct != null }
     Column(modifier.background(MonitorColors.panel, RoundedCornerShape(10.dp)).border(1.dp, MonitorColors.panelBorder, RoundedCornerShape(10.dp)).padding(10.dp)) {
-        Text(if (ref != null) "Last 30 s · % of reference · dashed = target" else "Last 30 s · kPa above rest", color = MonitorColors.label, fontSize = 12.sp)
+        Text(if (ref != null) "Last 30 s · % of reference · dashed = target" else "Last 30 s · ${com.pulsepointlabs.sarahmonitor.core.Pressure.label} above rest", color = MonitorColors.label, fontSize = 12.sp)
         Canvas(Modifier.fillMaxSize().padding(top = 4.dp)) {
             val start = now - 30_000L
             val pts = p.trace.filter { it.timestampMs >= start }
@@ -612,7 +612,7 @@ private fun HistoryCard() {
                 )
             }
         }
-        val fmt = DateTimeFormatter.ofPattern("MMM d HH:mm")
+        val fmt = DateTimeFormatter.ofPattern("MMM d, h:mm a")
         results.takeLast(8).reversed().forEach { r ->
             Row {
                 Text(Instant.ofEpochMilli(r.timestampMs).atZone(ZoneId.systemDefault()).format(fmt), color = MonitorColors.label, fontSize = 13.sp, modifier = Modifier.weight(1f))

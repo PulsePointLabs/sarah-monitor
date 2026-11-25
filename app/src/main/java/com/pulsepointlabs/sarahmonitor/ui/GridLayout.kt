@@ -189,7 +189,7 @@ object FitLayout {
     /** Row-height multiplier the user chose (1 = normal), within 0.5–3×. */
     fun heightFactor(slot: CardSlot): Float = if (slot.fitHeight > 0) (slot.fitHeight / 100f).coerceIn(0.5f, 3f) else 1f
 
-    /** Rows of slots in order, honouring each card's span (same packing as [rows]). */
+    /** Rows of slots in order, honoring each card's span (same packing as [rows]). */
     fun slotRows(cards: List<CardSlot>, units: Int): List<List<CardSlot>> {
         val left = cards.toMutableList()
         val rows = mutableListOf<List<CardSlot>>()

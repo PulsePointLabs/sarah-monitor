@@ -265,54 +265,59 @@ object MarkerTypes {
     /** [Sensor] types are offered in every session type (on every tab), whatever the category's groups. */
     enum class Group(val title: String) { General("General"), Sexual("Sexual"), Procedure("Procedure steps"), Sensor("Sensor"), Voice("Asked Sarah") }
 
-    data class Type(val id: String, val label: String, val group: Group)
+    /** [hint] says what the type means, for Claude sorting spoken notes (and anyone reading the code). */
+    data class Type(val id: String, val label: String, val group: Group, val hint: String = "")
 
     val all = listOf(
-        Type("event", "Event", Group.General),
-        Type("symptom", "Symptom", Group.General),
-        Type("activity", "Activity", Group.General),
-        Type("position", "Position change", Group.General),
-        Type("intake", "Intake", Group.General),
-        Type("recovery", "Recovery", Group.General),
-        Type("stimulation", "Stimulation", Group.Sexual),
-        Type("arousal", "Arousal", Group.Sexual),
-        Type("plateau", "Plateau", Group.Sexual),
-        Type("edge", "Edge", Group.Sexual),
-        Type("near", "Near climax", Group.Sexual),
-        Type("orgasm", "Orgasm", Group.Sexual),
-        Type("ejaculation", "Ejaculation", Group.Sexual),
-        Type("resolution", "Resolution", Group.Sexual),
-        Type("catheter", "Catheter", Group.Sexual),
-        Type("enema", "Enema", Group.Sexual),
+        Type("event", "Event", Group.General, "anything that fits no other type"),
+        Type("symptom", "Symptom", Group.General, "a physical symptom: headache, nausea, palpitations, dizziness, pain, cramping, tingling, shortness of breath"),
+        Type("activity", "Activity", Group.General, "what he is doing or about to do: chores, walking, working, eating, showering, gaming, watching something, going to bed"),
+        Type("position", "Position change", Group.General, "lying down, sitting up, standing, changing posture"),
+        Type("intake", "Intake", Group.General, "food, water or other non-psychoactive drink"),
+        Type("substance", "Substance", Group.General, "a psychoactive substance taken or felt: cannabis (indica, sativa, hybrid; smoked, vaped, edible), alcohol (beer, wine, liquor), caffeine (coffee, energy drink, soda), nicotine (vape, pouch, cigarette), a medication or supplement; also how strongly he feels it (buzzed, high, intoxicated, wired, overstimulated, coming down)"),
+        Type("state", "How I feel", Group.General, "his mood or mental/energy state: relaxed, calm, anxious, stressed, irritable, tired, wired, overstimulated, focused, foggy, content, low, good"),
+        Type("recovery", "Recovery", Group.General, "ONLY physiological recovery after exertion or a stress response: heart rate and breathing settling after effort. Not for feeling relaxed in general (use How I feel)"),
+        Type("stimulation", "Stimulation", Group.Sexual, "sexual stimulation started, changed or stopped"),
+        Type("arousal", "Arousal", Group.Sexual, "sexual arousal rising or falling"),
+        Type("plateau", "Plateau", Group.Sexual, "high, steady sexual arousal"),
+        Type("edge", "Edge", Group.Sexual, "brought close to orgasm and backed off"),
+        Type("near", "Near climax", Group.Sexual, "close to orgasm"),
+        Type("orgasm", "Orgasm", Group.Sexual, "orgasm"),
+        Type("ejaculation", "Ejaculation", Group.Sexual, "ejaculation"),
+        Type("resolution", "Resolution", Group.Sexual, "coming down after orgasm"),
+        Type("catheter", "Catheter", Group.Sexual, "anything about a urethral catheter in a sexual session"),
+        Type("enema", "Enema", Group.Sexual, "anything about an enema in a sexual session"),
         // Procedure steps (body exploration): the device timeline, step by step.
-        Type("prep", "Prep / lube", Group.Procedure),
-        Type("insert", "Insertion start", Group.Procedure),
-        Type("resistance", "Resistance", Group.Procedure),
-        Type("seated", "Fully inserted", Group.Procedure),
-        Type("balloon", "Balloon inflated", Group.Procedure),
-        Type("urine", "Urine return", Group.Procedure),
-        Type("instill", "Instillation start", Group.Procedure),
-        Type("instill_end", "Instillation end", Group.Procedure),
-        Type("hold", "Retention / hold", Group.Procedure),
-        Type("urge", "Urge / cramp", Group.Procedure),
-        Type("release", "Release / expel", Group.Procedure),
-        Type("adjust", "Adjust / reposition", Group.Procedure),
-        Type("remove", "Removal", Group.Procedure),
-        Type("discomfort", "Discomfort", Group.Procedure),
-        Type("estim_change", "E-stim change", Group.Procedure),
+        Type("prep", "Prep / lube", Group.Procedure, "preparing, cleaning, lubricating"),
+        Type("insert", "Insertion start", Group.Procedure, "starting to insert a device"),
+        Type("resistance", "Resistance", Group.Procedure, "resistance or tightness while inserting"),
+        Type("seated", "Fully inserted", Group.Procedure, "device fully in place"),
+        Type("balloon", "Balloon inflated", Group.Procedure, "inflating or deflating a balloon"),
+        Type("urine", "Urine return", Group.Procedure, "urine flow or drainage"),
+        Type("instill", "Instillation start", Group.Procedure, "fluid starting or continuing to go in"),
+        Type("instill_end", "Instillation end", Group.Procedure, "fluid stopped going in"),
+        Type("hold", "Retention / hold", Group.Procedure, "holding fluid in"),
+        Type("urge", "Urge / cramp", Group.Procedure, "urge to defecate or void, cramping"),
+        Type("release", "Release / expel", Group.Procedure, "letting fluid out, expelling"),
+        Type("adjust", "Adjust / reposition", Group.Procedure, "adjusting or repositioning a device"),
+        Type("remove", "Removal", Group.Procedure, "taking a device out"),
+        Type("discomfort", "Discomfort", Group.Procedure, "pinch, pop, burning, pain during a procedure"),
+        Type("estim_change", "E-stim change", Group.Procedure, "e-stim level, pads or mode changed"),
         // Said or noted in passing during any sexual / exploration session.
-        Type("sensation", "Sensation", Group.Sexual),
-        Type("finding", "Body finding", Group.Sexual),
+        Type("sensation", "Sensation", Group.Sexual, "a sensation he describes: warmth, pressure, fullness, tingling"),
+        Type("finding", "Body finding", Group.Sexual, "something observed on his body: erection, softening, swelling, flushing"),
         // The measuring sensor itself (CIVET slipped, re-seated, re-inflated): stops pressure analysis until recalibrated.
-        Type("sensor_issue", "Sensor problem", Group.Sensor),
+        Type("sensor_issue", "Sensor problem", Group.Sensor, "the CIVET probe/sensor slipped, moved, came out, deflated or was re-seated"),
         // A question he asked Sarah out loud (her answer is kept with it). Added by hands-free, never offered as a chip.
-        Type("question", "Asked Sarah", Group.Voice)
+        Type("question", "Asked Sarah", Group.Voice, "a question for Sarah")
     )
 
+    /** Offered in every session type: what he took and how he feels matter whatever the session. */
+    private val EVERYWHERE = setOf("substance", "state", "symptom")
     fun inGroup(group: Group): List<Type> = all.filter { it.group == group }
 
-    /** Types offered for a session with these groups: its own groups plus the sensor types. */
-    fun offered(groups: List<Group>): List<Type> = all.filter { it.group in groups || it.group == Group.Sensor }
+    /** Types offered for a session with these groups: its own groups, the sensor types, and substance / feeling / symptom. */
+    fun offered(groups: List<Group>): List<Type> = all.filter { it.group in groups || it.group == Group.Sensor || it.id in EVERYWHERE }
 
     fun join(types: Set<String>): String = all.map { it.id }.filter { it in types }.ifEmpty { listOf("event") }.joinToString(",")
     fun split(types: String): Set<String> = types.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()

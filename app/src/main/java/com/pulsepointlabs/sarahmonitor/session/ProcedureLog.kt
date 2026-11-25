@@ -20,7 +20,13 @@ data class Measures(
     val arousal: Int? = null,
     val fullness: Int? = null,
     /** none, partial, full, or a short phrase ("getting hard", "softening"). */
-    val erection: String? = null
+    val erection: String? = null,
+    /** cannabis, alcohol, caffeine, nicotine, medication or other. */
+    val substance: String? = null,
+    /** What and how much, in his words: "indica vape, two hits", "second beer", "16 oz cold brew". */
+    val substanceDetail: String? = null,
+    /** How strongly he feels it, 0-10 (buzzed / high / intoxicated / wired), only when he gave a number or a clear word. */
+    val effect: Int? = null
 ) {
     val empty: Boolean get() = this == Measures()
 
@@ -33,6 +39,9 @@ data class Measures(
         arousal?.let { put("arousal_0_10", it) }
         fullness?.let { put("fullness_0_10", it) }
         erection?.let { put("erection", it) }
+        substance?.let { put("substance", it) }
+        substanceDetail?.let { put("substance_detail", it) }
+        effect?.let { put("effect_0_10", it) }
     }
 
     /** In Ben's units (US): "+8 oz · depth 4.5 in · urge 6/10". Stored values stay in mL and cm. */
@@ -45,6 +54,8 @@ data class Measures(
         arousal?.let { add("arousal $it/10") }
         fullness?.let { add("fullness $it/10") }
         erection?.let { add("erection: $it") }
+        substance?.let { add(it + (substanceDetail?.let { d -> " ($d)" } ?: "")) }
+        effect?.let { add("feeling it $it/10") }
     }.joinToString(" · ")
 
     /** Said back out loud: "16 ounces in, depth 4.5 inches, urge 6 out of 10". */
@@ -57,6 +68,8 @@ data class Measures(
         arousal?.let { add("arousal $it out of 10") }
         fullness?.let { add("fullness $it out of 10") }
         erection?.let { add("erection $it") }
+        substanceDetail?.let { add(it) } ?: substance?.let { add(it) }
+        effect?.let { add("feeling it $it out of 10") }
     }.joinToString(", ")
 
     /** The same numbers in US units, for Sarah (so she talks in ounces and inches). */
@@ -69,6 +82,9 @@ data class Measures(
         arousal?.let { put("arousal_0_10", it) }
         fullness?.let { put("fullness_0_10", it) }
         erection?.let { put("erection", it) }
+        substance?.let { put("substance", it) }
+        substanceDetail?.let { put("substance_detail", it) }
+        effect?.let { put("effect_0_10", it) }
     }
 
     /** Fill gaps from [other] (Claude's read first, keyword read for anything it left out). */
@@ -77,7 +93,8 @@ data class Measures(
         val hasVolume = totalMl != null || addedMl != null
         return Measures(
         if (hasVolume) totalMl else other.totalMl, if (hasVolume) addedMl else other.addedMl, depthCm ?: other.depthCm,
-        urge ?: other.urge, discomfort ?: other.discomfort, arousal ?: other.arousal, fullness ?: other.fullness, erection ?: other.erection
+        urge ?: other.urge, discomfort ?: other.discomfort, arousal ?: other.arousal, fullness ?: other.fullness, erection ?: other.erection,
+        substance ?: other.substance, substanceDetail ?: other.substanceDetail, effect ?: other.effect
         )
     }
 
@@ -92,7 +109,10 @@ data class Measures(
                 int("total_ml")?.takeIf { it in 1..5_000 }, int("added_ml")?.takeIf { it in 1..5_000 },
                 if (o.has("depth_cm") && !o.isNull("depth_cm")) o.optDouble("depth_cm").takeIf { it.isFinite() && it > 0 && it < 100 } else null,
                 score("urge_0_10"), score("discomfort_0_10"), score("arousal_0_10"), score("fullness_0_10"),
-                o.optString("erection").trim().takeIf { it.isNotBlank() && it != "null" }?.take(40)
+                o.optString("erection").trim().takeIf { it.isNotBlank() && it != "null" }?.take(40),
+                o.optString("substance").trim().lowercase().takeIf { it.isNotBlank() && it != "null" }?.take(20),
+                o.optString("substance_detail").trim().takeIf { it.isNotBlank() && it != "null" }?.take(60),
+                score("effect_0_10")
             )
         }
     }
@@ -171,6 +191,17 @@ object ProcedureLog {
         Regex("\\b(erection|erect|hard-on|hard on)\\b") to "yes"
     )
 
+    // Which kind of substance a note is about. Cannabis first: "vape" alone reads as nicotine, "THC vape" as cannabis.
+    private val SUBSTANCES = listOf(
+        "cannabis" to Regex("\\b(indica|sativa|hybrid strain|weed|cannabis|marijuana|thc|cbd|edible|gumm(?:y|ies)|joint|blunt|bong|dab|cart|stoned|getting high|i'm high|pretty high)\\b"),
+        "alcohol" to Regex("\\b(beers?|wine|liquor|whiske?y|vodka|bourbon|rum|tequila|seltzers?|drunk|buzzed|tipsy|alcohol|intoxicated|hungover)\\b"),
+        "caffeine" to Regex("\\b(coffee|caffeine|espresso|energy drink|monster|red bull|cold brew|pre-?workout|tea|soda|coke|mountain dew)\\b"),
+        "nicotine" to Regex("\\b(nicotine|vape|vaping|zyns?|pouch(?:es)?|cigarettes?|cigs?|dip|snus|smoke break)\\b"),
+        "medication" to Regex("\\b(medication|meds|pills?|ibuprofen|tylenol|acetaminophen|advil|benadryl|melatonin|gabapentin|adderall|vyvanse|ritalin|xanax|ativan|klonopin|zoloft|lexapro|wellbutrin|trazodone|cialis|viagra|sildenafil|tadalafil)\\b")
+    )
+
+    fun substanceIn(note: String): String? { val t = note.lowercase(); return SUBSTANCES.firstOrNull { it.second.containsMatchIn(t) }?.first }
+
     /** Numbers from a note, the plain way (no network). */
     fun parseLocal(note: String): Measures {
         val t = note.lowercase().replace(",", "")
@@ -186,7 +217,8 @@ object ProcedureLog {
         return Measures(
             total, added, depth?.takeIf { it > 0 && it < 100 }?.let { (it * 10).roundToInt() / 10.0 },
             score(URGE, t), score(DISCOMFORT, t), score(AROUSAL, t), score(FULLNESS, t),
-            ERECTION.firstOrNull { it.first.containsMatchIn(t) }?.second
+            ERECTION.firstOrNull { it.first.containsMatchIn(t) }?.second,
+            substanceIn(t)
         )
     }
 

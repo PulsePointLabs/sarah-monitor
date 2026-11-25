@@ -90,7 +90,7 @@ object EventSnapshot {
         o.optJSONObject("stress")?.let { parts += "stress ${it.optInt("score")}" + (if (it.optBoolean("moving")) " (moving)" else "") }
         if (o.has("breaths_per_min")) parts += "breathing ${o.optDouble("breaths_per_min").roundToInt()}/min"
         o.optJSONObject("response")?.let { r -> if (r.optInt("approach") > 0 || r.optString("phase") != "Baseline") parts += "${r.optString("phase").lowercase()} · approach ${r.optInt("approach")}" }
-        o.optJSONObject("pelvic")?.let { if (it.has("above_rest_kpa")) parts += "pelvic ${it.optDouble("above_rest_kpa")} kPa" }
+        o.optJSONObject("pelvic")?.let { if (it.has("above_rest_kpa")) parts += "pelvic ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(it.optDouble("above_rest_kpa"))}" }
         o.optJSONObject("bp")?.let { b ->
             parts += "BP ${b.optInt("systolic")}/${b.optInt("diastolic")}" +
                 listOfNotNull(b.optString("site").takeIf { it.isNotBlank() && it != "null" }, b.optString("posture").takeIf { it.isNotBlank() && it != "null" })

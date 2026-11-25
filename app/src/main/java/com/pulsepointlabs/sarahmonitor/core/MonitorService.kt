@@ -86,7 +86,7 @@ class MonitorService : Service() {
             combine(MonitorHub.heart, MonitorHub.pelvic, MonitorHub.session) { h, p, _ -> h to p }.collect { (h, p) ->
                 val parts = listOfNotNull(
                     h.heartRate?.let { "HR $it" },
-                    p.aboveRestKpa?.let { "Pelvic ${"%.1f".format(it)} kPa" },
+                    p.aboveRestKpa?.let { "Pelvic ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(it)}" },
                     MonitorHub.bp.items.value.lastOrNull()?.let { "BP ${it.systolic}/${it.diastolic}" }
                 )
                 val text = parts.joinToString(" · ").ifBlank { "Monitoring sensors" }

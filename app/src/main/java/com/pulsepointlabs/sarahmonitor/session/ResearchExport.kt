@@ -74,7 +74,7 @@ object ResearchExport {
     private fun pressure(w: Writer, data: SessionData) {
         val start = data.session.startTimeMs
         val quality = data.pelvicQuality
-        w.write("t_ms,elapsed_s,pressure_kpa,rest_kpa,above_rest_kpa,holding,quality,quality_source,usable\n")
+        w.write("t_ms,elapsed_s,pressure_kpa,rest_kpa,above_rest_kpa,above_rest_mmhg,holding,quality,quality_source,usable\n")
         data.pelvic.forEachIndexed { i, p ->
             val rest = p.aboveRestKpa?.let { p.pressureKpa - it }
             val src = when {
@@ -82,7 +82,7 @@ object ResearchExport {
                 p.quality == null -> "replayed"
                 else -> "live"
             }
-            w.write("${p.timestampMs},${sec(p.timestampMs - start)},${d(p.pressureKpa, 2)},${d(rest, 3)},${d(p.aboveRestKpa, 3)},${if (p.holding) 1 else 0},${quality[i].name},$src,${if (quality[i].usable) 1 else 0}\n")
+            w.write("${p.timestampMs},${sec(p.timestampMs - start)},${d(p.pressureKpa, 2)},${d(rest, 3)},${d(p.aboveRestKpa, 3)},${d(p.aboveRestKpa?.let { it * 7.500617 }, 2)},${if (p.holding) 1 else 0},${quality[i].name},$src,${if (quality[i].usable) 1 else 0}\n")
         }
     }
 
@@ -170,7 +170,7 @@ UNITS AND DEFINITIONS
 - pressure_kpa: raw CIVET reading, kPa, relative to the sensor's own zero. Mechanical pressure, not calibrated muscle force.
 - rest_kpa: the rest level in force (captured 5 s relaxed rest, or auto rest = 20th percentile of the last 30 s).
   A rest is a relative mechanical reference, not "zero anatomical pressure".
-- above_rest_kpa = pressure_kpa - rest_kpa.
+- above_rest_kpa = pressure_kpa - rest_kpa. above_rest_mmhg = the same in mmHg (1 kPa = 7.5006 mmHg), the unit the app shows.
 - holding: the live detector's hold state (threshold max(0.3 kPa, 5x rest noise), release below half the threshold for 0.2 s).
 - quality: Valid (logging on, no fault), Preview (logging off), Calibrating, Stabilizing (5 s after a gap of 3 s or more),
   SuspectedDisplacement, BaselineShift, ReportedProblem (a "Sensor problem" event), Unknown (recorded before 0.25).

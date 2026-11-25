@@ -225,17 +225,17 @@ object SessionFlags {
         summary.sustained.forEach {
             flags += SessionFlag(
                 FlagKind.SustainedPressure, it.startMs, it.endMs, FlagSeverity.Info,
-                "${SessionAnalysis.durationWords(it.endMs - it.startMs)} above the hold threshold, peak ${SessionAnalysis.num(it.peakKpa)} kPa; too long for a contraction (sustained tension, posture or a drifting rest)"
+                "${SessionAnalysis.durationWords(it.endMs - it.startMs)} above the hold threshold, peak ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(it.peakKpa)}; too long for a contraction (sustained tension, posture or a drifting rest)"
             )
         }
         if (pulses.isEmpty()) return flags
         pulses.filter { it.durationS >= 5.0 }.forEach {
-            flags += SessionFlag(FlagKind.LongHold, it.startMs, it.endMs, if (it.durationS >= 10) FlagSeverity.High else FlagSeverity.Notable, "${SessionAnalysis.num(it.durationS)} s hold, peak ${SessionAnalysis.num(it.peakKpa)} kPa")
+            flags += SessionFlag(FlagKind.LongHold, it.startMs, it.endMs, if (it.durationS >= 10) FlagSeverity.High else FlagSeverity.Notable, "${SessionAnalysis.num(it.durationS)} s hold, peak ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(it.peakKpa)}")
         }
         val typical = median(pulses.map { it.peakKpa }) ?: 0.0
         val strong = max(3.0, typical * 2.0)
         pulses.filter { it.peakKpa >= strong }.forEach {
-            flags += SessionFlag(FlagKind.StrongContraction, it.startMs, it.endMs, FlagSeverity.Notable, "Peak ${SessionAnalysis.num(it.peakKpa)} kPa (typical ${SessionAnalysis.num(typical)})")
+            flags += SessionFlag(FlagKind.StrongContraction, it.startMs, it.endMs, FlagSeverity.Notable, "Peak ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(it.peakKpa)} (typical ${com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(typical)})")
         }
         // Bursts: 4+ short contractions with each start within 3 s of the previous one.
         var i = 0
@@ -249,7 +249,7 @@ object SessionFlags {
                 flags += SessionFlag(
                     FlagKind.ContractionBurst, group.first().startMs, group.last().endMs,
                     if (count >= 8) FlagSeverity.High else FlagSeverity.Notable,
-                    "$count contractions about ${SessionAnalysis.num(spacing)} s apart, peak ${SessionAnalysis.num(group.maxOf { it.peakKpa })} kPa"
+                    "$count contractions about ${SessionAnalysis.num(spacing)} s apart, peak ${com.pulsepointlabs.sarahmonitor.core.Pressure.withUnit(group.maxOf { it.peakKpa })}"
                 )
                 i = j + 1
             } else i++

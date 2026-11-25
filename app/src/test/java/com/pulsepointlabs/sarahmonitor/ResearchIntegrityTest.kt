@@ -215,7 +215,7 @@ class ResearchIntegrityTest {
         assertTrue(csv.contains("Long pelvic hold"))
     }
 
-    @Test fun preSessionBpIsLabelledNotContemporaneous() {
+    @Test fun preSessionBpIsLabeledNotContemporaneous() {
         val d = data(bp = listOf(BpEntry(start - 12 * 60_000L, 148, 104, 90, false, "test")))
         assertEquals("12 min before start", SessionAnalysis.bpTiming(start - 12 * 60_000L, d))
         val flag = SessionFlags.detect(d).single { it.kind == FlagKind.HighBp }

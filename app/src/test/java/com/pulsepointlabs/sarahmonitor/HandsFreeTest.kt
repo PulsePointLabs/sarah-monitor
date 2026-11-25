@@ -49,7 +49,7 @@ class HandsFreeTest {
     @Test fun yourPorchSentenceIsNotAPrepStep() {
         val e = VoiceCommand.parseLocal("the lab is prepared, relaxing on the porch prior to starting the session", hybrid, listOf(foley))
         assertFalse("types ${e.types}", "prep" in e.types)
-        assertEquals(setOf("event"), e.types)
+        assertEquals(setOf("state"), e.types)   // "relaxing" = how he feels (0.28.2), still not a prep step
         assertTrue("prep" in VoiceCommand.parseLocal("prepping the glans with betadine", hybrid, listOf(foley)).types)
         assertTrue("prep" in VoiceCommand.parseLocal("applying lube to the catheter tip", hybrid, listOf(foley)).types)
     }

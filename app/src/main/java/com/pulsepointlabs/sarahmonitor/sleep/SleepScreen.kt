@@ -67,7 +67,7 @@ fun stageColor(s: SleepStage): Color = when (s) {
     SleepStage.Deep -> Color(0xFF4338CA)
 }
 
-private val clock = DateTimeFormatter.ofPattern("HH:mm")
+private val clock = DateTimeFormatter.ofPattern("h:mm a")
 private val day = DateTimeFormatter.ofPattern("EEE MMM d")
 private fun at(ms: Long, f: DateTimeFormatter) = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(f)
 private fun hm(min: Int) = "${min / 60}h ${"%02d".format(min % 60)}m"

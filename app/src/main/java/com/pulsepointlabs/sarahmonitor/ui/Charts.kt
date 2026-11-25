@@ -168,8 +168,8 @@ data class Series(val label: String, val color: Color, val points: List<Pair<Lon
 
 data class RefLine(val value: Double, val label: String, val color: Color)
 
-private val clock: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
-private val dayClock: DateTimeFormatter = DateTimeFormatter.ofPattern("MM/dd HH:mm")
+private val clock: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm")
+private val dayClock: DateTimeFormatter = DateTimeFormatter.ofPattern("M/d h:mm a")
 
 /**
  * Time-series line chart in the monitor style. Gaps longer than [gapMs] are left open. [dots] draws each
@@ -277,14 +277,17 @@ fun PelvicWaveform(
             val visible = points.filter { it.timestampMs >= start && it.aboveRestKpa != null }
             val maxV = max(max(1.0, (referenceKpa ?: 0.0) * 1.1), visible.maxOfOrNull { it.aboveRestKpa!! } ?: 1.0)
             val minV = min(-0.3, visible.minOfOrNull { it.aboveRestKpa!! } ?: 0.0)
-            val hi = ceil(maxV * 2) / 2
-            val lo = floor(minV * 2) / 2
+            // Drawn in the display unit (mmHg) so the axis gets round numbers; the data stays kPa.
+            val k = com.pulsepointlabs.sarahmonitor.core.Pressure.unit.perKpa
+            val hi = if (k == 1.0) ceil(maxV * 2) / 2 else ceil(maxV * k)
+            val lo = if (k == 1.0) floor(minV * 2) / 2 else floor(minV * k)
             fun xFor(t: Long) = left + (t - start).toFloat() / windowMs.toFloat() * (right - left)
-            fun yFor(v: Double) = bottom - ((v - lo) / (hi - lo)).toFloat() * (bottom - top)
+            fun yFor(kpa: Double) = bottom - ((kpa * k - lo) / (hi - lo)).toFloat() * (bottom - top)
+            fun yAt(display: Double) = bottom - ((display - lo) / (hi - lo)).toFloat() * (bottom - top)
             niceTicks(lo, hi, ((bottom - top) / (labelPx * 2.2f)).toInt().coerceIn(1, 4)).forEach { v ->
-                val y = yFor(v)
+                val y = yAt(v)
                 drawLine(MonitorColors.trendGrid, Offset(left, y), Offset(right, y), strokeWidth = 1f)
-                drawLabel("%.1f".format(v), left - 4f * density, y + labelPx * 0.35f, MonitorColors.label.toArgb(), labelSp, alignRight = true)
+                drawLabel(if (k == 1.0 || hi - lo < 6) "%.1f".format(v) else "%.0f".format(v), left - 4f * density, y + labelPx * 0.35f, MonitorColors.label.toArgb(), labelSp, alignRight = true)
             }
             drawLine(MonitorColors.label.copy(alpha = 0.6f), Offset(left, yFor(0.0)), Offset(right, yFor(0.0)), strokeWidth = 1.2f)
             val ty = yFor(thresholdKpa)
