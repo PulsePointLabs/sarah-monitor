@@ -181,6 +181,7 @@ object MonitorHub {
         scale = com.pulsepointlabs.sarahmonitor.vitals.ScaleClient(app) { body.addAll(listOf(it)) }
         recorder = SessionRecorder(app, scope)
         com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.load(app)
+        com.pulsepointlabs.sarahmonitor.response.SarahMemory.load(app)
         handsFree = com.pulsepointlabs.sarahmonitor.session.HandsFree(
             app, scope,
             mark = { at, e, raw, heardBy ->
@@ -188,6 +189,9 @@ object MonitorHub {
                     .put("intensity", e.intensity ?: org.json.JSONObject.NULL).put("site", e.site ?: org.json.JSONObject.NULL)
                     .put("measures", e.measures.toJson()).put("question", e.question).put("answer", e.answer ?: org.json.JSONObject.NULL)
                 markEvent(at, e.types, e.note, com.pulsepointlabs.sarahmonitor.session.CheckIn(gearId = e.gearId), extra = "voice" to voice)
+                // Her memory of the conversation: what he said (and how it was filed), then what she said back.
+                com.pulsepointlabs.sarahmonitor.response.SarahMemory.add("ben", e.note, com.pulsepointlabs.sarahmonitor.session.MarkerTypes.label(e.types), at)
+                e.answer?.let { com.pulsepointlabs.sarahmonitor.response.SarahMemory.add("sarah", it) }
                 // Show what she understood and how she filed it.
                 val typeLabel = com.pulsepointlabs.sarahmonitor.session.MarkerTypes.label(e.types)
                 val bucket = e.bucket.replace('_', ' ')
@@ -212,7 +216,8 @@ object MonitorHub {
             allowedTypes = { com.pulsepointlabs.sarahmonitor.session.MarkerTypes.offered(liveCategory().groups) },
             gear = { _sessionDetails.value.gear },
             hush = { audio.hush() },
-            answer = { q -> coach.answer(q) },
+            answer = { q -> com.pulsepointlabs.sarahmonitor.response.SarahChat.reply(q, "question", null, null) ?: coach.answer(q) },
+            chat = { said, filed, numbers -> com.pulsepointlabs.sarahmonitor.response.SarahChat.reply(said, "note", filed, numbers) },
             tally = { com.pulsepointlabs.sarahmonitor.session.ProcedureLog.state(sessionEvents(), System.currentTimeMillis()).toString() },
             endSession = {
                 if (recorder.active.value != null) {
@@ -534,6 +539,8 @@ object MonitorHub {
             val marker = recorder.addMarker(timestampMs, types, note, checkIn, snapshot)
             if (marker != null) {
                 MarkerPreferences.remember(appContext, types, note)
+                // Typed / tapped notes are part of what he told Sarah too (spoken ones are added with her reply).
+                if (extra?.first != "voice" && note.isNotBlank()) com.pulsepointlabs.sarahmonitor.response.SarahMemory.add("ben", note, com.pulsepointlabs.sarahmonitor.session.MarkerTypes.label(types), timestampMs)
                 synchronized(recentEvents) {
                     recentEvents.addLast(RecentEvent(timestampMs, types, note, checkIn.label))
                     while (recentEvents.size > 5) recentEvents.removeFirst()

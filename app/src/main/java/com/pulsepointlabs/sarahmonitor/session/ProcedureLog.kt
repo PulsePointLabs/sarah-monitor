@@ -275,7 +275,7 @@ object ProcedureLog {
     }
 
     // A question for Sarah, not a note to file: "how long have I been holding?", "what's my heart rate", "tell me…".
-    private val QUESTION_START = Regex("^(?:(?:so|okay|ok|and|hey|um|uh)\\s+)?(?:what|what's|whats|how|how's|hows|is|are|am i|was|were|can|could|should|would|will|do|does|did|why|when|where|which|who|tell me|remind me|give me|read me|any idea|any thoughts)\\b")
+    private val QUESTION_START = Regex("^(?:(?:so|okay|ok|and|hey|um|uh)\\s+)?(?:what|what's|whats|how|how's|hows|is|are|am i|can|could|should|would|will|do|does|did|why|when|where|which|who|tell me|remind me|give me|read me|any idea|any thoughts)\\b(?!')")
 
     fun isQuestion(command: String): Boolean {
         val t = command.trim().lowercase()

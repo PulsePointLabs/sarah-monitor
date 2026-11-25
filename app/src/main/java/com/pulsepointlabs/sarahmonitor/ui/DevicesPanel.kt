@@ -256,7 +256,9 @@ fun VoiceSection(onMessage: (String) -> Unit) {
         val hfStatus by com.pulsepointlabs.sarahmonitor.core.MonitorHub.handsFree.status.collectAsState()
         SettingRow("Hands-free Sarah", "Say \"Sarah, …\" while recording. The phone listens for her name; only what follows is sent") { SettingSwitch(hf) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setEnabled(it) } }
         if (hf) {
-            SettingRow("Say back what she logged") { SettingSwitch(sayBack) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setSayBack(it) } }
+            val talk by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.talk.collectAsState()
+            SettingRow("Sarah talks with you", if (talk) "She answers in her own words and remembers what you tell her" else "Plain confirmations only") { SettingSwitch(talk) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setTalk(it) } }
+            if (!talk) SettingRow("Say back what she logged") { SettingSwitch(sayBack) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setSayBack(it) } }
             val hfHeadset by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.headsetMic.collectAsState()
             SettingRow("Listen through the headset mic", if (hfHeadset) "Headset audio is call quality while listening" else "Phone mic: music and Sarah stay crisp") {
                 SettingSwitch(hfHeadset) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setHeadsetMic(it); com.pulsepointlabs.sarahmonitor.core.MonitorHub.handsFree.restart() }

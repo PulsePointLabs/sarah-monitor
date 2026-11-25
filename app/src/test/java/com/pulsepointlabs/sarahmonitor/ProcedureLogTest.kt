@@ -110,4 +110,11 @@ class ProcedureLogTest {
         assertEquals("3.8", com.pulsepointlabs.sarahmonitor.core.Pressure.fmt(0.5))
         assertEquals("17 mmHg (2.31 kPa)", com.pulsepointlabs.sarahmonitor.core.Pressure.record(2.31))
     }
+
+    @Test fun hisRealQuestionIsAQuestion() {
+        assertTrue(ProcedureLog.isQuestion("Are you currently able to tell me anything about what I have told you recently? I am still building this app."))
+        assertFalse(ProcedureLog.isQuestion("Can't feel much from the e-stim right now"))
+        assertFalse(ProcedureLog.isQuestion("Was relaxing on the porch, heading back in"))
+        assertFalse(ProcedureLog.isQuestion("I'm beginning to feel mild to moderate feelings of being relaxed from Indica THCA."))
+    }
 }

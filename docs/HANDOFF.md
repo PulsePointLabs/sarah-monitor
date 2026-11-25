@@ -146,6 +146,21 @@ bedside-monitor dashboards, floating overlays and a review screen.
   energy), offered in every session type with Symptom. Recovery = physiological recovery only. Keyword fallback
   knows substances, feelings, activities. Review shows substance chips.
 
+## 0.29.0 (Sarah talks again)
+
+- `response/SarahChat.kt`: Sarah replies in her own words after every hands-free note ("Sounds good, take the
+  chores slow"; repeats any numbers) and answers questions / chat with context: local time, session, devices,
+  procedure tally, live HR/HRV/stress, this session's notes, and `SarahMemory` (last 48 h of what he said and what
+  she said, persisted on the phone). Personality written fresh in the spirit of v1's "warm clinical" defaults
+  (PulsePointLabs/Sarah src/utils/sarahPersonality.js, src/lib/intimateChatTone.js, chatConversationPrompt.js; read,
+  not copied): feminine warmth, plain English, evidence-first, continuity (earlier ≠ still happening), no forced
+  follow-ups. Voice closeness follows the Style menu. Uses the chosen coach model through ClaudeText.
+- Settings → Hands-free → "Sarah talks with you" (on by default; off = old plain confirmations).
+- Question detection: Claude's flag OR worded as a question (his "Are you currently able to tell me…" had been
+  filed as Event).
+- Not done: v1's conversation database (not on this PC; v1 server data lives elsewhere), v1 language profile /
+  correction memory, custom-instructions field.
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

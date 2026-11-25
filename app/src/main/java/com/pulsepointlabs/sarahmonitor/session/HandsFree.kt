@@ -22,6 +22,8 @@ object HandsFreeSettings {
     val sayBack = MutableStateFlow(true)
     /** Listen through a Bluetooth headset's mic. Off by default: it switches the headset to call-quality audio. */
     val headsetMic = MutableStateFlow(false)
+    /** Sarah answers in her own words (and remembers) instead of a plain "Logged: …". */
+    val talk = MutableStateFlow(true)
 
     @Synchronized
     fun load(c: Context) {
@@ -31,7 +33,9 @@ object HandsFreeSettings {
         enabled.value = p.getBoolean("enabled", false)
         sayBack.value = p.getBoolean("say_back", true)
         headsetMic.value = p.getBoolean("headset_mic", false)
+        talk.value = p.getBoolean("talk", true)
     }
+    fun setTalk(v: Boolean) { talk.value = v; prefs?.edit()?.putBoolean("talk", v)?.apply() }
     fun setEnabled(v: Boolean) { enabled.value = v; prefs?.edit()?.putBoolean("enabled", v)?.apply() }
     fun setSayBack(v: Boolean) { sayBack.value = v; prefs?.edit()?.putBoolean("say_back", v)?.apply() }
     fun setHeadsetMic(v: Boolean) { headsetMic.value = v; prefs?.edit()?.putBoolean("headset_mic", v)?.apply() }
@@ -235,7 +239,9 @@ class HandsFree(
     /** Her spoken answer to a question he asked, from the whole session so far (null = couldn't answer). */
     private val answer: suspend (String) -> String? = { null },
     /** The running procedure tally (JSON), so "another 250" can be told from "750 in". */
-    private val tally: () -> String = { "{}" }
+    private val tally: () -> String = { "{}" },
+    /** Her own reply to a note he just logged (talk mode): (his words, how it was filed, numbers he gave). */
+    private val chat: suspend (String, String, String?) -> String? = { _, _, _ -> null }
 ) {
     private val _status = MutableStateFlow(HandsFreeStatus())
     val status: StateFlow<HandsFreeStatus> = _status
@@ -369,19 +375,29 @@ class HandsFree(
         val sorted = ClaudeText.ask(VoiceCommand.claudePrompt(allowed, g), "Running tally so far: ${tally()}\nHis note: $command", maxTokens = 500)
             ?.let { VoiceCommand.parseClaude(it, command, ids, g) }
             ?: VoiceCommand.parseLocal(command, ids, g)
-        if (sorted.question) {
-            // A question: answer it out loud (media stays paused until she's done), and keep it with her answer.
+        // A question (Claude's read, or plainly worded as one: "Are you able to tell me…" was once filed as an Event).
+        if (sorted.question || ProcedureLog.isQuestion(command)) {
+            // Answer it out loud (media stays paused until she's done), and keep it with her answer.
             cue(false)
             _status.value = _status.value.copy(message = "Thinking about your question…")
             val reply = answer(command)
-            mark(at, sorted.copy(types = (sorted.types - "event") + "question", answer = reply), raw, heardBy)
+            mark(at, sorted.copy(types = (sorted.types - "event") + "question", question = true, answer = reply), raw, heardBy)
             speak(reply ?: "Sorry, I couldn't work that out just now.")
             _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = sorted.note)
             return
         }
-        mark(at, sorted, raw, heardBy)
-        cue(false)
-        if (HandsFreeSettings.sayBack.value) speak(sorted.confirm)
+        if (HandsFreeSettings.talk.value) {
+            // Talk mode: she answers like herself ("Sounds good, take the chores slow"), repeating any numbers.
+            _status.value = _status.value.copy(message = "Writing it down…")
+            val reply = chat(command, MarkerTypes.label(sorted.types), sorted.measures.spoken().ifBlank { null })
+            mark(at, sorted.copy(answer = reply), raw, heardBy)
+            cue(false)
+            speak(reply ?: sorted.confirm)
+        } else {
+            mark(at, sorted, raw, heardBy)
+            cue(false)
+            if (HandsFreeSettings.sayBack.value) speak(sorted.confirm)
+        }
         _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = sorted.note)
     }
 
