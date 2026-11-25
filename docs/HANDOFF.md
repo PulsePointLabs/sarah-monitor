@@ -173,6 +173,29 @@ bedside-monitor dashboards, floating overlays and a review screen.
 - Unverified on the phone: whether Claude/ChatGPT voice mode shows up as IN_COMMUNICATION / a recording config on
   One UI (it should), and whether a camera video recording should also silence her (it does now).
 
+## 0.30.0 (overlays, event panel, keyboard, layout sweep)
+
+- Overlays (`overlay/OverlayManager`, `OverlaySnap`, `TinyOverlay`): each overlay window gets every touch through a
+  `TouchFrame` (Compose would swallow them) and works in raw screen coordinates. Drag = magnetic snap to neighbors
+  (flush with a 4 dp gap, top/bottom/left/right aligned) and screen edges, else an 8 dp grid; release never leaves
+  it on another overlay (`settle`). Corner grip resizes with edge/size snapping and stops at neighbors. Drag onto the
+  circle that appears at the bottom to close; no ✕. Long-press ＋ = menu (hide/show other overlays, mark event, open
+  app). Layout saved per profile (phone/DeX) and per orientation (port/land); overlays never start stacked.
+  Coordinates use `OverlayDisplay.overlayArea` (display minus bars and cutout), not the full display.
+- Cards below 170×112 dp become a compact strip (label, number, arrows, extras, mini trend); min size 76×44 dp.
+- Trends everywhere: light smoothing + quadratic curve; the line and a soft fill take the metric's own value colors
+  (`metricBand`) as a vertical gradient. Overlay chips use the even `ChipGrid`; chips can show trend arrows
+  (`rememberTrend` for values without history: stress parts, load parts).
+- Mark event panel rebuilt: note + big mic first, "What kind" chips by session (`EventChoices`: general = activity,
+  how I feel, substance, intake, symptom, position, other; Recovery hidden; Sensor problem only with the CIVET on),
+  inline feeling and 0–10 stress chips (no dropdowns), device chips, live readings last (hidden if nothing is
+  connected). In-app it's a full-screen Dialog with safeDrawing insets (keyboard never covers it).
+- Keyboard: MainActivity had no windowSoftInputMode (only MarkEventActivity did), so Android panned the window and
+  left a black gap. Now adjustResize + enableEdgeToEdge (light bar icons).
+- Layout sweep on the sarah_phone emulator, portrait and landscape: review header actions wrap (Delete was being
+  squeezed to vertical letters), `ChoiceRow` = `EvenGrid` (no lone chip, never drops a choice), session card says
+  why the HR line is empty, Sarah card shows "General" in general sessions.
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

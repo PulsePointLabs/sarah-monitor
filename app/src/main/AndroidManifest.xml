@@ -53,7 +53,8 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:supportsPictureInPicture="true"
-            android:resizeableActivity="true">
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize">
             <layout
                 android:defaultWidth="1400dp"
                 android:defaultHeight="860dp"

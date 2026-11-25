@@ -37,6 +37,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -146,6 +147,13 @@ class MainActivity : ComponentActivity() {
     private val csvLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::importCsv) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Edge to edge, handled by insets: the screen content sits above the keyboard (safeDrawing includes it) instead
+        // of Android panning the whole window up and leaving a black gap over the keyboard.
+        // Dark app: light status/navigation icons whatever the phone's own theme.
+        enableEdgeToEdge(
+            statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         MonitorHub.init(this)

@@ -155,11 +155,8 @@ private fun Chips(content: @Composable () -> Unit) {
             // Grow with the overlay, but stay in proportion to the reading.
             val f = (maxWidth.value / 340f).coerceIn(0.8f, 1.6f)
             androidx.compose.runtime.CompositionLocalProvider(LocalCardScale provides base.copy(factor = maxOf(base.factor, f))) {
-                FlowRow(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
-                ) { content() }
+                // Spread edge to edge in even rows (the same grid as the dashboard), not bunched in the middle.
+                ChipGrid(Modifier.fillMaxWidth(), hGap = 4.dp, vGap = 3.dp) { content() }
             }
         }
         return
@@ -203,6 +200,7 @@ private fun HeartRateCard() {
             maxChars = 3,
             trend = recent.values(Metric.Hr),
             trendStrength = recent.trend(Metric.Hr),
+            band = metricBand(Metric.Hr),
             leading = { size -> BeatingHeart(beatMs, Color(0xFFFB7185), size) },
             modifier = Modifier.fillMaxSize()
         ) }
@@ -255,12 +253,12 @@ private fun HrvValue(item: HrvItem, recent: RecentHistory, modifier: Modifier) {
         if (maxWidth > maxHeight * 2.2f) {
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                 Text(item.label, color = if (LocalOverlayMode.current) tint else item.color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.3f))
-                BigReading(item.value, tint, Modifier.weight(0.7f).fillMaxSize(), maxChars = item.maxChars, trend = values, trendStrength = recent.trend(item.metric))
+                BigReading(item.value, tint, Modifier.weight(0.7f).fillMaxSize(), maxChars = item.maxChars, trend = values, trendStrength = recent.trend(item.metric), band = metricBand(item.metric))
             }
         } else {
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(item.label, color = if (LocalOverlayMode.current) tint else item.color, fontSize = s.sp(12f), fontWeight = FontWeight.Bold)
-                BigReading(item.value, tint, Modifier.fillMaxWidth().weight(1f), maxChars = item.maxChars, trend = values, trendStrength = recent.trend(item.metric))
+                BigReading(item.value, tint, Modifier.fillMaxWidth().weight(1f), maxChars = item.maxChars, trend = values, trendStrength = recent.trend(item.metric), band = metricBand(item.metric))
             }
         }
     }
@@ -276,11 +274,11 @@ private fun LoadCard() {
         fixed { CardTitle("Load", if (LocalOverlayMode.current) trendColor(recent.trend(Metric.Load)) else MonitorColors.load, "0–100") { Text(loadStatus(load), color = if (load.score == null) MonitorColors.warn else color, fontSize = LocalCardScale.current.sp(12f), fontWeight = FontWeight.Bold, maxLines = 1) } }
         flex { BigReading(
             load.score?.toString() ?: "--", trendColor(recent.trend(Metric.Load)), Modifier.fillMaxSize(),
-            maxChars = 3, trend = recent.values(Metric.Load), trendStrength = recent.trend(Metric.Load)
+            maxChars = 3, trend = recent.values(Metric.Load), trendStrength = recent.trend(Metric.Load), band = metricBand(Metric.Load)
         ) }
         fixed(drop = 1) { Chips {
-            StatChip("HR load", load.hrLoadPercent?.let { "$it%" } ?: "--", tint = percentBandColor(load.hrLoadPercent))
-            StatChip("HRV supp.", load.hrvSuppressionPercent?.let { "$it%" } ?: "--", tint = percentBandColor(load.hrvSuppressionPercent))
+            StatChip("HR load", load.hrLoadPercent?.let { "$it%" } ?: "--", tint = percentBandColor(load.hrLoadPercent), trend = rememberTrend("load-hr", load.hrLoadPercent?.toDouble(), 12.0))
+            StatChip("HRV supp.", load.hrvSuppressionPercent?.let { "$it%" } ?: "--", tint = percentBandColor(load.hrvSuppressionPercent), trend = rememberTrend("load-hrv", load.hrvSuppressionPercent?.toDouble(), 12.0))
             StatChip("conf.", load.confidencePercent?.let { "$it%" } ?: "--")
         } }
         fixed(drop = 2) { StatusLine(loadDetail(load), if (load.score == null) MonitorColors.warn else MonitorColors.label) }
@@ -457,6 +455,7 @@ private fun PelvicCard() {
             maxChars = 4,
             trend = recent.values(Metric.Pelvic).map(com.pulsepointlabs.sarahmonitor.core.Pressure::value),
             trendStrength = recent.trend(Metric.Pelvic),
+            band = metricBand(Metric.Pelvic),
             modifier = Modifier.fillMaxSize()
         ) }
         // In a fault the stats are meaningless and the warning matters: chips give way first.
@@ -741,11 +740,11 @@ fun StressCard() {
         } }
         flex { BigReading(
             st.score?.toString() ?: "--", color, Modifier.fillMaxSize(),
-            maxChars = 3, trend = recent.values(Metric.Stress), trendStrength = recent.trend(Metric.Stress)
+            maxChars = 3, trend = recent.values(Metric.Stress), trendStrength = recent.trend(Metric.Stress), band = metricBand(Metric.Stress)
         ) }
         fixed(drop = 1) { Chips {
             st.components.filter { it.score != null }.forEach { c ->
-                StatChip(c.label, if (c.key == "breath") st.breathsPerMin?.let { "%.0f/min".format(it) } ?: "${c.score}" else "${c.score}", tint = percentBandColor(c.score))
+                StatChip(c.label, if (c.key == "breath") st.breathsPerMin?.let { "%.0f/min".format(it) } ?: "${c.score}" else "${c.score}", tint = percentBandColor(c.score), trend = rememberTrend("stress-${c.key}", c.score?.toDouble(), 12.0))
             }
         } }
     }

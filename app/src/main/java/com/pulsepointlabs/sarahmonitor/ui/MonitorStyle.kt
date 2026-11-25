@@ -1,5 +1,6 @@
 package com.pulsepointlabs.sarahmonitor.ui
 
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -183,7 +184,7 @@ fun UnitTag(unit: String, color: Color) {
 }
 
 @Composable
-fun StatChip(label: String, value: String, accent: Color = MonitorColors.text, tint: Color? = null) {
+fun StatChip(label: String, value: String, accent: Color = MonitorColors.text, tint: Color? = null, trend: Double? = null) {
     val s = LocalCardScale.current
     // tint: the chip's background takes the value's color (green low → red high).
     val bg by androidx.compose.animation.animateColorAsState(tint?.copy(alpha = 0.26f) ?: Color(0x1FFFFFFF), androidx.compose.animation.core.tween(500), label = "chip-bg")
@@ -199,7 +200,10 @@ fun StatChip(label: String, value: String, accent: Color = MonitorColors.text, t
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(label, color = labelColor, fontSize = s.sp(11f), maxLines = 1, softWrap = false, lineHeight = s.sp(12f))
-            Text(value, color = valueColor, fontSize = s.sp(13f), fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false, lineHeight = s.sp(15f))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(value, color = valueColor, fontSize = s.sp(13f), fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false, lineHeight = s.sp(15f))
+                if (trend != null) TrendArrows(trend, Modifier.padding(start = 2.dp).size(s.dp(8f), s.dp(14f)))
+            }
         }
     } else {
         Row(
@@ -209,6 +213,7 @@ fun StatChip(label: String, value: String, accent: Color = MonitorColors.text, t
         ) {
             Text(label, color = labelColor, fontSize = s.sp(11f), maxLines = 1, softWrap = false)
             Text(value, color = valueColor, fontSize = s.sp(13f), fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false)
+            if (trend != null) TrendArrows(trend, Modifier.size(s.dp(8f), s.dp(14f)))
         }
     }
 }
@@ -249,11 +254,13 @@ fun BigReading(
     /** -1…+1 trend strength for the arrow stack (null = no arrows, no slot). */
     trendStrength: Double? = null,
     leading: (@Composable (sizeDp: Float) -> Unit)? = null,
-    maxSizeDp: Float = 260f
+    maxSizeDp: Float = 260f,
+    /** Color for a value on the trend line (the metric's own bands), so rises and falls show at a glance. */
+    band: ((Double) -> Color)? = null
 ) {
     // The axes chart needs a little history; until then the plain big number reads better than an empty grid.
     if (LocalOverlayMode.current && trend != null && trend.size >= 3) {
-        OverlayReading(value, color, modifier, maxChars, trend, trendColor, trendStrength, leading, maxSizeDp)
+        OverlayReading(value, color, modifier, maxChars, trend, trendColor, trendStrength, leading, maxSizeDp, band)
         return
     }
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
@@ -311,14 +318,14 @@ fun BigReading(
                     TrendArrows(trendStrength, Modifier.padding(start = (sizeDp * 0.08f).dp).size((sizeDp * arrowEm).dp, (sizeDp * 0.82f).dp))
                 }
                 if (trend != null && !below) {
-                    TrendLine(trend, trendColor, Modifier.size((sizeDp * 1.7f).dp, (sizeDp * 0.62f).dp).padding(start = (sizeDp * 0.12f).dp))
+                    TrendLine(trend, trendColor, Modifier.size((sizeDp * 1.7f).dp, (sizeDp * 0.62f).dp).padding(start = (sizeDp * 0.12f).dp), band)
                 }
             }
         }
         if (below) {
             androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 number()
-                TrendLine(trend!!, trendColor, Modifier.size((sizeDp * (textEm + arrowEm)).dp, (sizeDp * 0.36f).dp).padding(top = (sizeDp * 0.04f).dp))
+                TrendLine(trend!!, trendColor, Modifier.size((sizeDp * (textEm + arrowEm)).dp, (sizeDp * 0.36f).dp).padding(top = (sizeDp * 0.04f).dp), band)
             }
         } else {
             number()
@@ -364,23 +371,69 @@ val LocalOverlayMode = compositionLocalOf { false }
 
 /** Small trend line (last ~2 minutes). Draws nothing until there are a few points, but always keeps its space. */
 @Composable
-fun TrendLine(values: List<Double>, color: Color, modifier: Modifier) {
+fun TrendLine(values: List<Double>, color: Color, modifier: Modifier, band: ((Double) -> Color)? = null) {
     androidx.compose.foundation.Canvas(modifier) {
         if (values.size < 3) return@Canvas
         val lo = values.min()
         val hi = values.max()
         val span = if (hi - lo < 1e-6) 1.0 else hi - lo
         val pad = size.height * 0.12f
-        val path = androidx.compose.ui.graphics.Path()
-        values.forEachIndexed { i, v ->
-            val x = i.toFloat() / (values.size - 1) * size.width
-            val y = size.height - pad - ((v - lo) / span).toFloat() * (size.height - 2 * pad)
-            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-        }
-        drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.2f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
-        val lastY = size.height - pad - ((values.last() - lo) / span).toFloat() * (size.height - 2 * pad)
-        drawCircle(color, radius = 3f * density, center = Offset(size.width, lastY))
+        fun yOf(v: Double) = size.height - pad - ((v - lo) / span).toFloat() * (size.height - 2 * pad)
+        drawSmoothTrend(values, 0f, size.width, ::yOf, color, band, lo - span * 0.12, hi + span * 0.12, fill = false)
     }
+}
+
+/** Light smoothing so a trend reads as a curve, not a saw blade (the newest point stays exact). */
+fun smoothValues(values: List<Double>, window: Int = 5): List<Double> {
+    if (values.size < window) return values
+    val half = window / 2
+    return values.indices.map { i ->
+        if (i == values.lastIndex) values[i]
+        else values.subList((i - half).coerceAtLeast(0), (i + half + 1).coerceAtMost(values.size)).average()
+    }
+}
+
+/**
+ * Draws a trend as a smooth curve. With [band], the line (and a soft fill under it) take the metric's own colors by
+ * value — a vertical gradient through the band colors, so a climb from green into yellow or red shows exactly where
+ * it happens. [topValue]/[bottomValue] are the values at the top and bottom of the drawing area.
+ */
+fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSmoothTrend(
+    raw: List<Double>, left: Float, width: Float, yOf: (Double) -> Float, color: Color, band: ((Double) -> Color)?,
+    bottomValue: Double, topValue: Double, fill: Boolean
+) {
+    val values = smoothValues(raw)
+    if (values.size < 2) return
+    val pts = values.mapIndexed { i, v -> Offset(left + i.toFloat() / (values.size - 1) * width, yOf(v)) }
+    val path = androidx.compose.ui.graphics.Path()
+    path.moveTo(pts[0].x, pts[0].y)
+    for (i in 1 until pts.size) {
+        val p = pts[i - 1]; val q = pts[i]
+        val mid = Offset((p.x + q.x) / 2f, (p.y + q.y) / 2f)
+        if (i == 1) path.lineTo(mid.x, mid.y) else path.quadraticTo(p.x, p.y, mid.x, mid.y)
+    }
+    path.lineTo(pts.last().x, pts.last().y)
+    val top = yOf(topValue)
+    val bottom = yOf(bottomValue)
+    val brush: androidx.compose.ui.graphics.Brush? = band?.let { b ->
+        val n = 24
+        val stops = (0..n).map { k ->
+            val f = k / n.toFloat()
+            f to b(topValue + (bottomValue - topValue) * f)
+        }.toTypedArray()
+        androidx.compose.ui.graphics.Brush.verticalGradient(*stops, startY = top, endY = bottom)
+    }
+    if (fill || band != null) {
+        val area = androidx.compose.ui.graphics.Path().apply {
+            addPath(path)
+            lineTo(pts.last().x, size.height); lineTo(pts.first().x, size.height); close()
+        }
+        if (brush != null) drawPath(area, brush, alpha = 0.16f) else drawPath(area, color.copy(alpha = 0.12f))
+    }
+    val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.2f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
+    if (brush != null) drawPath(path, brush, style = stroke) else drawPath(path, color, style = stroke)
+    val last = pts.last()
+    drawCircle(band?.invoke(raw.last()) ?: color, radius = 3f * density, center = last)
 }
 
 /** A heart that pulses once per beat at the current RR interval. */
@@ -486,7 +539,7 @@ fun agoLabel(timestampMs: Long, nowMs: Long = System.currentTimeMillis()): Strin
 @Composable
 private fun OverlayReading(
     value: String, color: Color, modifier: Modifier, maxChars: Int, trend: List<Double>, trendColor: Color,
-    trendStrength: Double?, leading: (@Composable (sizeDp: Float) -> Unit)?, maxSizeDp: Float
+    trendStrength: Double?, leading: (@Composable (sizeDp: Float) -> Unit)?, maxSizeDp: Float, band: ((Double) -> Color)?
 ) {
     BoxWithConstraints(modifier) {
         val chars = max(maxChars, value.length).coerceAtLeast(2)
@@ -503,7 +556,8 @@ private fun OverlayReading(
         val belowSize = min(w / numEm, h * 0.6f * 0.9f)
         val canBeside = sideChart >= 96f
         val below = !canBeside || belowSize > besideSize * 1.1f
-        val sizeDp = min(if (below) belowSize else besideSize, maxSizeDp).coerceAtLeast(MinTextSp + 6f)
+        // Never forced bigger than the space allows (that squeezed the arrows to dots on small overlays).
+        val sizeDp = min(if (below) belowSize else besideSize, maxSizeDp).coerceAtLeast(min(MinTextSp + 6f, w / numEm))
         val shown by androidx.compose.animation.animateColorAsState(color, androidx.compose.animation.core.tween(400), label = "ov-reading")
         val number: @Composable (Modifier) -> Unit = { m ->
             Row(m, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = if (below) Arrangement.Center else Arrangement.Start) {
@@ -523,12 +577,12 @@ private fun OverlayReading(
         if (below) {
             androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
                 number(Modifier.fillMaxWidth().weight(0.6f))
-                TrendAxesChart(trend, trendColor, Modifier.fillMaxWidth().weight(0.4f))
+                TrendAxesChart(trend, trendColor, Modifier.fillMaxWidth().weight(0.4f), band)
             }
         } else {
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                 number(Modifier.fillMaxHeight().padding(start = 2.dp, end = 6.dp))
-                TrendAxesChart(trend, trendColor, Modifier.weight(1f).fillMaxHeight().padding(vertical = 4.dp))
+                TrendAxesChart(trend, trendColor, Modifier.weight(1f).fillMaxHeight().padding(vertical = 4.dp), band)
             }
         }
     }
@@ -536,7 +590,7 @@ private fun OverlayReading(
 
 /** Trend with a light grid: value labels on the left (low / high), time along the bottom (−2m, −1m, now). */
 @Composable
-fun TrendAxesChart(values: List<Double>, color: Color, modifier: Modifier) {
+fun TrendAxesChart(values: List<Double>, color: Color, modifier: Modifier, band: ((Double) -> Color)? = null) {
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
     val labelStyle = TextStyle(color = MonitorColors.label, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
     androidx.compose.foundation.Canvas(modifier) {
@@ -566,13 +620,9 @@ fun TrendAxesChart(values: List<Double>, color: Color, modifier: Modifier) {
             }
         }
         if (values.size >= 3) {
-            val path = androidx.compose.ui.graphics.Path()
-            values.forEachIndexed { i, v ->
-                val x = left + i.toFloat() / (values.size - 1) * pw
-                if (i == 0) path.moveTo(x, yOf(v)) else path.lineTo(x, yOf(v))
+            clipRect(left, 0f, size.width, ph) {
+                drawSmoothTrend(values, left, pw, ::yOf, color, band, lo, hi, fill = true)
             }
-            drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.2f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
-            drawCircle(color, 3f * density, Offset(left + pw, yOf(values.last())))
         }
     }
 }
@@ -595,4 +645,37 @@ fun percentBandColor(p: Int?): Color? = when {
     p < 55 -> MonitorColors.rmssd
     p < 75 -> MonitorColors.load
     else -> MonitorColors.alarm
+}
+
+/**
+ * Each live metric's color by value, the same bands its number and chips use: heart rate blue (slow) → green →
+ * yellow → orange → red; stress and load green → red; HRV the other way (low HRV is the strained end); pelvic
+ * pressure (in the display unit, mmHg) teal → yellow → orange → red as it rises.
+ */
+fun metricBand(metric: com.pulsepointlabs.sarahmonitor.core.Metric): (Double) -> Color = when (metric) {
+    com.pulsepointlabs.sarahmonitor.core.Metric.Hr -> { v -> hrBandColor(v) ?: MonitorColors.good }
+    com.pulsepointlabs.sarahmonitor.core.Metric.Stress -> { v -> percentBandColor(v.roundToIntSafe()) ?: MonitorColors.good }
+    com.pulsepointlabs.sarahmonitor.core.Metric.Load -> { v -> loadColor(v.roundToIntSafe()) }
+    com.pulsepointlabs.sarahmonitor.core.Metric.Rmssd -> { v -> when { v < 15 -> MonitorColors.alarm; v < 25 -> MonitorColors.load; v < 40 -> MonitorColors.rmssd; else -> MonitorColors.good } }
+    com.pulsepointlabs.sarahmonitor.core.Metric.Sdnn -> { v -> when { v < 20 -> MonitorColors.alarm; v < 35 -> MonitorColors.load; v < 50 -> MonitorColors.rmssd; else -> MonitorColors.good } }
+    com.pulsepointlabs.sarahmonitor.core.Metric.Pnn50 -> { v -> when { v < 3 -> MonitorColors.alarm; v < 8 -> MonitorColors.load; v < 20 -> MonitorColors.rmssd; else -> MonitorColors.good } }
+    com.pulsepointlabs.sarahmonitor.core.Metric.Pelvic -> { v -> when { v < 5 -> MonitorColors.pelvic; v < 15 -> MonitorColors.rmssd; v < 30 -> MonitorColors.load; else -> MonitorColors.alarm } }
+}
+
+private fun Double.roundToIntSafe(): Int = if (isFinite()) kotlin.math.round(this).toInt() else 0
+
+/**
+ * Rising/falling for a value that has no history of its own (a stress component, a load part): remembers the last
+ * ~70 s of it while the card is on screen and compares the last 15 s with a minute ago, like the main readings.
+ */
+@Composable
+fun rememberTrend(key: String, value: Double?, fullScale: Double): Double? {
+    val history = androidx.compose.runtime.remember(key) { ArrayDeque<com.pulsepointlabs.sarahmonitor.core.TimedValue>() }
+    val now = System.currentTimeMillis()
+    if (value != null && value.isFinite() && (history.isEmpty() || now - history.last().timestampMs >= 1_000L)) {
+        history.addLast(com.pulsepointlabs.sarahmonitor.core.TimedValue(now, value))
+        while (history.isNotEmpty() && now - history.first().timestampMs > 75_000L) history.removeFirst()
+    }
+    if (history.size < 3) return null
+    return com.pulsepointlabs.sarahmonitor.core.RecentHistory.trend(history.toList(), fullScale, now)
 }

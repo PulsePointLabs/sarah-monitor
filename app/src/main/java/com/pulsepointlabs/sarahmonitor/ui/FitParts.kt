@@ -154,3 +154,33 @@ fun FitOrHide(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
         else layout(width.coerceAtLeast(constraints.minWidth), height) { ps.forEach { it.place(constraints.minWidth.coerceAtLeast(width) - it.width, (height - it.height) / 2) } }
     }
 }
+
+/**
+ * Choices in even rows: as many per row as fit the widest one, rows balanced (5 → 3 + 2, never 4 + 1) and every
+ * chip the same width, filling the row. Unlike [ChipGrid] it never leaves a choice out.
+ */
+@Composable
+fun EvenGrid(modifier: Modifier = Modifier, hGap: Dp = 6.dp, vGap: Dp = 6.dp, content: @Composable () -> Unit) {
+    Layout(content, modifier) { measurables, constraints ->
+        val n = measurables.size
+        if (n == 0) return@Layout layout(0, 0) {}
+        val w = constraints.maxWidth
+        val gx = hGap.roundToPx(); val gy = vGap.roundToPx()
+        val widest = measurables.maxOf { it.maxIntrinsicWidth(Constraints.Infinity) }
+        var maxCols = 1
+        for (c in n downTo 1) if ((w - gx * (c - 1)) / c >= widest) { maxCols = c; break }
+        val rows = ceil(n / maxCols.toDouble()).toInt()
+        val cols = ceil(n / rows.toDouble()).toInt()
+        val each = ((w - gx * (cols - 1)) / cols).coerceAtLeast(0)
+        val ps = measurables.map { it.measure(Constraints(minWidth = each, maxWidth = each)) }
+        val rowHeights = (0 until rows).map { r -> ps.subList(r * cols, minOf(n, (r + 1) * cols)).maxOf { it.height } }
+        val height = rowHeights.sum() + gy * (rows - 1)
+        layout(w, height) {
+            var y = 0
+            for (r in 0 until rows) {
+                ps.subList(r * cols, minOf(n, (r + 1) * cols)).forEachIndexed { i, p -> p.place(i * (each + gx), y + (rowHeights[r] - p.height) / 2) }
+                y += rowHeights[r] + gy
+            }
+        }
+    }
+}

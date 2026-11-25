@@ -463,23 +463,24 @@ private fun ReviewHeader(d: SessionData, onBack: () -> Unit, onRename: () -> Uni
                 }
                 if (!narrow) Actions(onAskAi, onCsv, onResearch, onDelete, onResume)
             }
-            if (narrow) Row(Modifier.padding(start = 8.dp)) { Actions(onAskAi, onCsv, onResearch, onDelete, onResume) }
+            if (narrow) Box(Modifier.padding(start = 8.dp)) { Actions(onAskAi, onCsv, onResearch, onDelete, onResume) }
         }
     }
 }
 
 @Composable
 private fun Actions(onAskAi: () -> Unit, onCsv: () -> Unit, onResearch: () -> Unit, onDelete: () -> Unit, onResume: (() -> Unit)?) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    // Wraps to a second line rather than squeezing a button until its label runs down the screen letter by letter.
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (onResume != null) androidx.compose.material3.Button(
             onClick = onResume,
             colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MonitorColors.pelvic, contentColor = MonitorColors.background)
-        ) { Text("↻ Continue", fontSize = 13.sp, fontWeight = FontWeight.Bold) }
-        OutlinedButton(onClick = onAskAi) { Text("✦ Ask AI", fontSize = 13.sp) }
+        ) { Text("↻ Continue", fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
+        OutlinedButton(onClick = onAskAi) { Text("✦ Ask AI", fontSize = 13.sp, maxLines = 1, softWrap = false) }
         // One button, two exports: keeps the row the same width on a phone.
         Box {
             var open by remember { mutableStateOf(false) }
-            OutlinedButton(onClick = { open = true }) { Text("Export ▾", fontSize = 13.sp) }
+            OutlinedButton(onClick = { open = true }) { Text("Export ▾", fontSize = 13.sp, maxLines = 1, softWrap = false) }
             androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 androidx.compose.material3.DropdownMenuItem(
                     text = { Column { Text("CSV", fontSize = 15.sp, fontWeight = FontWeight.Bold); Text("One row per second", fontSize = 12.sp, color = MonitorColors.label) } },
@@ -491,7 +492,7 @@ private fun Actions(onAskAi: () -> Unit, onCsv: () -> Unit, onResearch: () -> Un
                 )
             }
         }
-        TextButton(onClick = onDelete) { Text("Delete", color = MonitorColors.alarm, fontSize = 13.sp) }
+        TextButton(onClick = onDelete) { Text("Delete", color = MonitorColors.alarm, fontSize = 13.sp, maxLines = 1, softWrap = false) }
     }
 }
 

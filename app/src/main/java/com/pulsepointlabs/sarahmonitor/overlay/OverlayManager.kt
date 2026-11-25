@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,10 +59,11 @@ enum class OverlayKind(
     val card: CardType?,
     val defaultWidthDp: Int,
     val defaultHeightDp: Int,
-    val minWidthDp: Int = 150,
-    val minHeightDp: Int = 100
+    val minWidthDp: Int = 76,
+    val minHeightDp: Int = 44
 ) {
     MarkEvent("＋ Mark event button", null, 64, 64, 40, 40),
+    // Cards shrink down to a compact strip (value, arrows, a tiny trend); see TinyOverlay.
     HeartRate("Heart rate", CardType.HeartRate, 250, 180),
     Hrv("HRV (RMSSD · SDNN · pNN50)", CardType.Hrv, 300, 200),
     Load("Physiological load", CardType.Load, 230, 160),
@@ -117,6 +120,11 @@ object OverlaySettings {
     private val _fadeReadings = MutableStateFlow(false)
     /** false: only the card background fades (readings stay solid); true: the whole overlay fades. */
     val fadeReadings: StateFlow<Boolean> = _fadeReadings
+    private val _othersHidden = MutableStateFlow(false)
+    /** Long-press the ＋: everything but the ＋ steps aside for a clear look (until shown again). */
+    val othersHidden: StateFlow<Boolean> = _othersHidden
+    fun setOthersHidden(hidden: Boolean) { _othersHidden.value = hidden; publish() }
+
     private val _plusSizeDp = MutableStateFlow(64)
     /** Diameter of the floating ＋ button (set in Settings, not by dragging). */
     val plusSizeDp: StateFlow<Int> = _plusSizeDp
@@ -172,7 +180,7 @@ object OverlaySettings {
         val s = _states.value[_profile.value] ?: OverlayProfileState()
         _enabled.value = s.enabled
         _on.value = s.on
-        _showing.value = if (s.on) s.enabled else emptySet()
+        _showing.value = if (!s.on) emptySet() else if (_othersHidden.value) s.enabled.filter { it == OverlayKind.MarkEvent }.toSet() else s.enabled
         _opacity.value = s.opacity
         _fadeReadings.value = s.fadeReadings
         _plusSizeDp.value = s.plusSizeDp
@@ -225,20 +233,26 @@ object OverlaySettings {
         update(profile) { it.copy(enabled = if (on) it.enabled + kind else it.enabled - kind) }
     }
 
-    /** Saved x, y, width, height in pixels of that screen; defaults stack down the left edge. */
-    fun bounds(context: Context, kind: OverlayKind, index: Int, density: Float, profile: OverlayProfile): IntArray {
+    /**
+     * Saved x, y, width, height in pixels of that screen and orientation ([orient] = "port" / "land"): portrait and
+     * landscape each keep their own layout, so rotating the phone doesn't scramble them. Falls back to the layout saved
+     * before orientations were separate, then to stacking down the left edge.
+     */
+    fun bounds(context: Context, kind: OverlayKind, index: Int, density: Float, profile: OverlayProfile, orient: String): IntArray {
         val p = prefs(context)
-        val k = "${kind.name}_${profile.key}"
+        val old = "${kind.name}_${profile.key}"
+        val k = "${old}_$orient"
+        fun get(c: String, def: Int) = if (p.contains("${c}_$k")) p.getInt("${c}_$k", def) else p.getInt("${c}_$old", def)
         return intArrayOf(
-            p.getInt("x_$k", (16 * density).roundToInt()),
-            p.getInt("y_$k", ((96 + index * 210) * density).roundToInt()),
-            p.getInt("w_$k", (kind.defaultWidthDp * density).roundToInt()),
-            p.getInt("h_$k", (kind.defaultHeightDp * density).roundToInt())
+            get("x", (16 * density).roundToInt()),
+            get("y", ((96 + index * 150) * density).roundToInt()),
+            get("w", (kind.defaultWidthDp * density).roundToInt()),
+            get("h", (kind.defaultHeightDp * density).roundToInt())
         )
     }
 
-    fun saveBounds(context: Context, kind: OverlayKind, x: Int, y: Int, w: Int, h: Int, profile: OverlayProfile) {
-        val k = "${kind.name}_${profile.key}"
+    fun saveBounds(context: Context, kind: OverlayKind, x: Int, y: Int, w: Int, h: Int, profile: OverlayProfile, orient: String) {
+        val k = "${kind.name}_${profile.key}_$orient"
         prefs(context).edit().putInt("x_$k", x).putInt("y_$k", y).putInt("w_$k", w).putInt("h_$k", h).apply()
     }
 
@@ -265,21 +279,30 @@ private class OverlayOwner : LifecycleOwner, SavedStateRegistryOwner {
 }
 
 /**
- * Shows the enabled overlays as floating windows on the display the app was last on (phone or DeX). Cards are
- * dragged by their body and resized from the corner grip; the card inside rescales to the new size. The ＋
- * button is dragged to move; its size is set in Settings.
+ * Shows the enabled overlays as floating windows on the display the app was last on (phone or DeX). Drag a card to
+ * move it (it clicks onto neighbors and screen edges and never ends up on top of another), drag the corner grip to
+ * resize (edges and sizes snap too), and drag it onto the circle that appears at the bottom to close it. Tap the ＋
+ * to mark an event; long-press it to hide or show the other overlays. Portrait and landscape each keep their own
+ * layout. Touches are read in screen coordinates, so snapping never makes a window drift from under the finger.
  */
 class OverlayManager(private val base: Context) {
-    private class Shown(val view: ComposeView, val owner: OverlayOwner, val params: WindowManager.LayoutParams, val wm: WindowManager, val displayId: Int)
+    private class Shown(
+        val view: android.view.View, val owner: OverlayOwner, val params: WindowManager.LayoutParams,
+        val wm: WindowManager, val displayId: Int, val context: Context, var orient: String
+    )
 
     private val shown = mutableMapOf<OverlayKind, Shown>()
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    private fun orientOf(context: Context, wm: WindowManager): String =
+        OverlayDisplay.overlayArea(context, wm).let { if (it.width() > it.height()) "land" else "port" }
 
     /** Shows/hides overlays to match the settings for the screen the app is on (phone or DeX). */
     fun sync() {
         val display = OverlayDisplay.targetDisplayId(base)
         OverlaySettings.setProfile(OverlayProfile.forDisplay(display))
         val requested = OverlaySettings.showing.value
-        val enabled = if (OverlaySettings.appInFront.value && !OverlaySettings.previewing.value) emptySet() else requested
+        val enabled = (if (OverlaySettings.appInFront.value && !OverlaySettings.previewing.value) emptySet() else requested).toList()
         val canDraw = OverlaySettings.canDraw(base)
         // Hide removed ones and ones that are on the wrong display.
         shown.keys.toList().forEach { kind ->
@@ -287,6 +310,11 @@ class OverlayManager(private val base: Context) {
         }
         if (!canDraw) return
         enabled.forEachIndexed { index, kind -> if (kind !in shown) show(kind, index, display) }
+        // Rotated: each orientation has its own remembered layout.
+        shown.forEach { (kind, s) ->
+            val o = orientOf(s.context, s.wm)
+            if (o != s.orient) { s.orient = o; place(kind, s, enabled.indexOf(kind)) }
+        }
     }
 
     fun hideAll() = shown.keys.toList().forEach(::hide)
@@ -297,12 +325,53 @@ class OverlayManager(private val base: Context) {
         s.owner.destroy()
     }
 
+    private fun density(s: Shown) = s.context.resources.displayMetrics.density
+
+    private fun minSize(kind: OverlayKind, density: Float): Pair<Int, Int> =
+        if (kind.card == null) (OverlaySettings.MIN_PLUS_DP * density).roundToInt().let { it to it }
+        else (kind.minWidthDp * density).roundToInt() to (kind.minHeightDp * density).roundToInt()
+
+    private fun commit(kind: OverlayKind, s: Shown) {
+        val b = OverlayDisplay.overlayArea(s.context, s.wm)
+        val (minW, minH) = minSize(kind, density(s))
+        s.params.width = s.params.width.coerceIn(minW, b.width().coerceAtLeast(minW))
+        s.params.height = s.params.height.coerceIn(minH, b.height().coerceAtLeast(minH))
+        s.params.x = s.params.x.coerceIn(0, (b.width() - s.params.width).coerceAtLeast(0))
+        s.params.y = s.params.y.coerceIn(0, (b.height() - s.params.height).coerceAtLeast(0))
+        if (shown[kind] === s) runCatching { s.wm.updateViewLayout(s.view, s.params) }
+    }
+
+    private fun place(kind: OverlayKind, s: Shown, index: Int) {
+        val b = OverlaySettings.bounds(base, kind, index.coerceAtLeast(0), density(s), OverlayProfile.forDisplay(s.displayId), s.orient)
+        s.params.x = b[0]; s.params.y = b[1]
+        if (kind.card != null) { s.params.width = b[2]; s.params.height = b[3] }
+        commit(kind, s)
+        unstack(kind, s)
+    }
+
+    /** Never left on top of another overlay (first time shown, after rotating, or an old saved layout). */
+    private fun unstack(kind: OverlayKind, s: Shown) {
+        val others = others(kind, s.displayId)
+        if (others.none { boxOf(s).overlaps(it) }) return
+        OverlaySnap.settle(boxOf(s), others, feel(s)).let { s.params.x = it.x; s.params.y = it.y }
+        commit(kind, s)
+        save(kind, s)
+    }
+
+    private fun save(kind: OverlayKind, s: Shown) =
+        OverlaySettings.saveBounds(base, kind, s.params.x, s.params.y, s.params.width, s.params.height, OverlayProfile.forDisplay(s.displayId), s.orient)
+
+    private fun boxOf(s: Shown) = OverlaySnap.Box(s.params.x, s.params.y, s.params.width, s.params.height)
+    private fun others(kind: OverlayKind, displayId: Int) = shown.filter { it.key != kind && it.value.displayId == displayId }.map { boxOf(it.value) }
+    private fun feel(s: Shown) = OverlayDisplay.overlayArea(s.context, s.wm).let { OverlaySnap.feel(density(s), it.width(), it.height()) }
+
     private fun show(kind: OverlayKind, index: Int, displayId: Int) {
         val context = OverlayDisplay.overlayContext(base, displayId)
         val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val density = context.resources.displayMetrics.density
+        val orient = orientOf(context, wm)
         val profile = OverlayProfile.forDisplay(displayId)
-        val (x, y, w, h) = OverlaySettings.bounds(base, kind, index, density, profile).let { listOf(it[0], it[1], it[2], it[3]) }
+        val (x, y, w, h) = OverlaySettings.bounds(base, kind, index, density, profile, orient).let { listOf(it[0], it[1], it[2], it[3]) }
         val params = WindowManager.LayoutParams(
             w, h,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -314,19 +383,6 @@ class OverlayManager(private val base: Context) {
             this.y = y
         }
         val owner = OverlayOwner().also { it.start() }
-        val minW = ((if (kind.card == null) OverlaySettings.MIN_PLUS_DP else kind.minWidthDp) * density).roundToInt()
-        val minH = ((if (kind.card == null) OverlaySettings.MIN_PLUS_DP else kind.minHeightDp) * density).roundToInt()
-
-        fun bounds(): android.graphics.Rect = OverlayDisplay.displayBounds(context, wm)
-        fun commit() {
-            val b = bounds()
-            params.width = params.width.coerceIn(minW, b.width())
-            params.height = params.height.coerceIn(minH, b.height())
-            params.x = params.x.coerceIn(0, (b.width() - params.width).coerceAtLeast(0))
-            params.y = params.y.coerceIn(0, (b.height() - params.height).coerceAtLeast(0))
-            shown[kind]?.let { runCatching { wm.updateViewLayout(it.view, params) } }
-        }
-
         val view = ComposeView(context).apply {
             setViewTreeLifecycleOwner(owner)
             setViewTreeSavedStateRegistryOwner(owner)
@@ -340,82 +396,237 @@ class OverlayManager(private val base: Context) {
                         val px = (plusDp * density).roundToInt()
                         params.width = px
                         params.height = px
-                        commit()
+                        shown[kind]?.let { commit(kind, it) }
                     }
                 }
                 androidx.compose.runtime.CompositionLocalProvider(
                     com.pulsepointlabs.sarahmonitor.ui.LocalPanelAlpha provides if (fadeAll) 1f else alpha,
                     com.pulsepointlabs.sarahmonitor.ui.LocalOverlayMode provides true
                 ) {
-                    Box(
+                    androidx.compose.foundation.layout.BoxWithConstraints(
                         Modifier
                             .fillMaxSize()
                             .graphicsLayer { this.alpha = if (fadeAll) alpha else 1f }
                             .pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_GRAB))
-                            .pointerInput(Unit) {
-                                detectDragGestures(
-                                    onDrag = { change, amount ->
-                                        change.consume()
-                                        params.x += amount.x.roundToInt()
-                                        params.y += amount.y.roundToInt()
-                                        commit()
-                                    },
-                                    onDragEnd = { OverlaySettings.saveBounds(base, kind, params.x, params.y, params.width, params.height, profile) }
-                                )
-                            }
                     ) {
-                        if (kind.card == null) {
-                            PlusButton(onTap = { openMarkEvent(displayId) })
-                        } else {
-                            MonitorCard(kind.card, Modifier.fillMaxSize())
-                            // Close, with breathing room from the corner (the whole card drags, so no move button).
-                            Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp)) {
-                                CornerButton("×") { OverlaySettings.set(base, kind, false, profile) }
-                            }
-                            Canvas(
-                                Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .size(22.dp)
-                                    .pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW))
-                                    .pointerInput(Unit) {
-                                        detectDragGestures(
-                                            onDrag = { change, amount ->
-                                                change.consume()
-                                                params.width += amount.x.roundToInt()
-                                                params.height += amount.y.roundToInt()
-                                                commit()
-                                            },
-                                            onDragEnd = { OverlaySettings.saveBounds(base, kind, params.x, params.y, params.width, params.height, profile) }
-                                        )
-                                    }
-                                    .padding(5.dp)
-                            ) {
-                                val c = MonitorColors.label.copy(alpha = 0.7f)
-                                val sz = size.width
-                                for (i in 1..3) {
-                                    val o = sz * i / 3.2f
-                                    drawLine(c, Offset(sz - o, sz), Offset(sz, sz - o), strokeWidth = 1.5f)
-                                }
-                            }
+                        when {
+                            kind.card == null -> PlusButton()
+                            // Small: one clear number, arrows and a little trend, like a vital-signs strip.
+                            maxWidth < TinyOverlaySize.MAX_WIDTH.dp || maxHeight < TinyOverlaySize.MAX_HEIGHT.dp -> TinyOverlay(kind, Modifier.fillMaxSize())
+                            else -> MonitorCard(kind.card, Modifier.fillMaxSize())
                         }
+                        if (kind.card != null) ResizeGrip(Modifier.align(Alignment.BottomEnd))
                     }
                 }
             }
         }
-        val added = runCatching { wm.addView(view, params) }.isSuccess
+        // The card is display-only: this frame takes every touch first (move, resize, tap, long-press).
+        val frame = TouchFrame(context, Gesture(kind)).apply {
+            // Compose finds its lifecycle from the window's root view, which is this frame.
+            setViewTreeLifecycleOwner(owner)
+            setViewTreeSavedStateRegistryOwner(owner)
+            addView(view)
+        }
+        val added = runCatching { wm.addView(frame, params) }.isSuccess
         if (!added) {
             owner.destroy()
             return
         }
-        shown[kind] = Shown(view, owner, params, wm, displayId)
-        commit()
+        val s = Shown(frame, owner, params, wm, displayId, context, orient)
+        shown[kind] = s
+        commit(kind, s)
+        unstack(kind, s)
+    }
+
+    /** Move / resize / tap / long-press for one overlay, from raw screen coordinates. */
+    private inner class Gesture(private val kind: OverlayKind) : android.view.View.OnTouchListener {
+        private var downX = 0f
+        private var downY = 0f
+        private var start = OverlaySnap.Box(0, 0, 0, 0)
+        private var resizing = false
+        private var dragging = false
+        private var longPressed = false
+        private val longPress = Runnable {
+            val s = shown[kind] ?: return@Runnable
+            if (dragging) return@Runnable
+            longPressed = true
+            s.view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            openQuickMenu(s)
+        }
+
+        override fun onTouch(v: android.view.View, e: android.view.MotionEvent): Boolean {
+            val s = shown[kind] ?: return false
+            val d = density(s)
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX; downY = e.rawY
+                    start = boxOf(s)
+                    val grip = 30 * d
+                    resizing = kind.card != null && e.x >= v.width - grip && e.y >= v.height - grip
+                    dragging = false; longPressed = false
+                    if (kind.card == null) handler.postDelayed(longPress, 450L)
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - downX
+                    val dy = e.rawY - downY
+                    if (!dragging && kotlin.math.hypot(dx, dy) > 8 * d && !longPressed) {
+                        dragging = true
+                        handler.removeCallbacks(longPress)
+                        if (!resizing) target.show(s)
+                    }
+                    if (!dragging) return true
+                    val f = feel(s)
+                    val others = others(kind, s.displayId)
+                    if (resizing) {
+                        val (minW, minH) = minSize(kind, d)
+                        val b = OverlaySnap.resize(start, start.w + dx.roundToInt(), start.h + dy.roundToInt(), minW, minH, others, f)
+                        s.params.width = b.w; s.params.height = b.h
+                    } else {
+                        val b = OverlaySnap.move(start.copy(x = start.x + dx.roundToInt(), y = start.y + dy.roundToInt()), others, f)
+                        s.params.x = b.x; s.params.y = b.y
+                        target.track(e.rawX, e.rawY, s.view)
+                    }
+                    commit(kind, s)
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(longPress)
+                    val dropped = dragging && !resizing && target.hot && e.actionMasked == android.view.MotionEvent.ACTION_UP
+                    target.hide()
+                    when {
+                        dropped -> { OverlaySettings.set(base, kind, false, OverlayProfile.forDisplay(s.displayId)); return true }
+                        dragging -> {
+                            if (!resizing) OverlaySnap.settle(boxOf(s), others(kind, s.displayId), feel(s)).let { s.params.x = it.x; s.params.y = it.y }
+                            commit(kind, s)
+                            save(kind, s)
+                        }
+                        e.actionMasked == android.view.MotionEvent.ACTION_UP && !longPressed && kind.card == null -> openMarkEvent(s.displayId)
+                    }
+                    dragging = false
+                }
+            }
+            return true
+        }
+    }
+
+    /** The "drop here to close" circle at the bottom, shown only while an overlay is being dragged. */
+    private val target = DropTarget()
+
+    private inner class DropTarget {
+        private var view: ComposeView? = null
+        private var owner: OverlayOwner? = null
+        private var wm: WindowManager? = null
+        private val hotFlow = MutableStateFlow(false)
+        val hot: Boolean get() = hotFlow.value
+        private var center: Pair<Float, Float>? = null
+        private var radius = 0f
+
+        fun show(s: Shown) {
+            if (view != null) return
+            val d = density(s)
+            val sizePx = (84 * d).roundToInt()
+            val b = OverlayDisplay.overlayArea(s.context, s.wm)
+            val params = WindowManager.LayoutParams(
+                sizePx, sizePx, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = (b.width() - sizePx) / 2
+                y = (b.height() - sizePx - 110 * d).roundToInt().coerceAtLeast(0)
+            }
+            val o = OverlayOwner().also { it.start() }
+            val v = ComposeView(s.context).apply {
+                setViewTreeLifecycleOwner(o)
+                setViewTreeSavedStateRegistryOwner(o)
+                setContent { DropCircle(hotFlow) }
+            }
+            if (runCatching { s.wm.addView(v, params) }.isFailure) { o.destroy(); return }
+            view = v; owner = o; wm = s.wm
+            radius = 64 * d
+            center = null
+            v.post { val loc = IntArray(2); v.getLocationOnScreen(loc); center = (loc[0] + v.width / 2f) to (loc[1] + v.height / 2f) }
+        }
+
+        /** Finger at screen point ([rx], [ry]): is it over the circle? A little buzz when it first is. */
+        fun track(rx: Float, ry: Float, haptics: android.view.View) {
+            val c = center ?: return
+            val over = kotlin.math.hypot(rx - c.first, ry - c.second) <= radius
+            if (over && !hotFlow.value) haptics.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+            hotFlow.value = over
+        }
+
+        fun hide() {
+            view?.let { v -> runCatching { wm?.removeView(v) } }
+            owner?.destroy()
+            view = null; owner = null; wm = null; center = null
+            hotFlow.value = false
+        }
+    }
+
+    private var quickMenu: Shown? = null
+
+    /** Long-press on the ＋: hide or show the other overlays, open the app, or mark an event. */
+    private fun openQuickMenu(plus: Shown) {
+        if (quickMenu != null) return
+        val context = plus.context
+        val wm = plus.wm
+        val d = density(plus)
+        val owner = OverlayOwner().also { it.start() }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
+        )
+        val b = OverlayDisplay.overlayArea(context, wm)
+        // Beside the ＋, on whichever side has room.
+        val menuW = 230 * d
+        val menuH = 190 * d
+        val left = if (plus.params.x + plus.params.width + menuW < b.width()) plus.params.x + plus.params.width + 8 * d else plus.params.x - menuW - 8 * d
+        val top = (plus.params.y + plus.params.height / 2f - menuH / 2f).coerceIn(8 * d, (b.height() - menuH - 8 * d).coerceAtLeast(8 * d))
+        val view = ComposeView(context).apply {
+            setViewTreeLifecycleOwner(owner)
+            setViewTreeSavedStateRegistryOwner(owner)
+            setContent {
+                val hidden by OverlaySettings.othersHidden.collectAsState()
+                Box(
+                    Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.25f))
+                        .pointerInput(Unit) { detectTapGestures { closeQuickMenu() } }
+                ) {
+                    androidx.compose.foundation.layout.Column(
+                        Modifier
+                            .padding(start = (left.coerceAtLeast(8 * d) / d).dp, top = (top / d).dp)
+                            .widthIn(min = 200.dp, max = 260.dp)
+                            .background(MonitorColors.panel, androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                            .border(1.dp, MonitorColors.panelBorder, androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                            .pointerInput(Unit) { detectTapGestures { } }
+                            .padding(8.dp),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)
+                    ) {
+                        MenuItem(if (hidden) "Show overlays" else "Hide other overlays", MonitorColors.pelvic) {
+                            OverlaySettings.setOthersHidden(!hidden); closeQuickMenu()
+                        }
+                        MenuItem("Mark event", MonitorColors.warn) { closeQuickMenu(); openMarkEvent(plus.displayId) }
+                        MenuItem("Open Sarah Monitor", MonitorColors.label) { closeQuickMenu(); openApp(plus.displayId) }
+                    }
+                }
+            }
+        }
+        if (runCatching { wm.addView(view, params) }.isFailure) { owner.destroy(); return }
+        quickMenu = Shown(view, owner, params, wm, plus.displayId, context, plus.orient)
+    }
+
+    private fun closeQuickMenu() {
+        val m = quickMenu ?: return
+        quickMenu = null
+        runCatching { m.wm.removeView(m.view) }
+        m.owner.destroy()
     }
 
     private var markPanel: Shown? = null
 
     /**
      * Event entry as a floating panel over whatever is on screen (a real overlay, not an app window): dimmed
-     * backdrop, tap outside or Cancel to close. Focusable, so typing and voice work.
+     * backdrop, tap outside or Cancel to close. Focusable, so typing and voice work; the panel moves up with the
+     * keyboard.
      */
     private fun openMarkEvent(displayId: Int) {
         if (markPanel != null) return
@@ -440,7 +651,8 @@ class OverlayManager(private val base: Context) {
                         Modifier
                             .fillMaxSize()
                             .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f))
-                            .pointerInput(Unit) { detectTapGestures { closeMarkEvent() } },
+                            .pointerInput(Unit) { detectTapGestures { closeMarkEvent() } }
+                            .padding(vertical = 12.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Box(
@@ -460,7 +672,7 @@ class OverlayManager(private val base: Context) {
             }
         }
         if (runCatching { wm.addView(view, params) }.isFailure) { owner.destroy(); return }
-        markPanel = Shown(view, owner, params, wm, displayId)
+        markPanel = Shown(view, owner, params, wm, displayId, context, orientOf(context, wm))
     }
 
     private fun closeMarkEvent() {
@@ -477,24 +689,70 @@ class OverlayManager(private val base: Context) {
     }
 }
 
+/** Holds an overlay's content and gives all its touches to the window's gesture handler (Compose would swallow them). */
+private class TouchFrame(context: Context, private val gesture: android.view.View.OnTouchListener) : android.widget.FrameLayout(context) {
+    override fun onInterceptTouchEvent(ev: android.view.MotionEvent): Boolean = true
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean = gesture.onTouch(this, event)
+}
 
-/** Round glowing ＋ that fills its window; the symbol scales with the button. */
+/** Corner grip (drawn only; the overlay's touch handler resizes from this corner). */
 @androidx.compose.runtime.Composable
-private fun PlusButton(onTap: () -> Unit) {
+private fun ResizeGrip(modifier: Modifier) {
+    Canvas(modifier.size(22.dp).padding(5.dp)) {
+        val c = MonitorColors.label.copy(alpha = 0.7f)
+        val sz = size.width
+        for (i in 1..3) {
+            val o = sz * i / 3.2f
+            drawLine(c, Offset(sz - o, sz), Offset(sz, sz - o), strokeWidth = 1.5f)
+        }
+    }
+}
+
+/** The close target: a ring with ✕ that grows and turns red while an overlay is held over it. */
+@androidx.compose.runtime.Composable
+private fun DropCircle(hot: StateFlow<Boolean>) {
+    val on by hot.collectAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(if (on) 1.15f else 0.9f, label = "drop-scale")
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier
+                .size(68.dp)
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .background((if (on) MonitorColors.alarm else MonitorColors.background).copy(alpha = if (on) 0.9f else 0.8f), androidx.compose.foundation.shape.CircleShape)
+                .border(2.dp, if (on) androidx.compose.ui.graphics.Color.White else MonitorColors.label.copy(alpha = 0.6f), androidx.compose.foundation.shape.CircleShape),
+            contentAlignment = Alignment.Center
+        ) { Text("✕", color = androidx.compose.ui.graphics.Color.White, fontSize = 26.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun MenuItem(label: String, color: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .background(color.copy(alpha = 0.14f), androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .border(1.dp, color.copy(alpha = 0.5f), androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.CenterStart
+    ) { Text(label, color = MonitorColors.text, fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, maxLines = 1) }
+}
+
+/** Round glowing ＋ that fills its window; the symbol scales with the button. Taps are handled by the window. */
+@androidx.compose.runtime.Composable
+private fun PlusButton() {
     val recording by MonitorHub.session.collectAsState()
+    val hidden by OverlaySettings.othersHidden.collectAsState()
     val panelAlpha = com.pulsepointlabs.sarahmonitor.ui.LocalPanelAlpha.current
     val color = (if (recording != null) MonitorColors.warn else MonitorColors.label).let { it.copy(alpha = it.alpha * panelAlpha) }
-    androidx.compose.foundation.layout.BoxWithConstraints(
-        Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) { detectTapGestures { onTap() } },
-        contentAlignment = Alignment.Center
-    ) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val d = minOf(maxWidth, maxHeight)
         Box(
             Modifier
                 .size(d)
-                .plusDisc(color)
+                .plusDisc(color, ring = if (hidden) MonitorColors.pelvic else null)
         )
         Text(
             "+",
@@ -505,20 +763,8 @@ private fun PlusButton(onTap: () -> Unit) {
     }
 }
 
-private fun Modifier.plusDisc(color: androidx.compose.ui.graphics.Color): Modifier =
+/** [ring]: a colored ring while the other overlays are hidden, so it's clear they're only stepped aside. */
+private fun Modifier.plusDisc(color: androidx.compose.ui.graphics.Color, ring: androidx.compose.ui.graphics.Color? = null): Modifier =
     this
         .then(Modifier.background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(color, color.copy(alpha = 0.75f))), androidx.compose.foundation.shape.CircleShape))
-        .then(Modifier.border(2.dp, androidx.compose.ui.graphics.Color.White.copy(alpha = 0.35f), androidx.compose.foundation.shape.CircleShape))
-
-
-@androidx.compose.runtime.Composable
-private fun CornerButton(symbol: String, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .size(32.dp)
-            .background(MonitorColors.background.copy(alpha = 0.75f), androidx.compose.foundation.shape.CircleShape)
-            .border(1.dp, MonitorColors.label.copy(alpha = 0.35f), androidx.compose.foundation.shape.CircleShape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) { Text(symbol, color = MonitorColors.text, fontSize = 20.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
-}
+        .then(Modifier.border(if (ring != null) 3.dp else 2.dp, ring ?: androidx.compose.ui.graphics.Color.White.copy(alpha = 0.35f), androidx.compose.foundation.shape.CircleShape))

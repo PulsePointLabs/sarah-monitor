@@ -98,8 +98,58 @@ class BoardShotTest {
         pelvicStates()
         kegel()
         howl()
+        overlays()
+        eventPanel()
     }
 
+    /** Two minutes of live history climbing then settling, so trends, colors and arrows show. */
+    private fun feedHistory() {
+        val now = System.currentTimeMillis() + 600_000L
+        fun series(f: (Int) -> Double) = (0 until 120).map { i -> com.pulsepointlabs.sarahmonitor.core.TimedValue(now - (120 - i) * 1000L, f(i)) }
+        flow<com.pulsepointlabs.sarahmonitor.core.RecentHistory>("_recent").value = com.pulsepointlabs.sarahmonitor.core.RecentHistory(mapOf(
+            com.pulsepointlabs.sarahmonitor.core.Metric.Hr to series { i -> 84.0 + i * 0.35 + kotlin.math.sin(i / 4.0) * 3 },
+            com.pulsepointlabs.sarahmonitor.core.Metric.Rmssd to series { i -> 60.0 - i * 0.35 + kotlin.math.sin(i / 5.0) * 4 },
+            com.pulsepointlabs.sarahmonitor.core.Metric.Sdnn to series { i -> 55.0 - i * 0.2 + kotlin.math.sin(i / 6.0) * 3 },
+            com.pulsepointlabs.sarahmonitor.core.Metric.Pnn50 to series { i -> 40.0 - i * 0.25 },
+            com.pulsepointlabs.sarahmonitor.core.Metric.Load to series { i -> 20.0 + i * 0.45 },
+            com.pulsepointlabs.sarahmonitor.core.Metric.Stress to series { i -> 15.0 + i * 0.5 + kotlin.math.sin(i / 3.0) * 4 },
+            com.pulsepointlabs.sarahmonitor.core.Metric.Pelvic to series { i -> 0.3 + (if (i % 20 < 6) 2.5 else 0.2) + i * 0.01 }
+        ))
+    }
+
+    /** The Mark event panel for a general session and an exploration session, phone and DeX. */
+    private fun eventPanel() {
+        val now = System.currentTimeMillis()
+        listOf(com.pulsepointlabs.sarahmonitor.session.SessionCategory.General to "general", com.pulsepointlabs.sarahmonitor.session.SessionCategory.Exploration to "exploration").forEach { (cat, n) ->
+            shot("event-$n-phone", 411, 891) { Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { com.pulsepointlabs.sarahmonitor.review.MarkEventDialog(now, onSave = { _, _, _ -> }, onDismiss = {}, inOverlay = true, category = cat) } }
+        }
+        shot("event-general-dex", 1360, 700) { Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { com.pulsepointlabs.sarahmonitor.review.MarkEventDialog(now, onSave = { _, _, _ -> }, onDismiss = {}, inOverlay = true, category = com.pulsepointlabs.sarahmonitor.session.SessionCategory.General) } }
+    }
+
+    /** Overlays as they float: full cards, small cards, and the compact strips (every kind at three small sizes). */
+    private fun overlays() {
+        feedHistory()
+        val kinds = com.pulsepointlabs.sarahmonitor.overlay.OverlayKind.entries.filter { it.card != null }
+        fun grid(name: String, wDp: Int, hDp: Int, cellW: Int, cellH: Int) = shot(name, wDp, hDp) {
+            androidx.compose.runtime.CompositionLocalProvider(com.pulsepointlabs.sarahmonitor.ui.LocalOverlayMode provides true, com.pulsepointlabs.sarahmonitor.ui.LocalCardActions provides null) {
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
+                    kinds.forEach { k ->
+                        Box(Modifier.size(cellW.dp, cellH.dp)) {
+                            if (cellW < com.pulsepointlabs.sarahmonitor.overlay.TinyOverlaySize.MAX_WIDTH || cellH < com.pulsepointlabs.sarahmonitor.overlay.TinyOverlaySize.MAX_HEIGHT)
+                                com.pulsepointlabs.sarahmonitor.overlay.TinyOverlay(k, Modifier.fillMaxSize())
+                            else com.pulsepointlabs.sarahmonitor.ui.MonitorCard(k.card!!, Modifier.fillMaxSize())
+                        }
+                    }
+                }
+            }
+        }
+        grid("overlay-tiny-76x44", 411, 200, 76, 44)
+        grid("overlay-tiny-150x60", 411, 260, 150, 60)
+        grid("overlay-tiny-160x100", 411, 400, 160, 100)
+        grid("overlay-small-200x130", 411, 480, 200, 130)
+        grid("overlay-cards-phone", 411, 900, 260, 180)
+        grid("overlay-cards-dex", 1360, 700, 320, 220)
+    }
     /** Howl connected and playing: the full controls and the response board with its card. */
     private fun howl() {
         val now = System.currentTimeMillis() + 600_000L

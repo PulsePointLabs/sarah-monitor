@@ -85,6 +85,23 @@ object OverlayDisplay {
         return Rect(0, 0, metrics.widthPixels, metrics.heightPixels)
     }
 
+    /**
+     * The area floating overlays are actually placed in, in pixels: the display minus the status/navigation bars and
+     * any camera cutout (overlay x = 0 is the edge of that area, not of the glass). Using the full display let a
+     * window be placed partly under the cutout, and Android then pushed it back onto its neighbor.
+     */
+    fun overlayArea(windowContext: Context, windowManager: WindowManager): Rect {
+        if (Build.VERSION.SDK_INT >= 30) {
+            runCatching {
+                val m = windowManager.maximumWindowMetrics
+                val i = m.windowInsets.getInsetsIgnoringVisibility(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+                return Rect(0, 0, (m.bounds.width() - i.left - i.right).coerceAtLeast(1), (m.bounds.height() - i.top - i.bottom).coerceAtLeast(1))
+            }
+        }
+        val metrics = windowContext.resources.displayMetrics
+        return Rect(0, 0, metrics.widthPixels, metrics.heightPixels)
+    }
+
     /** Launches [intent] on the display the overlay is showing on. */
     fun startActivityOnDisplay(context: Context, intent: Intent, displayId: Int) {
         val options = if (displayId != Display.DEFAULT_DISPLAY) {

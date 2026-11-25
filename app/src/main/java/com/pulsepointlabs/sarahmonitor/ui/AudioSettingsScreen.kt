@@ -39,18 +39,21 @@ fun ChoiceChip(label: String, selected: Boolean, color: Color = MonitorColors.pe
         fontSize = 13.sp,
         fontWeight = FontWeight.Bold,
         maxLines = 1,
+        softWrap = false,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         modifier = Modifier
             .background(if (selected) color else Color.Transparent, RoundedCornerShape(16.dp))
             .border(1.dp, color.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
     )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ChoiceRow(content: @Composable () -> Unit) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { content() }
+    // Even, full-width rows: no choice stranded alone on the last line.
+    EvenGrid(Modifier.fillMaxWidth()) { content() }
 }
 
 @Composable

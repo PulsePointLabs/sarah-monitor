@@ -407,6 +407,7 @@ fun SarahLiveCard() {
     val ctx by ResponseSettings.context.collectAsState()
     val last by MonitorHub.coach.last.collectAsState()
     val status by MonitorHub.coach.status.collectAsState()
+    val running = MonitorHub.session.collectAsState().value?.let { com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(it.category) }
     val s = LocalCardScale.current
     com.pulsepointlabs.sarahmonitor.ui.FitColumn(Modifier.fillMaxSize(), gap = 5.dp) {
         fixed { CardTitle("Sarah", ClimaxPink) { Pill(if (on) "On" else "Off", ClimaxPink, on) { ResponseSettings.setCoachOn(!on) } } }
@@ -416,7 +417,9 @@ fun SarahLiveCard() {
             modifier = Modifier.fillMaxSize()
         ) }
         // Session type and how she talks: one tidy row each, choices in a menu (no stack of pills).
-        fixed { MenuPill("Session", ctx.label, SessionContext.entries.map { it.label }, Modifier.fillMaxWidth()) { i -> ResponseSettings.setContext(SessionContext.entries[i]) } }
+        // A general (non-sexual) recording says so, instead of a leftover "Masturbation" from the last sexual session.
+        if (running != null && !running.sexual) fixed { MenuPill("Session", running.label, listOf(running.label), Modifier.fillMaxWidth()) { } }
+        else fixed { MenuPill("Session", ctx.label, SessionContext.entries.map { it.label }, Modifier.fillMaxWidth()) { i -> ResponseSettings.setContext(SessionContext.entries[i]) } }
         fixed(drop = 1) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             MenuPill("", mode.label, CoachMode.entries.map { it.label }, Modifier.weight(1f)) { i -> ResponseSettings.setMode(CoachMode.entries[i]) }
             Pill("▶ Ask", ClimaxPink, false) { MonitorHub.coach.askNow() }

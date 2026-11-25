@@ -107,7 +107,10 @@ private fun SessionCard(s: SessionEntity, onClick: () -> Unit) {
             category?.let { Tag(it.label, if (it.sexual && it != com.pulsepointlabs.sarahmonitor.session.SessionCategory.Hybrid) androidx.compose.ui.graphics.Color(0xFFFF7AB6) else MonitorColors.sdnn) }
             Text("${start.format(dayFmt)} · ${clockLabel(s.startTimeMs)}", color = MonitorColors.label, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Sparkline(s.hrSparkline, Modifier.fillMaxWidth().height(34.dp))
+        // Same height either way so cards line up; says why it's empty instead of a blank gap.
+        if (s.hrSparkline.isBlank()) Box(Modifier.fillMaxWidth().height(34.dp), contentAlignment = Alignment.CenterStart) {
+            Text(if (s.active) "Heart rate appears here once the H10 is sending" else "No heart rate in this session", color = MonitorColors.dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        } else Sparkline(s.hrSparkline, Modifier.fillMaxWidth().height(34.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Stat("Avg HR", s.averageHr?.let { "%.0f".format(it) }, MonitorColors.hr, Modifier.weight(1f))
             Stat("Min", s.minHr?.toString(), MonitorColors.sdnn, Modifier.weight(1f))
