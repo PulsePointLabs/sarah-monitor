@@ -60,9 +60,12 @@ private fun Panel(title: String, color: Color, modifier: Modifier = Modifier, tr
         modifier.background(MonitorColors.panel, RoundedCornerShape(12.dp)).border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(12.dp)).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        // The title gets its own width first; buttons on the right share what's left. (Giving the title the weight
+        // let a full-width chip row squeeze it to one letter wide: "Trend" and "Weight" ran down the edge on DeX.)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(title, color = color, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
-            trailing()
+            Text(title, color = color, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, softWrap = false)
+            androidx.compose.foundation.layout.Spacer(Modifier.width(12.dp))
+            androidx.compose.foundation.layout.Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { trailing() }
         }
         content()
     }
