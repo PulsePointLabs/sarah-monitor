@@ -257,6 +257,25 @@ bedside-monitor dashboards, floating overlays and a review screen.
 - Seen on the phone emulator: a ~12 s main-thread stall at launch (738 skipped frames) with its 25-hour test
   recording running. Pre-existing (also slow before this change); not investigated.
 
+## 0.32.2
+
+- Health panels: the title gets its width before the trailing chip row (it was squeezed to vertical letters on DeX).
+
+## 0.33.0 (Settings tabs, personality switch, sample-reply fix, release notes)
+
+- **Settings, take two**: Ben's DeX screenshot showed ragged card columns and black holes (Masonry of whole cards).
+  Now each page has a tab per section; the chosen section fills the width and its own rows flow into balanced
+  newspaper columns (`ColumnFlow` + `partition`, up to 3 on DeX, 2 in phone landscape, 1 in portrait).
+  `SettingGroup` keeps a label with its control across a column break. Overlays are one section again.
+  Checked: DeX emulator (Sarah, Overlays, Alerts), phone portrait and landscape (Sarah).
+- **"Hear how she sounds" said the API key was wrong**: that message was a guess. Replies over the word cap were
+  thrown away (null), which the sample reported as a key problem. Now `SarahChat.fitWords` cuts to whole
+  sentences, and failures show the real reason (`SarahChat.problem` / `ClaudeText.lastProblem`).
+- **Personality master switch** (`SarahPersonality.enabled`, default on): off = no personality block in any prompt;
+  settings are kept.
+- **Releases**: `release-apk.yml` now uses the full commit message as the release notes and marks main and rc/*
+  builds as Latest (other branches stay test builds).
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

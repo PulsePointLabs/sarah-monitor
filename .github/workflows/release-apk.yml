@@ -65,13 +65,14 @@ jobs:
           TAG="v${VERSION}-${BRANCH}-${GITHUB_RUN_NUMBER}"
           APK="sarah-monitor-${VERSION}-${SHORT_SHA}.apk"
           cp app/build/outputs/apk/debug/app-debug.apk "$APK"
-          SUBJECT=$(git log -1 --format=%s)
-          PRERELEASE=""
-          if [ "$GITHUB_REF_NAME" != "main" ]; then PRERELEASE="--prerelease"; fi
+          # The release notes are the full commit message (what changed and why), so the release page reads as a
+          # changelog. main and rc/* builds are real releases ("Latest"); other branches are marked test builds.
+          CHANGES=$(git log -1 --format=%B | grep -v '^Co-Authored-By:')
+          FLAGS="--latest"
+          case "$GITHUB_REF_NAME" in main|rc/*) ;; *) FLAGS="--prerelease" ;; esac
+          printf '%s\n\n---\n**Download:** https://github.com/%s/releases/download/%s/%s\n\nBuilt from branch %s at %s. Unit tests passed; APK signed with the Sarah Monitor key.\n' \
+            "$CHANGES" "$GITHUB_REPOSITORY" "$TAG" "$APK" "$GITHUB_REF_NAME" "$GITHUB_SHA" > notes.md
           gh release create "$TAG" "$APK" \
-            --target "$GITHUB_SHA" $PRERELEASE \
-            --title "Sarah Monitor ${VERSION} (${SHORT_SHA})" \
-            --notes "${SUBJECT}
-
-          Branch ${GITHUB_REF_NAME} at ${GITHUB_SHA}. Unit tests passed; APK signed with the Sarah Monitor key.
-          Direct download: https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK}"
+            --target "$GITHUB_SHA" $FLAGS \
+            --title "Sarah Monitor ${VERSION}" \
+            --notes-file notes.md

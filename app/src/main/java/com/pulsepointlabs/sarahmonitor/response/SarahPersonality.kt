@@ -46,6 +46,8 @@ object SarahPersonality {
     private const val PREFS = "sarahmonitor_personality"
     private var prefs: SharedPreferences? = null
 
+    /** Master switch: off = none of these are sent; she uses her built-in voice. */
+    val enabled = MutableStateFlow(true)
     val tone = MutableStateFlow(Tone.WarmClinical)
     val detail = MutableStateFlow(Detail.Balanced)
     /** A gentle feminine warmth in how she phrases things. */
@@ -63,6 +65,7 @@ object SarahPersonality {
         if (prefs != null) return
         val p = c.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs = p
+        enabled.value = p.getBoolean("on", true)
         tone.value = runCatching { Tone.valueOf(p.getString("tone", null)!!) }.getOrDefault(Tone.WarmClinical)
         detail.value = runCatching { Detail.valueOf(p.getString("detail", null)!!) }.getOrDefault(Detail.Balanced)
         feminineWarmth.value = p.getBoolean("warmth", true)
@@ -73,6 +76,7 @@ object SarahPersonality {
     }
 
     private fun edit(block: SharedPreferences.Editor.() -> Unit) { prefs?.edit()?.apply(block)?.apply() }
+    fun setEnabled(v: Boolean) { enabled.value = v; edit { putBoolean("on", v) } }
     fun setTone(v: Tone) { tone.value = v; edit { putString("tone", v.name) } }
     fun setDetail(v: Detail) { detail.value = v; edit { putString("detail", v.name) } }
     fun setWarmth(v: Boolean) { feminineWarmth.value = v; edit { putBoolean("warmth", v) } }
@@ -86,8 +90,8 @@ object SarahPersonality {
     fun promptBlock(
         tone: Tone = this.tone.value, detail: Detail = this.detail.value, warmth: Boolean = feminineWarmth.value,
         specific: Boolean = sexualSpecificity.value, story: Boolean = sessionStory.value, tts: Boolean = ttsFriendly.value,
-        instructions: String = this.instructions.value
-    ): String = buildString {
+        instructions: String = this.instructions.value, on: Boolean = enabled.value
+    ): String = if (!on) "" else buildString {
         append("How Ben has tuned your voice (follow this):\n")
         append("- Tone: ").append(tone.prompt).append('\n')
         append("- Detail: ").append(detail.prompt).append('\n')

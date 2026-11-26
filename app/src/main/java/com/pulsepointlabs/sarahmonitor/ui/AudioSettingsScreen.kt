@@ -68,12 +68,14 @@ fun HeartbeatSoundSection() {
     val muteContact by AudioSettings.muteOnContactLoss.collectAsState()
     val over by AudioSettings.beepOverOtherAudio.collectAsState()
     SettingsSection("Heartbeat sound", MonitorColors.hr, icon = androidx.compose.material.icons.Icons.Default.MonitorHeart) {
-        SettingRow("Beep with each heartbeat") { SettingSwitch(enabled) { AudioSettings.setBeepEnabled(it) } }
-        ChoiceRow {
-            BeatSound.entries.forEach { s ->
-                ChoiceChip(s.label, s == sound, MonitorColors.hr) {
-                    AudioSettings.setBeepSound(s)
-                    MonitorHub.audio.previewBeat(s)
+        SettingGroup {
+            SettingRow("Beep with each heartbeat") { SettingSwitch(enabled) { AudioSettings.setBeepEnabled(it) } }
+            ChoiceRow {
+                BeatSound.entries.forEach { s ->
+                    ChoiceChip(s.label, s == sound, MonitorColors.hr) {
+                        AudioSettings.setBeepSound(s)
+                        MonitorHub.audio.previewBeat(s)
+                    }
                 }
             }
         }
@@ -81,10 +83,12 @@ fun HeartbeatSoundSection() {
         SettingSlider("Pitch", (if (pitch > 0) "+" else "") + "$pitch semitones", pitch.toFloat(), -6f..6f, steps = 11) {
             AudioSettings.setBeepPitch(it.toInt())
         }
-        Text("Play", color = MonitorColors.text, fontSize = 15.sp)
-        ChoiceRow {
-            listOf(1 to "Every beat", 2 to "Every 2nd", 4 to "Every 4th").forEach { (n, label) ->
-                ChoiceChip(label, everyN == n, MonitorColors.hr) { AudioSettings.setBeepEveryN(n) }
+        SettingGroup {
+            Text("Play", color = MonitorColors.text, fontSize = 15.sp)
+            ChoiceRow {
+                listOf(1 to "Every beat", 2 to "Every 2nd", 4 to "Every 4th").forEach { (n, label) ->
+                    ChoiceChip(label, everyN == n, MonitorColors.hr) { AudioSettings.setBeepEveryN(n) }
+                }
             }
         }
         SettingRow("Follow the real rhythm", if (rhythm) "Beats use the strap's RR intervals — extra beats and pauses are audible (about 1 s behind)" else "Steady beat at the current heart rate") {
@@ -108,26 +112,32 @@ fun AlertsSection() {
     SettingsSection("Alerts", MonitorColors.warn, icon = androidx.compose.material.icons.Icons.Default.NotificationsActive) {
         SettingRow("Alerts on") { SettingSwitch(enabled) { AudioSettings.setAlertsEnabled(it) } }
         SettingRow("Only while recording") { SettingSwitch(onlyRec) { AudioSettings.setAlertsOnlyRecording(it) } }
-        Text("Alert tone", color = MonitorColors.text, fontSize = 15.sp)
-        ChoiceRow {
-            AlertTone.entries.forEach { t ->
-                ChoiceChip(t.label, t == tone, MonitorColors.warn) { AudioSettings.setAlertTone(t); MonitorHub.audio.previewTone(t) }
+        SettingGroup {
+            Text("Alert tone", color = MonitorColors.text, fontSize = 15.sp)
+            ChoiceRow {
+                AlertTone.entries.forEach { t ->
+                    ChoiceChip(t.label, t == tone, MonitorColors.warn) { AudioSettings.setAlertTone(t); MonitorHub.audio.previewTone(t) }
+                }
             }
         }
         SettingSlider("Alert tone volume", "${(volume * 100).toInt()}%", volume, 0f..1f) { AudioSettings.setAlertVolume(it) }
+        SettingGroup {
         SettingSlider("High heart rate alert", if (highHr == 0) "Auto" else "$highHr bpm", if (highHr == 0) 80f else highHr.toFloat(), 80f..220f) {
             AudioSettings.setHighHrLimit(if (it < 90f) 0 else Math.round(it))
         }
         Text(
             if (highHr == 0) "Auto: 25 above this session's typical heart rate (never below 100), once it has a few minutes to learn. Slide left to the end for Auto."
             else "Alerts when heart rate stays above $highHr for 30 seconds. Slide left to the end for Auto.",
-            color = MonitorColors.label, fontSize = 12.sp
+            color = MonitorColors.label, fontSize = 13.sp
         )
+        }
+        SettingGroup {
         SettingSlider("Low heart rate alert", "$lowHr bpm", lowHr.toFloat(), 35f..110f) { AudioSettings.setLowHrLimit(Math.round(it)) }
         Text(
             if (lowHr >= 60) "A target: Sarah tells you when you've been under $lowHr for 30 seconds." else "Alerts when heart rate stays under $lowHr for 30 seconds.",
-            color = MonitorColors.label, fontSize = 12.sp
+            color = MonitorColors.label, fontSize = 13.sp
         )
+        }
         SettingSlider("Long pelvic hold", "$hold s", hold.toFloat(), 5f..30f) { AudioSettings.setLongHoldSeconds(it.toInt()) }
     }
 }
@@ -204,10 +214,14 @@ fun SarahVoiceSection() {
     val color = androidx.compose.ui.graphics.Color(0xFFFF7AB6)
     SettingsSection("Sarah's voice", color, icon = androidx.compose.material.icons.Icons.Default.GraphicEq) {
         ChoiceRow { VoiceEngine.entries.forEach { e -> ChoiceChip(e.label, e == engine, color) { AudioSettings.setVoiceEngine(e) } } }
-        SettingSlider("Volume", "${(volume * 100).toInt()}%" + if (volume > 1f) " boost" else "", volume, 0.1f..2f) { AudioSettings.setVoiceVolume((it * 20).toInt() / 20f) }
-        Text("Follows your media volume. Above 100% boosts her over loud audio.", color = MonitorColors.label, fontSize = 12.sp)
-        Text("While she talks", color = MonitorColors.text, fontSize = 15.sp)
-        ChoiceRow { com.pulsepointlabs.sarahmonitor.audio.VoiceOverOthers.entries.forEach { v -> ChoiceChip(v.label, v == over, color) { AudioSettings.setVoiceOverOthers(v) } } }
+        SettingGroup {
+            SettingSlider("Volume", "${(volume * 100).toInt()}%" + if (volume > 1f) " boost" else "", volume, 0.1f..2f) { AudioSettings.setVoiceVolume((it * 20).toInt() / 20f) }
+            Text("Follows your media volume. Above 100% boosts her over loud audio.", color = MonitorColors.label, fontSize = 13.sp)
+        }
+        SettingGroup {
+            Text("While she talks", color = MonitorColors.text, fontSize = 15.sp)
+            ChoiceRow { com.pulsepointlabs.sarahmonitor.audio.VoiceOverOthers.entries.forEach { v -> ChoiceChip(v.label, v == over, color) { AudioSettings.setVoiceOverOthers(v) } } }
+        }
         ChoiceRow { ChoiceChip("▶ Test voice", false, color) { MonitorHub.audio.testVoice() } }
         if (problem != null) Text(problem!!, color = MonitorColors.warn, fontSize = 13.sp)
     }

@@ -29,6 +29,20 @@ class SarahPersonalityTest {
         assertFalse(lean.contains("standing instructions"))
     }
 
+    @Test fun offMeansNothingIsSent() {
+        assertTrue(SarahPersonality.promptBlock(on = false).isEmpty())
+        assertTrue(SarahPersonality.promptBlock(on = true).isNotEmpty())
+    }
+
+    /** A long reply used to be thrown away (and the sample blamed the API key); now it's cut at a sentence end. */
+    @Test fun longRepliesAreTrimmedNotDropped() {
+        val long = "That sounds really nice. " + (1..70).joinToString(" ") { "word" } + "."
+        assertTrue(SarahChat.fitWords(long, 60) == "That sounds really nice.")
+        val short = "Settling in sounds good. Take your time."
+        assertTrue(SarahChat.fitWords(short, 60) == short)
+        assertTrue(SarahChat.fitWords((1..80).joinToString(" ") { "w" }, 60).split(' ').size == 60)
+    }
+
     @Test fun notesGetSpecificNonRepetitiveReplies() {
         assertTrue(SarahChat.SYSTEM.contains("your_last_replies"))
         assertTrue(SarahChat.SYSTEM.contains("never give generic encouragement"))

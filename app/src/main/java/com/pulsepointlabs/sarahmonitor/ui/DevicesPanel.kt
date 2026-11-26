@@ -224,8 +224,10 @@ fun VoiceSection(onMessage: (String) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var engine by remember { mutableStateOf(VoiceSettings.engine(context)) }
     SettingsSection("Dictation (speech to text)", MonitorColors.text, icon = androidx.compose.material.icons.Icons.Default.Mic) {
-        Text("For typing event notes by voice. OpenAI live types as you talk; Whisper types after you stop; Android works offline.", color = MonitorColors.label, fontSize = 13.sp)
-        ChoiceRow { VoiceSettings.Engine.entries.forEach { e -> ChoiceChip(e.label, e == engine) { engine = e; VoiceSettings.setEngine(context, e) } } }
+        SettingGroup {
+            Text("For typing event notes by voice. OpenAI live types as you talk; Whisper types after you stop; Android works offline.", color = MonitorColors.label, fontSize = 13.sp)
+            ChoiceRow { VoiceSettings.Engine.entries.forEach { e -> ChoiceChip(e.label, e == engine) { engine = e; VoiceSettings.setEngine(context, e) } } }
+        }
         var autoStop by remember { mutableStateOf(VoiceSettings.autoStopSeconds(context)) }
         var headset by remember { mutableStateOf(VoiceSettings.preferHeadsetMic(context)) }
         SettingSlider("Stop after quiet", if (autoStop < 1f) "Off" else "%.1f s".format(autoStop), autoStop, 0f..10f) {

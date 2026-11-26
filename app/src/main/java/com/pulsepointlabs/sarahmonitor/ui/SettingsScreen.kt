@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -73,21 +74,30 @@ fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, e
         onDispose { OverlaySettings.setPreviewing(false) }
     }
     var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SettingsPage.Quick) }
-    val sections: (SettingsPage) -> List<@Composable () -> Unit> = { p ->
+    val sections: (SettingsPage) -> List<SettingsTab> = { p ->
         when (p) {
-            SettingsPage.Quick -> listOf({ QuickControls() })
+            SettingsPage.Quick -> listOf(SettingsTab("Quick controls") { QuickControls() })
             SettingsPage.Sarah -> listOf(
-                { com.pulsepointlabs.sarahmonitor.response.SarahPersonalitySection() },
-                { HandsFreeSection() },
-                { SarahVoiceSection() },
-                { com.pulsepointlabs.sarahmonitor.response.CoachSettingsSection() },
-                { StressVoiceSection() }
+                SettingsTab("Personality") { com.pulsepointlabs.sarahmonitor.response.SarahPersonalitySection() },
+                SettingsTab("Hands-free") { HandsFreeSection() },
+                SettingsTab("Voice") { SarahVoiceSection() },
+                SettingsTab("Live feedback") { com.pulsepointlabs.sarahmonitor.response.CoachSettingsSection() },
+                SettingsTab("Stress voice") { StressVoiceSection() }
             )
-            SettingsPage.Overlays -> listOf({ OverlaySettingsSection(look = false) }, { OverlayKindsSection() }, { OverlaySettingsSection(look = true) })
-            SettingsPage.Sound -> listOf({ HeartbeatSoundSection() }, { AlertsSection() }, { AlertListSection() })
-            SettingsPage.Devices -> deviceSections(onHealthConnect, onCsvImport, onMessage).map { it.content } +
-                listOf<@Composable () -> Unit>({ com.pulsepointlabs.sarahmonitor.howl.HowlSettingsSection() })
-            SettingsPage.Recording -> listOf({ VoiceSection(onMessage) }, { ObsSection() }, { ApiKeysSection(onMessage) }, { Column { extra() } })
+            SettingsPage.Overlays -> listOf(SettingsTab("Overlays") { OverlaysSection() })
+            SettingsPage.Sound -> listOf(
+                SettingsTab("Heartbeat beep") { HeartbeatSoundSection() },
+                SettingsTab("Alerts") { AlertsSection() },
+                SettingsTab("Which alerts") { AlertListSection() }
+            )
+            SettingsPage.Devices -> deviceSections(onHealthConnect, onCsvImport, onMessage).zip(listOf("Polar H10", "CIVET", "Omron cuff", "EMG", "Glucose"))
+                .map { (sec, name) -> SettingsTab(name) { sec.content() } } +
+                SettingsTab("Howl e-stim") { com.pulsepointlabs.sarahmonitor.howl.HowlSettingsSection() }
+            SettingsPage.Recording -> listOf(
+                SettingsTab("Dictation") { VoiceSection(onMessage) },
+                SettingsTab("OBS") { ObsSection() },
+                SettingsTab("API keys") { ApiKeysSection(onMessage); Column { extra() } }
+            )
         }
     }
     CompositionLocalProvider(LocalCollapsibleSections provides false) {
@@ -170,20 +180,83 @@ private fun TabGrid(page: SettingsPage, onPick: (SettingsPage) -> Unit) {
     }
 }
 
-/** One page: its title, then its sections packed into columns. */
+/** One section of a page, shown under its own tab. */
+class SettingsTab(val title: String, val content: @Composable () -> Unit)
+
+/** How many columns a section's own settings flow into (1 on a phone, up to 3 on DeX). */
+val LocalSectionColumns = androidx.compose.runtime.compositionLocalOf { 1 }
+
+/**
+ * One page: its title, a tab per section (when it has more than one), then the chosen section across the full
+ * width with its settings flowing into balanced columns, so there are no ragged cards or black holes.
+ */
 @Composable
-private fun PageBody(p: SettingsPage, sections: List<@Composable () -> Unit>, modifier: Modifier, header: Boolean = true) {
+private fun PageBody(p: SettingsPage, tabs: List<SettingsTab>, modifier: Modifier, header: Boolean = true) {
+    var tab by androidx.compose.runtime.saveable.rememberSaveable(p.name) { mutableStateOf(0) }
+    val current = tabs.getOrNull(tab) ?: tabs.first()
     androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
-        val cols = (maxWidth / 340.dp).toInt().coerceIn(1, 3).coerceAtMost(sections.size.coerceAtLeast(1))
-        androidx.compose.runtime.key(p) {
-            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (header) Column {
-                    Text(p.label, color = p.color, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text(p.blurb, color = MonitorColors.label, fontSize = 14.sp)
+        val cols = (maxWidth / 300.dp).toInt().coerceIn(1, 3)
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (header) Column {
+                Text(p.label, color = p.color, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text(p.blurb, color = MonitorColors.label, fontSize = 14.sp)
+            }
+            if (tabs.size > 1) Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                tabs.forEachIndexed { i, t -> SubTab(t.title, i == tabs.indexOf(current), p.color) { tab = i } }
+            }
+            androidx.compose.runtime.key(p, current.title) {
+                Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
+                    CompositionLocalProvider(LocalSectionColumns provides cols) { current.content() }
                 }
-                Masonry(cols, Modifier.fillMaxWidth()) { sections.forEach { it() } }
             }
         }
+    }
+}
+
+@Composable
+private fun SubTab(label: String, selected: Boolean, color: Color, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (selected) MonitorColors.background else MonitorColors.text,
+        fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false,
+        modifier = Modifier
+            .heightIn(min = 44.dp)
+            .background(if (selected) color else MonitorColors.panel, RoundedCornerShape(22.dp))
+            .border(1.dp, if (selected) color else MonitorColors.panelBorder, RoundedCornerShape(22.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 11.dp)
+    )
+}
+
+/** A label with its control (or a slider with its note), kept together across a column break. */
+@Composable
+fun SettingGroup(content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) { content() }
+}
+
+/**
+ * A section's settings in [columns] newspaper-style columns: in order, top to bottom then the next column, split
+ * where the columns come out most even. Pure layout; nothing is reordered.
+ */
+@Composable
+fun ColumnFlow(columns: Int, modifier: Modifier = Modifier, gap: androidx.compose.ui.unit.Dp = 8.dp, colGap: androidx.compose.ui.unit.Dp = 28.dp, content: @Composable () -> Unit) {
+    androidx.compose.ui.layout.Layout(content, modifier) { measurables, constraints ->
+        val g = gap.roundToPx(); val cg = colGap.roundToPx()
+        val n = columns.coerceIn(1, measurables.size.coerceAtLeast(1))
+        val colW = ((constraints.maxWidth - cg * (n - 1)) / n).coerceAtLeast(0)
+        val placeables = measurables.map { it.measure(androidx.compose.ui.unit.Constraints(minWidth = colW, maxWidth = colW)) }
+        val groups = partition(placeables.map { it.height + g }, n)
+        var height = 0
+        val spots = ArrayList<Triple<androidx.compose.ui.layout.Placeable, Int, Int>>()
+        groups.forEachIndexed { c, range ->
+            var y = 0
+            range.forEach { i -> val pl = placeables[i]; spots += Triple(pl, c * (colW + cg), y); if (pl.height > 0) y += pl.height + g }
+            height = maxOf(height, y - g)
+        }
+        layout(constraints.maxWidth, height.coerceAtLeast(0)) { spots.forEach { (pl, x, y) -> pl.place(x, y) } }
     }
 }
 
@@ -247,7 +320,12 @@ fun SettingsSection(
         }
         if (open) {
             if (subtitle != null) Text(subtitle, color = MonitorColors.label, fontSize = 13.sp, lineHeight = 17.sp)
-            content()
+            val cols = LocalSectionColumns.current
+            if (cols > 1) {
+                // Rows flow into columns across the full width (DeX, landscape); nested cards stay one column.
+                val scope = this
+                CompositionLocalProvider(LocalSectionColumns provides 1) { ColumnFlow(cols, Modifier.fillMaxWidth()) { scope.content() } }
+            } else content()
         }
     }
 }
@@ -324,9 +402,12 @@ fun SettingSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
 
 private val overlayEditing = mutableStateOf<OverlayProfile?>(null)
 
-/** Two cards: which overlays show (per screen), and how they look. Both edit the same screen's set. */
+/**
+ * Everything about the floating overlays in one place: which screen, on/off, which readings float, and how they
+ * look. On a wide window the rows flow into columns across the page.
+ */
 @Composable
-private fun OverlaySettingsSection(look: Boolean) {
+private fun OverlaysSection() {
     val context = LocalContext.current
     val current by OverlaySettings.profile.collectAsState()
     val states by OverlaySettings.states.collectAsState()
@@ -334,53 +415,48 @@ private fun OverlaySettingsSection(look: Boolean) {
     val profile = editing ?: current
     val st = states[profile] ?: return
     val canDraw = OverlaySettings.canDraw(context)
-    if (look) {
-        SettingsSection("Look & feel", MonitorColors.pelvic, icon = androidx.compose.material.icons.Icons.Default.Tune, subtitle = "For the ${profile.label.lowercase()} overlays.") {
-            OverlayLook(st, profile)
-        }
-        return
-    }
     SettingsSection(
         "Floating overlays", MonitorColors.pelvic, icon = androidx.compose.material.icons.Icons.Default.Layers, subtitle =
         "Float over other apps: drag to move, drag to the circle to close, corner to resize. The phone and DeX each keep their own set, sizes and spots (portrait and landscape too). Long-press ＋ to show or hide the others. They hide while Sarah Monitor is in front, except on this page."
     ) {
-        if (!canDraw) {
-            TextButton(onClick = { context.startActivity(OverlaySettings.permissionIntent(context)) }) {
-                Text("Allow \"display over other apps\"", color = MonitorColors.warn)
+        SettingGroup {
+            if (!canDraw) {
+                TextButton(onClick = { context.startActivity(OverlaySettings.permissionIntent(context)) }) {
+                    Text("Allow \"display over other apps\"", color = MonitorColors.warn, fontSize = 15.sp)
+                }
             }
-        }
-        ChoiceRow {
-            OverlayProfile.entries.forEach { p ->
-                ChoiceChip(p.label + if (p == current) " (this screen)" else "", p == profile) { editing = p }
+            Text("Settings for", color = MonitorColors.text, fontSize = 15.sp)
+            ChoiceRow {
+                OverlayProfile.entries.forEach { p ->
+                    ChoiceChip(p.label + if (p == current) " (this screen)" else "", p == profile) { editing = p }
+                }
             }
-        }
-        SettingRow("Overlays on ${profile.label}") {
-            SettingSwitch(st.on) {
-                OverlaySettings.setOn(context, it, profile)
-                MonitorService.start(context)
-            }
-        }
-    }
-}
-
-/** Which readings float, for the screen picked on the Floating overlays card. */
-@Composable
-private fun OverlayKindsSection() {
-    val context = LocalContext.current
-    val current by OverlaySettings.profile.collectAsState()
-    val states by OverlaySettings.states.collectAsState()
-    val editing by overlayEditing
-    val profile = editing ?: current
-    val st = states[profile] ?: return
-    SettingsSection("Which overlays", MonitorColors.pelvic, icon = androidx.compose.material.icons.Icons.Default.Checklist, subtitle = "On the ${profile.label.lowercase()}.") {
-        OverlayKind.entries.forEach { kind ->
-            SettingRow(kind.label) {
-                SettingSwitch(kind in st.enabled) {
-                    OverlaySettings.set(context, kind, it, profile)
+            SettingRow("Overlays on ${profile.label}") {
+                SettingSwitch(st.on) {
+                    OverlaySettings.setOn(context, it, profile)
                     MonitorService.start(context)
                 }
             }
         }
+        @Composable fun kindRow(kind: OverlayKind) = SettingRow(kind.label) {
+            SettingSwitch(kind in st.enabled) {
+                OverlaySettings.set(context, kind, it, profile)
+                MonitorService.start(context)
+            }
+        }
+        // Each heading stays with its first row across a column break.
+        SettingGroup {
+            Text("Which readings float", color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            kindRow(OverlayKind.entries.first())
+        }
+        OverlayKind.entries.drop(1).forEach { kindRow(it) }
+        SettingGroup {
+            Text("Look", color = MonitorColors.label, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            SettingSlider("Opacity (all overlays)", "${(st.opacity * 100).toInt()}%", st.opacity, OverlaySettings.MIN_OPACITY..1f) {
+                OverlaySettings.setOpacity(context, it, profile)
+            }
+        }
+        OverlayLook(st, profile)
     }
 }
 
@@ -388,13 +464,11 @@ private fun OverlayKindsSection() {
 private fun OverlayLook(st: com.pulsepointlabs.sarahmonitor.overlay.OverlayProfileState, profile: OverlayProfile) {
     val context = LocalContext.current
     run {
-        SettingSlider("Opacity (all overlays)", "${(st.opacity * 100).toInt()}%", st.opacity, OverlaySettings.MIN_OPACITY..1f) {
-            OverlaySettings.setOpacity(context, it, profile)
-        }
         SettingRow(
             "Fade readings too",
             if (st.fadeReadings) "Opacity fades the whole overlay" else "Only the background fades; numbers stay solid"
         ) { SettingSwitch(st.fadeReadings) { OverlaySettings.setFadeReadings(context, it, profile) } }
+        SettingGroup {
         SettingSlider("＋ button size", "${st.plusSizeDp} dp", st.plusSizeDp.toFloat(), OverlaySettings.MIN_PLUS_DP.toFloat()..OverlaySettings.MAX_PLUS_DP.toFloat()) {
             OverlaySettings.setPlusSize(context, it.toInt(), profile)
         }
@@ -409,6 +483,7 @@ private fun OverlayLook(st: com.pulsepointlabs.sarahmonitor.overlay.OverlayProfi
             ) {
                 Text("+", color = MonitorColors.background, fontSize = (st.plusSizeDp * 0.62f).sp, fontWeight = FontWeight.Bold)
             }
+        }
         }
     }
 }

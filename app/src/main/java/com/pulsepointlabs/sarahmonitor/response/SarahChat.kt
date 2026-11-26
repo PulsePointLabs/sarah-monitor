@@ -65,14 +65,33 @@ object SarahMemory {
 object SarahChat {
     /** "note": he told her something (already saved). "question": he asked her something or is just talking to her. */
     suspend fun reply(said: String, kind: String, filedAs: String?, numbers: String?): String? {
-        if (!ClaudeText.available) return null
+        if (!ClaudeText.available) { problem = "no Anthropic key saved"; return null }
         val ctx = context(said, kind, filedAs, numbers)
-        val out = ClaudeText.ask(SYSTEM + "\n\n" + SarahPersonality.promptBlock(), ctx.toString(), maxTokens = 600, model = ResponseSettings.model.value.id) ?: return null
+        val out = ClaudeText.ask(SYSTEM + "\n\n" + SarahPersonality.promptBlock(), ctx.toString(), maxTokens = 600, model = ResponseSettings.model.value.id)
+            ?: run { problem = ClaudeText.lastProblem ?: "no reply"; return null }
         val text = out.trim().trim('"').replace(Regex("\\s+"), " ")
-        if (text.isBlank() || text.equals("QUIET", ignoreCase = true)) return null
-        // Notes get a short acknowledgment; questions room for a real answer.
-        if (text.split(' ').size > (if (kind == "note") 60 else 120)) return null
-        return text
+        if (text.isBlank() || text.equals("QUIET", ignoreCase = true)) { problem = "she chose to stay quiet"; return null }
+        problem = null
+        // Notes get a short acknowledgment; questions room for a real answer. A long one is cut at a sentence end
+        // (it used to be thrown away, which looked like a key problem).
+        return fitWords(text, if (kind == "note") 60 else 120)
+    }
+
+    /** Why the last [reply] came back empty, in plain words (shown instead of guessing at the key). */
+    @Volatile var problem: String? = null
+        private set
+
+    /** Whole sentences up to [max] words; a single overlong sentence is cut and closed. Pure; unit-tested. */
+    fun fitWords(text: String, max: Int): String {
+        if (text.split(' ').size <= max) return text
+        val sentences = Regex("(?<=[.!?])\\s+").split(text)
+        val kept = StringBuilder()
+        for (s in sentences) {
+            val n = (kept.toString() + " " + s).trim().split(' ').size
+            if (n > max) break
+            kept.append(' ').append(s)
+        }
+        return kept.toString().trim().ifBlank { text.split(' ').take(max).joinToString(" ").trimEnd(',', ';', ':') + "." }
     }
 
     private val clock = DateTimeFormatter.ofPattern("EEEE h:mm a")
