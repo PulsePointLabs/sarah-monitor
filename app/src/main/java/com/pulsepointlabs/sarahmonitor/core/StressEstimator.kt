@@ -5,7 +5,19 @@ import kotlin.math.roundToInt
 enum class StressLevel(val label: String) { Calm("Calm"), Mild("Mild"), Elevated("Elevated"), High("High") }
 
 /** One part of the stress estimate, 0–100, or null when that sensor isn't available. */
-data class StressComponent(val key: String, val label: String, val score: Int?, val detail: String)
+data class StressComponent(val key: String, val label: String, val score: Int?, val detail: String) {
+    companion object {
+        /** Every driver, in its fixed display order. */
+        val ORDER = listOf("hrv" to "HRV", "hr" to "Heart", "breath" to "Breathing", "tension" to "Tension", "restless" to "Restless")
+
+        /**
+         * All drivers in a fixed order, each in its own slot whether or not it has a reading right now, so the
+         * stress card and overlay never jump when breathing (or anything else) drops in and out. Pure; unit-tested.
+         */
+        fun slots(components: List<StressComponent>): List<StressComponent> =
+            ORDER.map { (k, l) -> components.firstOrNull { it.key == k } ?: StressComponent(k, l, null, "") }
+    }
+}
 
 data class StressReading(
     /** 0–100 overall, smoothed over ~20 s. Null until there's enough to say. */

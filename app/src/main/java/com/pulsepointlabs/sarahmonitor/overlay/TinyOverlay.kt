@@ -1,5 +1,6 @@
 package com.pulsepointlabs.sarahmonitor.overlay
 
+import com.pulsepointlabs.sarahmonitor.core.duringSession
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -168,7 +169,8 @@ private fun strip(kind: OverlayKind): Strip? {
             Strip(
                 "Stress", "0–100", st.score?.toString() ?: "--", 3, st.score?.let { percentBandColor(it) } ?: MonitorColors.dim,
                 recent.values(Metric.Stress), recent.trend(Metric.Stress), metricBand(Metric.Stress),
-                st.components.filter { it.score != null }.sortedByDescending { it.score }.take(3).map { short(it.label) to "${it.score}" }
+                // Fixed slots (HRV, heart, breathing): a missing reading shows "--" instead of reshuffling the strip.
+                com.pulsepointlabs.sarahmonitor.core.StressComponent.slots(st.components).take(3).map { short(it.label) to (it.score?.toString() ?: "--") }
             )
         }
         OverlayKind.Pelvic -> {
@@ -182,8 +184,9 @@ private fun strip(kind: OverlayKind): Strip? {
             )
         }
         OverlayKind.BloodPressure -> {
-            val readings by MonitorHub.bp.items.collectAsState()
-            val last = readings.lastOrNull()
+            val all by MonitorHub.bp.items.collectAsState()
+            val session by MonitorHub.session.collectAsState()
+            val last = all.duringSession(session?.startTimeMs).lastOrNull()
             Strip(
                 "BP", "mmHg", last?.let { "${it.systolic}/${it.diastolic}" } ?: "--/--", 7,
                 last?.let { bpColor(it.systolic, it.diastolic) } ?: MonitorColors.dim,

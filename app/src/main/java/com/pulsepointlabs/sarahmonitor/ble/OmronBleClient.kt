@@ -40,6 +40,15 @@ class OmronBleClient(private val context: Context) {
     // Consecutive waits without a reading; drives the 5 s -> 60 s retry backoff.
     private var retryFailures = 0
     private val scanTimeout = Runnable { finishScan() }
+    // While armed and waiting, a low-power scan for any cuff advertising the blood-pressure service. The cuff can
+    // come back under a new Bluetooth address, which a connect-by-saved-address never sees (that's why a manual
+    // re-pair used to be needed); the watch catches it whatever address it uses.
+    private var watching = false
+    // True while the cuff is actually connected: nothing may open a new link over it mid-transfer.
+    @Volatile private var linkUp = false
+    private var lastReadingAt = 0L
+    private val watchStart = Runnable { startWatch() }
+    private val watchRefresh = Runnable { if (watching) { stopWatch(); startWatch() } }
     private val retryRunnable = Runnable { retryConnection() }
     private val found = linkedMapOf<String, BluetoothDevice>()
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -70,6 +79,7 @@ class OmronBleClient(private val context: Context) {
         handler.removeCallbacks(retryRunnable)
         runCatching { gatt?.close() }
         gatt = null
+        linkUp = false
         subscribed = false
         val scanner = adapter?.bluetoothLeScanner ?: run {
             _state.value = ConnectionState.Error
@@ -107,6 +117,7 @@ class OmronBleClient(private val context: Context) {
         lastDevice = device
         rememberDevice(device)
         handler.removeCallbacks(retryRunnable)
+        stopWatch()
         retryFailures = 0
         openGatt(device, autoConnect = false)
         _state.value = ConnectionState.Connecting
@@ -116,6 +127,7 @@ class OmronBleClient(private val context: Context) {
     @SuppressLint("MissingPermission")
     private fun openGatt(device: BluetoothDevice, autoConnect: Boolean) {
         subscribed = false
+        linkUp = false
         runCatching { gatt?.close() }
         gatt = runCatching { device.connectGatt(context, autoConnect, callback, BluetoothDevice.TRANSPORT_LE) }.getOrNull()
     }
@@ -133,6 +145,7 @@ class OmronBleClient(private val context: Context) {
     }
 
     fun disarm() {
+        stopWatch()
         armed = false
         targetAddress = null
         subscribed = false
@@ -140,6 +153,7 @@ class OmronBleClient(private val context: Context) {
         finishScan()
         runCatching { gatt?.close() }
         gatt = null
+        linkUp = false
         retryFailures = 0
         _state.value = ConnectionState.NotConfigured
     }
@@ -155,11 +169,56 @@ class OmronBleClient(private val context: Context) {
         _state.value = ConnectionState.WaitingForCuff
         handler.removeCallbacks(retryRunnable)
         handler.postDelayed(retryRunnable, ReconnectPolicy.cuffRetryDelayMs(retryFailures))
+        handler.removeCallbacks(watchStart)
+        val sinceReading = System.currentTimeMillis() - lastReadingAt
+        handler.postDelayed(watchStart, (WATCH_PAUSE_AFTER_READING_MS - sinceReading).coerceAtLeast(0L))
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startWatch() {
+        if (!armed || watching || scanning || linkUp || !hasBluetoothPermission()) return
+        if (_state.value !in setOf(ConnectionState.WaitingForCuff, ConnectionState.Disconnected, ConnectionState.Error)) return
+        val scanner = adapter?.bluetoothLeScanner ?: return
+        val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(BP_SERVICE)).build()
+        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_POWER).build()
+        watching = runCatching { scanner.startScan(listOf(filter), settings, watchCallback) }.isSuccess
+        // Some phones quietly stop a scan after a long while: start it over every 10 minutes.
+        handler.removeCallbacks(watchRefresh)
+        if (watching) handler.postDelayed(watchRefresh, 10 * 60_000L)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopWatch() {
+        handler.removeCallbacks(watchStart)
+        handler.removeCallbacks(watchRefresh)
+        if (watching) runCatching { adapter?.bluetoothLeScanner?.stopScan(watchCallback) }
+        watching = false
+    }
+
+    /** The cuff woke up (you pressed its Bluetooth button or finished a reading): connect now, at whatever address. */
+    private val watchCallback = object : ScanCallback() {
+        @SuppressLint("MissingPermission")
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            val device = result.device ?: return
+            if (!armed || linkUp) return
+            if (_state.value in setOf(ConnectionState.Connecting, ConnectionState.Connected, ConnectionState.Receiving)) return
+            val remembered = prefs.getString(KEY_ADDRESS, null)
+            val name = device.name ?: result.scanRecord?.deviceName ?: ""
+            // It advertises the blood-pressure service, so it's a cuff; prefer ours, but a new address is still ours.
+            if (remembered != null && !remembered.equals(device.address, true) &&
+                !(name.contains("Omron", true) || name.contains("BP", true) || name.isBlank())) return
+            stopWatch()
+            handler.removeCallbacks(retryRunnable)
+            lastDevice = device
+            rememberDevice(device)
+            openGatt(device, autoConnect = false)
+            _state.value = ConnectionState.Connecting
+        }
     }
 
     @SuppressLint("MissingPermission")
     private fun retryConnection() {
-        if (!armed || !hasBluetoothPermission()) return
+        if (!armed || linkUp || !hasBluetoothPermission()) return
         val device = lastDevice
         if (device != null) {
             _state.value = ConnectionState.WaitingForCuff
@@ -198,9 +257,13 @@ class OmronBleClient(private val context: Context) {
                 return
             }
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                linkUp = true
+                stopWatch()
+                handler.removeCallbacks(retryRunnable)
                 _state.value = ConnectionState.Connected
                 gatt.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                linkUp = false
                 subscribed = false
                 reconnectOrWait()
             }
@@ -259,6 +322,7 @@ class OmronBleClient(private val context: Context) {
             )
         )
         _state.value = ConnectionState.ReadingSaved
+        lastReadingAt = System.currentTimeMillis()
         retryFailures = 0
         reconnectOrWait()
     }
@@ -288,6 +352,7 @@ class OmronBleClient(private val context: Context) {
 
     companion object {
         private const val PREFS = "sarahmonitor_omron_device"
+        private const val WATCH_PAUSE_AFTER_READING_MS = 20_000L
         private const val KEY_ADDRESS = "address"
         private const val KEY_NAME = "name"
         val BP_SERVICE: UUID = UUID.fromString("00001810-0000-1000-8000-00805f9b34fb")

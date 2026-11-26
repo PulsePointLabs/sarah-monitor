@@ -1,5 +1,6 @@
 package com.pulsepointlabs.sarahmonitor.ui
 
+import com.pulsepointlabs.sarahmonitor.core.duringSession
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -566,7 +567,9 @@ fun MiniButton(label: String, color: Color, onClick: () -> Unit) {
 
 @Composable
 private fun BloodPressureCard() {
-    val readings by MonitorHub.bp.items.collectAsState()
+    val all by MonitorHub.bp.items.collectAsState()
+    val session by MonitorHub.session.collectAsState()
+    val readings = all.duringSession(session?.startTimeMs)
     val state by MonitorHub.omron.state.collectAsState()
     val s = LocalCardScale.current
     val latest = readings.lastOrNull()
@@ -582,7 +585,7 @@ private fun BloodPressureCard() {
             Text(latest?.let { agoLabel(it.timestampMs) } ?: "", color = MonitorColors.label, fontSize = s.sp(11f), maxLines = 1)
         } }
         flex { BigReading(
-            value = latest?.let { "${it.systolic}/${it.diastolic}" } ?: "--/--",
+            value = latest?.let { "${it.systolic}/${it.diastolic}" } ?: if (session == null) "" else "--/--",
             maxChars = 7,
             color = latest?.let { bpColor(it.systolic, it.diastolic) } ?: MonitorColors.dim,
             modifier = Modifier.fillMaxSize()
@@ -743,8 +746,14 @@ fun StressCard() {
             maxChars = 3, trend = recent.values(Metric.Stress), trendStrength = recent.trend(Metric.Stress), band = metricBand(Metric.Stress)
         ) }
         fixed(drop = 1) { Chips {
-            st.components.filter { it.score != null }.forEach { c ->
-                StatChip(c.label, if (c.key == "breath") st.breathsPerMin?.let { "%.0f/min".format(it) } ?: "${c.score}" else "${c.score}", tint = percentBandColor(c.score), trend = rememberTrend("stress-${c.key}", c.score?.toDouble(), 12.0))
+            // Every driver keeps its place; no reading = "--" with a level trend mark (nothing pops in or out).
+            com.pulsepointlabs.sarahmonitor.core.StressComponent.slots(st.components).forEach { c ->
+                val value = when {
+                    c.score == null -> "--"
+                    c.key == "breath" -> st.breathsPerMin?.let { "%.0f/min".format(it) } ?: "${c.score}"
+                    else -> "${c.score}"
+                }
+                StatChip(c.label, value, tint = c.score?.let { percentBandColor(it) } ?: MonitorColors.dim, trend = rememberTrend("stress-${c.key}", c.score?.toDouble(), 12.0) ?: 0.0)
             }
         } }
     }

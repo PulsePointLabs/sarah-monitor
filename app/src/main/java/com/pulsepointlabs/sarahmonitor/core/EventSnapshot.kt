@@ -57,7 +57,7 @@ object EventSnapshot {
             })
         }
         fun ageMin(t: Long) = ((atMs - t) / 60_000L).coerceAtLeast(0)
-        MonitorHub.bp.items.value.lastOrNull { atMs - it.timestampMs in 0..24 * 3_600_000L }?.let {
+        MonitorHub.bp.items.value.duringSession(MonitorHub.session.value?.startTimeMs).lastOrNull { it.timestampMs <= atMs }?.let {
             o.put("bp", JSONObject().put("systolic", it.systolic).put("diastolic", it.diastolic).opt("pulse", it.pulse)
                 .opt("site", it.site).opt("posture", it.posture).put("age_min", ageMin(it.timestampMs)))
         }

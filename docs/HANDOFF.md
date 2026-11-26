@@ -242,6 +242,21 @@ bedside-monitor dashboards, floating overlays and a review screen.
   Floating overlays / Which overlays / Look & feel. Checked on phone portrait + landscape, DeX emulator full screen
   and a 1500×1100 window. Not checked on the real S25 or real DeX.
 
+## 0.32.1 (BP cuff, BP per session, stress card)
+
+- **Cuff didn't connect until re-paired**: while armed, the app only reconnected to the saved address; the cuff can
+  come back under a new Bluetooth address. Now a low-power scan for the blood-pressure service runs while waiting
+  (paused 20 s after a reading, restarted every 10 min) and connects to the cuff at whatever address it uses. A
+  `linkUp` guard stops retries/the watch from opening a new link over a live transfer (the old 5 s retry could).
+  Unverified with the real cuff.
+- **BP only from the current session** (`duringSession`): card, overlay strip, event snapshots and the notification
+  show nothing when not recording and "--/--" until a reading is taken in this session. Note: the cuff's own clock
+  stamps readings; a badly-set cuff clock could hide a fresh reading.
+- **Stress drivers keep fixed slots** (`StressComponent.slots`): HRV, Heart, Breathing, Tension, Restless always
+  shown, "--" and a level trend mark when missing; the overlay strip shows HRV/Heart/Breath in fixed order.
+- Seen on the phone emulator: a ~12 s main-thread stall at launch (738 skipped frames) with its 25-hour test
+  recording running. Pre-existing (also slow before this change); not investigated.
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

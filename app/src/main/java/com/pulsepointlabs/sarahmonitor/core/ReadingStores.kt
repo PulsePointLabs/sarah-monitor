@@ -7,6 +7,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
+/**
+ * Blood pressure belongs to the session it was taken in: only readings since [sessionStartMs] count, and none when
+ * nothing is recording (an old reading on the live card reads like a current one). Pure; unit-tested.
+ */
+fun List<BpEntry>.duringSession(sessionStartMs: Long?): List<BpEntry> =
+    if (sessionStartMs == null) emptyList() else filter { it.timestampMs >= sessionStartMs }
+
 data class BpEntry(
     val timestampMs: Long,
     val systolic: Int,
