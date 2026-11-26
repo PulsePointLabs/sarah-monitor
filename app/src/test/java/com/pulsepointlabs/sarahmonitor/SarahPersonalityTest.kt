@@ -36,6 +36,14 @@ class SarahPersonalityTest {
         assertFalse(com.pulsepointlabs.sarahmonitor.core.ClaudeText.allowsDisabledThinking("claude-sonnet-5-5"))
     }
 
+    @Test fun connectionCheckSpeaksPlainly() {
+        val p = com.pulsepointlabs.sarahmonitor.response.SarahSelfCheck
+        assertTrue(p.plain("401 invalid x-api-key").startsWith("The key was rejected"))
+        assertTrue(p.plain("529 overloaded_error").startsWith("Claude is overloaded"))
+        assertTrue(p.plain("400: thinking.type.disabled is not supported").contains("app bug"))
+        assertTrue(p.plain("Unable to resolve host api.anthropic.com").startsWith("No internet"))
+    }
+
     @Test fun instructionsHaveTheirOwnSwitch() {
         assertTrue(SarahPersonality.promptBlock(instructions = "be brief", useInstr = true).contains("be brief"))
         assertFalse(SarahPersonality.promptBlock(instructions = "be brief", useInstr = false).contains("be brief"))

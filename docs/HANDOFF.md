@@ -287,6 +287,19 @@ bedside-monitor dashboards, floating overlays and a review screen.
 - **Tension** shows only while the CIVET (connected/reconnecting) or EMG (USB link up) is in use (`tensionInUse`),
   on the card and the overlay strip; otherwise the other four drivers share the row.
 
+## 0.33.2 (connection check, full Settings sweep fixes)
+
+- **"Check Sarah's connections"** (Sarah → Personality, and Recording & keys → API keys): `SarahSelfCheck` makes
+  each real Claude call with his keys (note sorting on Haiku, her replies, her answers) and lists pass/fail in plain
+  words. The emulator and unit tests can't do this (keys live only on his phone).
+- Full sweep of every Settings page and tab on DeX, phone portrait and phone landscape (scratchpad `sweep.ps1`,
+  contact sheets in `app/build/device-shots/sweep`). Fixed what it found:
+  - short sections (H10, CIVET, Omron, Glucose) were split into scattered columns: under 5 rows = one column;
+  - tabs ran off the edge in portrait: they wrap now;
+  - phone landscape menu needed scrolling: compact (no blurbs) when the window is under 560 dp tall;
+  - the live overlay preview covered most of the page in landscape and caught taps: it now shows only on the
+    Overlays page.
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

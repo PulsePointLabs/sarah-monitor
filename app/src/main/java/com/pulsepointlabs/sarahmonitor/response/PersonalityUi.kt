@@ -117,5 +117,36 @@ fun SarahPersonalitySection() {
             }
             sample?.let { Text(it, color = MonitorColors.text, fontSize = 14.sp, modifier = Modifier.fillMaxWidth()) }
         }
+        SarahCheckButton()
+    }
+}
+
+/**
+ * "Check Sarah's connections": runs each real Claude call Sarah makes, with his keys, and lists passed / failed in
+ * plain words. Shown under Sarah's personality and under API keys.
+ */
+@Composable
+fun SarahCheckButton() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    var running by remember { mutableStateOf(false) }
+    var results by remember { mutableStateOf<List<SarahSelfCheck.Result>>(emptyList()) }
+    Group {
+        ChoiceRow {
+            ChoiceChip(if (running) "Checking…" else "✓ Check Sarah's connections", false, Pink) {
+                if (running) return@ChoiceChip
+                running = true
+                scope.launch {
+                    results = SarahSelfCheck.run(com.pulsepointlabs.sarahmonitor.session.VoiceSettings.apiKey(context))
+                    running = false
+                }
+            }
+        }
+        results.forEach { r ->
+            Text(
+                (if (r.ok) "✓ " else "✗ ") + r.what + ": " + r.detail,
+                color = if (r.ok) MonitorColors.good else MonitorColors.warn, fontSize = 14.sp, modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
 }

@@ -281,6 +281,7 @@ fun ApiKeysSection(onMessage: (String) -> Unit) {
             onSave = { com.pulsepointlabs.sarahmonitor.response.ResponseSettings.setApiKey(it); onMessage("Anthropic key saved.") },
             onRemove = { com.pulsepointlabs.sarahmonitor.response.ResponseSettings.setApiKey("") }
         )
+        com.pulsepointlabs.sarahmonitor.response.SarahCheckButton()
     }
 }
 

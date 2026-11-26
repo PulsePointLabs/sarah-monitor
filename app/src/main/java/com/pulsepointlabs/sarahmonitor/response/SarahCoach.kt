@@ -214,6 +214,10 @@ class SarahCoach(
      * He asked her something out loud ("how long have I been holding?", "is a pop normal there?"). Answered from
      * the whole session so far, in her current voice, whether or not live feedback is on. Null if she can't.
      */
+    /** Why the last [answer] came back empty (for the connection check). */
+    @Volatile var problem: String? = null
+        private set
+
     suspend fun answer(question: String): String? {
         if (ResponseSettings.apiKey.value.isBlank()) return null
         return runCatching {
@@ -222,7 +226,8 @@ class SarahCoach(
                 call(ANSWER_PROMPT, ctx.toString(), BetaOutputConfig.Effort.MEDIUM)
                     ?.takeIf { !it.equals("QUIET", ignoreCase = true) && it.split(Regex("\\s+")).size <= 90 }
             }
-        }.getOrNull()?.also { a -> recent.addLast(a); while (recent.size > 6) recent.removeFirst(); _last.value = a; lastSpokeAt = System.currentTimeMillis() }
+        }.onFailure { problem = it.message?.take(160) ?: it.javaClass.simpleName }.onSuccess { problem = if (it == null) "no answer (declined, too long, or empty)" else null }
+            .getOrNull()?.also { a -> recent.addLast(a); while (recent.size > 6) recent.removeFirst(); _last.value = a; lastSpokeAt = System.currentTimeMillis() }
     }
 
     private fun call(system: String, user: String, effort: BetaOutputConfig.Effort): String? {

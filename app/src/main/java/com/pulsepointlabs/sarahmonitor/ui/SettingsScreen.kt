@@ -63,16 +63,12 @@ enum class SettingsPage(val label: String, val short: String, val blurb: String,
 /**
  * App settings, one page per topic. Wide windows (DeX, phone landscape) get a side menu with the quick switches
  * under it and the page's sections packed into as many columns as fit, with no gaps; a phone in portrait gets a
- * two-row tab grid and one column. Overlays stay visible while this page is open, as a live preview.
+ * two-row tab grid and one column. Overlays show as a live preview only on the Overlays page.
  */
 @Composable
 fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, extra: @Composable ColumnScope.() -> Unit = {}, onHealthConnect: () -> Unit = {}, onCsvImport: () -> Unit = {}) {
     val context = LocalContext.current
-    DisposableEffect(Unit) {
-        OverlaySettings.setPreviewing(true)
-        MonitorService.start(context)
-        onDispose { OverlaySettings.setPreviewing(false) }
-    }
+    DisposableEffect(Unit) { MonitorService.start(context); onDispose { } }
     var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SettingsPage.Quick) }
     val sections: (SettingsPage) -> List<SettingsTab> = { p ->
         when (p) {
@@ -103,6 +99,7 @@ fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, e
     CompositionLocalProvider(LocalCollapsibleSections provides false) {
         androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
             val wide = maxWidth >= 700.dp
+            val shortWindow = maxHeight < 560.dp
             if (wide) {
                 // Side menu (quick switches underneath) + the page in columns.
                 val shown = if (page == SettingsPage.Quick) SettingsPage.Sarah else page
@@ -112,7 +109,9 @@ fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, e
                         Modifier.width(railW).fillMaxHeight().verticalScroll(rememberScrollState()).padding(bottom = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        SettingsPage.entries.filter { it != SettingsPage.Quick }.forEach { p -> RailItem(p, p == shown) { page = p } }
+                        // A short window (phone landscape) gets the compact menu, so every page fits without scrolling.
+                        val compactRail = shortWindow
+                        SettingsPage.entries.filter { it != SettingsPage.Quick }.forEach { p -> RailItem(p, p == shown, compactRail) { page = p } }
                         androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
                         QuickControls()
                     }
@@ -129,11 +128,11 @@ fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, e
 }
 
 @Composable
-private fun RailItem(p: SettingsPage, selected: Boolean, onClick: () -> Unit) {
+private fun RailItem(p: SettingsPage, selected: Boolean, compact: Boolean = false, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = 60.dp)
+            .heightIn(min = if (compact) 48.dp else 60.dp)
             .background(if (selected) p.color.copy(alpha = 0.16f) else Color.Transparent, RoundedCornerShape(10.dp))
             .border(1.dp, if (selected) p.color.copy(alpha = 0.6f) else Color.Transparent, RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
@@ -146,7 +145,7 @@ private fun RailItem(p: SettingsPage, selected: Boolean, onClick: () -> Unit) {
         }
         Column(Modifier.weight(1f)) {
             Text(p.label, color = if (selected) p.color else MonitorColors.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-            Text(p.blurb, color = MonitorColors.label, fontSize = 13.sp, maxLines = 2, lineHeight = 16.sp)
+            if (!compact) Text(p.blurb, color = MonitorColors.label, fontSize = 13.sp, maxLines = 2, lineHeight = 16.sp)
         }
     }
 }
@@ -201,9 +200,12 @@ private fun PageBody(p: SettingsPage, tabs: List<SettingsTab>, modifier: Modifie
                 Text(p.label, color = p.color, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 Text(p.blurb, color = MonitorColors.label, fontSize = 14.sp)
             }
-            if (tabs.size > 1) Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            // Tabs wrap onto a second line instead of running off the edge, so every one is visible.
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            if (tabs.size > 1) androidx.compose.foundation.layout.FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 tabs.forEachIndexed { i, t -> SubTab(t.title, i == tabs.indexOf(current), p.color) { tab = i } }
             }
@@ -249,7 +251,9 @@ fun ColumnFlow(columns: Int, modifier: Modifier = Modifier, gap: androidx.compos
     val memo = androidx.compose.runtime.remember { arrayOfNulls<Any>(2) }
     androidx.compose.ui.layout.Layout(content, modifier) { measurables, constraints ->
         val g = gap.roundToPx(); val cg = colGap.roundToPx()
-        val n = columns.coerceIn(1, measurables.size.coerceAtLeast(1))
+        // A short section (a description, a status line and a few buttons) reads best as one block; splitting it
+        // scattered its few lines across the screen.
+        val n = if (measurables.size < 5) 1 else columns.coerceIn(1, measurables.size)
         val colW = ((constraints.maxWidth - cg * (n - 1)) / n).coerceAtLeast(0)
         val placeables = measurables.map { it.measure(androidx.compose.ui.unit.Constraints(minWidth = colW, maxWidth = colW)) }
         val key = measurables.size to n
@@ -416,6 +420,12 @@ private val overlayEditing = mutableStateOf<OverlayProfile?>(null)
 @Composable
 private fun OverlaysSection() {
     val context = LocalContext.current
+    // The live preview shows only on this page: on the other Settings pages the overlays covered the settings (and
+    // caught taps) on a phone in landscape.
+    DisposableEffect(Unit) {
+        OverlaySettings.setPreviewing(true)
+        onDispose { OverlaySettings.setPreviewing(false) }
+    }
     val current by OverlaySettings.profile.collectAsState()
     val states by OverlaySettings.states.collectAsState()
     var editing by overlayEditing
