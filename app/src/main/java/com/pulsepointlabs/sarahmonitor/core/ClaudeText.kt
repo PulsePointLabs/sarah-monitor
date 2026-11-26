@@ -33,6 +33,18 @@ object ClaudeText {
         return client!!
     }
 
+    /**
+     * Short mechanical jobs skip thinking (so it can't eat the token budget), but only Haiku accepts "thinking:
+     * disabled": Opus 5.5 answers that with a 400 ("thinking.type.disabled is not supported"), which silently broke
+     * her Opus replies and the "Hear how she sounds" sample. Other models just get low effort.
+     */
+    private fun MessageCreateParams.Builder.noThinking(model: String) {
+        if (allowsDisabledThinking(model)) thinking(com.anthropic.models.beta.messages.BetaThinkingConfigDisabled.builder().build())
+    }
+
+    /** Pure; unit-tested. */
+    fun allowsDisabledThinking(model: String) = model.contains("haiku", ignoreCase = true)
+
     /** One system + user turn; returns the text, or null on no key / refusal / error. */
     suspend fun ask(system: String, user: String, maxTokens: Long = 1_500L, model: String = FAST_MODEL): String? = withContext(Dispatchers.IO) {
         val key = ResponseSettings.apiKey.value
@@ -42,11 +54,10 @@ object ClaudeText {
                 .model(model)
                 // Room for the answer even if the model writes more than expected (short jobs, so it stays cheap).
                 .maxTokens(maxOf(maxTokens, 1_500L))
-                // Short mechanical jobs: no thinking (it could otherwise use up the budget and leave no answer).
-                .thinking(com.anthropic.models.beta.messages.BetaThinkingConfigDisabled.builder().build())
                 .outputConfig(BetaOutputConfig.builder().effort(BetaOutputConfig.Effort.LOW).build())
                 .systemOfBetaTextBlockParams(listOf(BetaTextBlockParam.builder().text(system).cacheControl(BetaCacheControlEphemeral.builder().build()).build()))
                 .addUserMessage(user)
+                .apply { noThinking(model) }
                 .build()
             val response = client(key).beta().messages().create(params)
             val stop = response.stopReason().orElse(null)
@@ -78,9 +89,9 @@ object ClaudeText {
             val params = MessageCreateParams.builder()
                 .model(model)
                 .maxTokens(maxTokens)
-                .thinking(com.anthropic.models.beta.messages.BetaThinkingConfigDisabled.builder().build())
                 .systemOfBetaTextBlockParams(listOf(BetaTextBlockParam.builder().text(system).build()))
                 .addUserMessageOfContentBlockParams(blocks)
+                .apply { noThinking(model) }
                 .build()
             val response = AnthropicOkHttpClient.builder().apiKey(key).timeout(Duration.ofSeconds(60)).maxRetries(1).build()
                 .beta().messages().create(params)

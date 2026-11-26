@@ -712,6 +712,19 @@ fun BpPositionDialog(entry: com.pulsepointlabs.sarahmonitor.core.BpEntry?, onDis
 val StressColor = Color(0xFFF59E0B)
 
 /** Overall stress (0–100) with what's driving it; separate from Load (cardiovascular strain). */
+/**
+ * Tension comes from the CIVET (pelvic pressure) or the EMG. With neither in use it can never read, so it isn't
+ * shown at all and the other drivers get the room. A dropout (reconnecting) still counts as in use, so it doesn't
+ * flicker. Used by the stress card and the stress overlay.
+ */
+@Composable
+fun tensionInUse(): Boolean {
+    val civet by MonitorHub.civet.state.collectAsState()
+    val emg by MonitorHub.emgClient.state.collectAsState()
+    return civet in setOf(ConnectionState.Connected, ConnectionState.Receiving, ConnectionState.Reconnecting, ConnectionState.Stale) ||
+        emg in setOf(com.pulsepointlabs.sarahmonitor.emg.EmgLink.Streaming, com.pulsepointlabs.sarahmonitor.emg.EmgLink.Silent)
+}
+
 @Composable
 fun StressCard() {
     val st by MonitorHub.stress.collectAsState()
@@ -747,7 +760,7 @@ fun StressCard() {
         ) }
         fixed(drop = 1) { Chips {
             // Every driver keeps its place; no reading = "--" with a level trend mark (nothing pops in or out).
-            com.pulsepointlabs.sarahmonitor.core.StressComponent.slots(st.components).forEach { c ->
+            com.pulsepointlabs.sarahmonitor.core.StressComponent.slots(st.components, withTension = tensionInUse()).forEach { c ->
                 val value = when {
                     c.score == null -> "--"
                     c.key == "breath" -> st.breathsPerMin?.let { "%.0f/min".format(it) } ?: "${c.score}"

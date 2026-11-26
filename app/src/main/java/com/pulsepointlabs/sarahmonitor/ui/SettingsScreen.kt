@@ -243,12 +243,19 @@ fun SettingGroup(content: @Composable () -> Unit) {
  */
 @Composable
 fun ColumnFlow(columns: Int, modifier: Modifier = Modifier, gap: androidx.compose.ui.unit.Dp = 8.dp, colGap: androidx.compose.ui.unit.Dp = 28.dp, content: @Composable () -> Unit) {
+    // Where the columns break is decided once and kept while you use the page: a reply appearing or a box growing
+    // must not shuffle settings into another column under your finger. It re-balances only when settings appear or
+    // disappear, or the column count changes.
+    val memo = androidx.compose.runtime.remember { arrayOfNulls<Any>(2) }
     androidx.compose.ui.layout.Layout(content, modifier) { measurables, constraints ->
         val g = gap.roundToPx(); val cg = colGap.roundToPx()
         val n = columns.coerceIn(1, measurables.size.coerceAtLeast(1))
         val colW = ((constraints.maxWidth - cg * (n - 1)) / n).coerceAtLeast(0)
         val placeables = measurables.map { it.measure(androidx.compose.ui.unit.Constraints(minWidth = colW, maxWidth = colW)) }
-        val groups = partition(placeables.map { it.height + g }, n)
+        val key = measurables.size to n
+        @Suppress("UNCHECKED_CAST")
+        val groups = (if (memo[0] == key) memo[1] as List<IntRange> else null)
+            ?: partition(placeables.map { it.height + g }, n).also { memo[0] = key; memo[1] = it }
         var height = 0
         val spots = ArrayList<Triple<androidx.compose.ui.layout.Placeable, Int, Int>>()
         groups.forEachIndexed { c, range ->

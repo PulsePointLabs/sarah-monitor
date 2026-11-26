@@ -14,8 +14,9 @@ data class StressComponent(val key: String, val label: String, val score: Int?, 
          * All drivers in a fixed order, each in its own slot whether or not it has a reading right now, so the
          * stress card and overlay never jump when breathing (or anything else) drops in and out. Pure; unit-tested.
          */
-        fun slots(components: List<StressComponent>): List<StressComponent> =
-            ORDER.map { (k, l) -> components.firstOrNull { it.key == k } ?: StressComponent(k, l, null, "") }
+        fun slots(components: List<StressComponent>, withTension: Boolean = true): List<StressComponent> =
+            ORDER.filter { withTension || it.first != "tension" }
+                .map { (k, l) -> components.firstOrNull { it.key == k } ?: StressComponent(k, l, null, "") }
     }
 }
 

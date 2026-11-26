@@ -170,7 +170,7 @@ private fun strip(kind: OverlayKind): Strip? {
                 "Stress", "0–100", st.score?.toString() ?: "--", 3, st.score?.let { percentBandColor(it) } ?: MonitorColors.dim,
                 recent.values(Metric.Stress), recent.trend(Metric.Stress), metricBand(Metric.Stress),
                 // Fixed slots (HRV, heart, breathing): a missing reading shows "--" instead of reshuffling the strip.
-                com.pulsepointlabs.sarahmonitor.core.StressComponent.slots(st.components).take(3).map { short(it.label) to (it.score?.toString() ?: "--") }
+                com.pulsepointlabs.sarahmonitor.core.StressComponent.slots(st.components, com.pulsepointlabs.sarahmonitor.ui.tensionInUse()).take(3).map { short(it.label) to (it.score?.toString() ?: "--") }
             )
         }
         OverlayKind.Pelvic -> {

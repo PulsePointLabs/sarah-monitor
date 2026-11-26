@@ -59,6 +59,8 @@ object SarahPersonality {
     /** Written to be heard: short sentences, numbers and times said the way a person says them. */
     val ttsFriendly = MutableStateFlow(true)
     val instructions = MutableStateFlow(DEFAULT_INSTRUCTIONS)
+    /** Whether his written instructions are sent (kept either way). */
+    val useInstructions = MutableStateFlow(true)
 
     @Synchronized
     fun load(c: Context) {
@@ -73,6 +75,7 @@ object SarahPersonality {
         sessionStory.value = p.getBoolean("story", true)
         ttsFriendly.value = p.getBoolean("tts", true)
         instructions.value = p.getString("instructions", null) ?: DEFAULT_INSTRUCTIONS
+        useInstructions.value = p.getBoolean("use_instructions", true)
     }
 
     private fun edit(block: SharedPreferences.Editor.() -> Unit) { prefs?.edit()?.apply(block)?.apply() }
@@ -85,12 +88,13 @@ object SarahPersonality {
     fun setTts(v: Boolean) { ttsFriendly.value = v; edit { putBoolean("tts", v) } }
     fun setInstructions(v: String) { instructions.value = v.take(2_000); edit { putString("instructions", instructions.value) } }
     fun resetInstructions() = setInstructions(DEFAULT_INSTRUCTIONS)
+    fun setUseInstructions(v: Boolean) { useInstructions.value = v; edit { putBoolean("use_instructions", v) } }
 
     /** The block added to Sarah's prompts. Pure given its inputs; unit-tested. */
     fun promptBlock(
         tone: Tone = this.tone.value, detail: Detail = this.detail.value, warmth: Boolean = feminineWarmth.value,
         specific: Boolean = sexualSpecificity.value, story: Boolean = sessionStory.value, tts: Boolean = ttsFriendly.value,
-        instructions: String = this.instructions.value, on: Boolean = enabled.value
+        instructions: String = this.instructions.value, on: Boolean = enabled.value, useInstr: Boolean = useInstructions.value
     ): String = if (!on) "" else buildString {
         append("How Ben has tuned your voice (follow this):\n")
         append("- Tone: ").append(tone.prompt).append('\n')
@@ -99,6 +103,6 @@ object SarahPersonality {
         if (specific) append("- In sexual sessions, be anatomically specific about what's responding (no vague euphemisms), clinical but in the flow of conversation.\n")
         if (story) append("- Track the arc of the session: connect what he just said to what came before when it means something.\n")
         if (tts) append("- It will be spoken aloud: short sentences, numbers and times said the way a person says them, no symbols or abbreviations.\n")
-        instructions.trim().takeIf { it.isNotBlank() }?.let { append("- His standing instructions, in his words: ").append(it).append('\n') }
+        if (useInstr) instructions.trim().takeIf { it.isNotBlank() }?.let { append("- His standing instructions, in his words: ").append(it).append('\n') }
     }.trimEnd()
 }

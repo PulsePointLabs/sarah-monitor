@@ -29,6 +29,18 @@ class SarahPersonalityTest {
         assertFalse(lean.contains("standing instructions"))
     }
 
+    /** Opus 5.5 rejects "thinking: disabled" with a 400; only Haiku gets it. */
+    @Test fun onlyHaikuGetsThinkingDisabled() {
+        assertTrue(com.pulsepointlabs.sarahmonitor.core.ClaudeText.allowsDisabledThinking("claude-haiku-5-5"))
+        assertFalse(com.pulsepointlabs.sarahmonitor.core.ClaudeText.allowsDisabledThinking("claude-opus-5-5"))
+        assertFalse(com.pulsepointlabs.sarahmonitor.core.ClaudeText.allowsDisabledThinking("claude-sonnet-5-5"))
+    }
+
+    @Test fun instructionsHaveTheirOwnSwitch() {
+        assertTrue(SarahPersonality.promptBlock(instructions = "be brief", useInstr = true).contains("be brief"))
+        assertFalse(SarahPersonality.promptBlock(instructions = "be brief", useInstr = false).contains("be brief"))
+    }
+
     @Test fun offMeansNothingIsSent() {
         assertTrue(SarahPersonality.promptBlock(on = false).isEmpty())
         assertTrue(SarahPersonality.promptBlock(on = true).isNotEmpty())

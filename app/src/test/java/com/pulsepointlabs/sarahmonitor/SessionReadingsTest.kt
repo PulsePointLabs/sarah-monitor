@@ -26,5 +26,7 @@ class SessionReadingsTest {
         assertEquals(5, withoutBreath.size)
         assertNull(withoutBreath.first { it.key == "breath" }.score)
         assertEquals(listOf("hrv", "hr", "breath"), StressComponent.slots(emptyList()).take(3).map { it.key })
+        // No CIVET or EMG in use: Tension isn't shown at all.
+        assertEquals(listOf("hrv", "hr", "breath", "restless"), StressComponent.slots(emptyList(), withTension = false).map { it.key })
     }
 }

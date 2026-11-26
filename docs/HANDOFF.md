@@ -276,6 +276,17 @@ bedside-monitor dashboards, floating overlays and a review screen.
 - **Releases**: `release-apk.yml` now uses the full commit message as the release notes and marks main and rc/*
   builds as Latest (other branches stay test builds).
 
+## 0.33.1 (Opus 400 fix, instructions switch, Tension only with a sensor)
+
+- **400 "thinking.type.disabled is not supported"**: `ClaudeText.ask`/`askWithImages` sent thinking=disabled to
+  every model; Opus 5.5 rejects it. Every Opus reply (hands-free check-ins via SarahChat, the sample, gear photo
+  reads) failed and fell back. Now only Haiku gets it (`allowsDisabledThinking`).
+- **"Use my instructions to her"** switch (`SarahPersonality.useInstructions`); the text is kept when off.
+- **Column breaks stay put** (`ColumnFlow` memo): they re-balance only when rows appear/disappear or the column
+  count changes, not when something grows (the sample reply moved the instructions to another column).
+- **Tension** shows only while the CIVET (connected/reconnecting) or EMG (USB link up) is in use (`tensionInUse`),
+  on the card and the overlay strip; otherwise the other four drivers share the row.
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

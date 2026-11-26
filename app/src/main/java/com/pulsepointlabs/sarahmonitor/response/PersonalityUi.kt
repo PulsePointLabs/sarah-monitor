@@ -52,6 +52,7 @@ fun SarahPersonalitySection() {
     val story by SarahPersonality.sessionStory.collectAsState()
     val tts by SarahPersonality.ttsFriendly.collectAsState()
     val instructions by SarahPersonality.instructions.collectAsState()
+    val useInstr by SarahPersonality.useInstructions.collectAsState()
     val model by ResponseSettings.model.collectAsState()
     val scope = rememberCoroutineScope()
     var sample by remember { mutableStateOf<String?>(null) }
@@ -79,9 +80,13 @@ fun SarahPersonalitySection() {
                 SettingRow("Written for listening", "Short sentences; numbers and times said like a person") { SettingSwitch(tts) { SarahPersonality.setTts(it) } }
             }
             Group {
-                Text("Your instructions to her", color = MonitorColors.text, fontSize = 15.sp)
+                SettingRow(
+                    "Use my instructions to her",
+                    if (useInstr) "She follows what you wrote below" else "Off: what you wrote is kept but not sent"
+                ) { SettingSwitch(useInstr) { SarahPersonality.setUseInstructions(it) } }
                 OutlinedTextField(
                     instructions, { SarahPersonality.setInstructions(it) },
+                    enabled = useInstr,
                     modifier = Modifier.fillMaxWidth(), minLines = 4, maxLines = 16,
                     textStyle = androidx.compose.ui.text.TextStyle(color = MonitorColors.text, fontSize = 15.sp),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Pink, unfocusedBorderColor = MonitorColors.panelBorder)
