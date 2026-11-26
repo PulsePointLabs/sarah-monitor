@@ -76,4 +76,20 @@ class HandsFreeTest {
         assertFalse(VoiceCommand.claudePrompt(MarkerTypes.all, emptyList()).contains("\"note\""))
         assertEquals(VoiceCommand.verbatim(said), VoiceCommand.parseLocal(said, hybrid, emptyList()).note)
     }
+
+    /** 0.32: stumbles come out like a good dictation app, but only by deleting words, never rewording. */
+    @Test fun stumblesComeOutWordsStay() {
+        assertEquals("I'm holding about a quart now.", VoiceCommand.tidy("um I- I'm holding uh about about a quart now"))
+        assertEquals("The cramping is easing off.", VoiceCommand.tidy("the the cramping is, uh, easing off"))
+        assertEquals("Feeling relaxed.", VoiceCommand.tidy("feeling relaxed"))
+        val said = "so um I'm I'm noticing like a little bit of pressure you know near the near the plug"
+        assertEquals("So I'm noticing a little bit of pressure near the plug.",
+            VoiceCommand.acceptClean("So I'm noticing a little bit of pressure near the plug.", said))
+        // Reworded or summarized: rejected, falls back to the plain tidy.
+        assertNull(VoiceCommand.acceptClean("I feel slight pressure by the plug.", said))
+        assertNull(VoiceCommand.acceptClean("Pressure.", said))
+        val reply = """{"types":["sensation"],"device":null,"bucket":"sensation","intensity":null,"site":null,"clean":"So I'm noticing a little bit of pressure near the plug.","confirm":"Got it."}"""
+        assertEquals("So I'm noticing a little bit of pressure near the plug.", VoiceCommand.parseClaude(reply, said, setOf("sensation"), emptyList())!!.note)
+        assertTrue(VoiceCommand.claudePrompt(MarkerTypes.all, emptyList()).contains("\"clean\""))
+    }
 }

@@ -220,6 +220,28 @@ bedside-monitor dashboards, floating overlays and a review screen.
   an "already in state" (6) reply to ACC start stops then re-starts motion.
 - Unverified on the strap (no H10 on the emulator).
 
+## 0.32.0 (Voice notes, Sarah's personality, Settings pages)
+
+- **No more mid-sentence cut-offs** (`LocalEars`): the noise floor no longer creeps up toward his voice while a
+  note is being taken (it was turning long speech into "quiet"); any new recognized word resets the quiet clock;
+  notes of 20+ words get 3.5 s to pause and think; steady sound with no new words for need + 6 s ends a note (fan/TV).
+  The 90 s cap is now a 5 min safety net only. Pure `phraseOver()` is unit-tested.
+- **Stumbles filtered**: the classifier returns a `clean` dictation-style copy (fillers, stammers, false starts
+  removed). `VoiceCommand.acceptClean` only accepts it if it deleted words in order (no rewording, no summary);
+  otherwise `tidy()` does a local cleanup. Raw words are still saved in the voice JSON (`raw`).
+- **Replies to notes**: acknowledge the specific thing, then one useful link to the session so far (trends, hold
+  time, earlier plans, readings that moved), fit to the session type; no generic encouragement; `your_last_replies`
+  keeps her from repeating herself. Timeline entries now carry clock times.
+- **Sarah's personality** (`SarahPersonality`, Settings → Sarah): v1's tone presets (warm clinical default, soft
+  feminine, clinical direct, technical deep), detail level, four style switches and his standing instructions with
+  the v1 default text. Added to chat, answers and live-feedback prompts. "Hear how she sounds" makes one short call.
+  Her brain (model) moved here from live feedback.
+- **Settings reorganized into pages**: Quick, Sarah, Overlays, Sound & alerts, Devices, Recording & keys. Wide
+  windows get a side menu (quick switches under it) and the page's cards packed into up to 3 columns (`Masonry`);
+  phone portrait gets a two-row tab grid. Hands-free moved out of "Speech to text" into its own card. Overlays page =
+  Floating overlays / Which overlays / Look & feel. Checked on phone portrait + landscape, DeX emulator full screen
+  and a 1500×1100 window. Not checked on the real S25 or real DeX.
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

@@ -9,6 +9,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -45,7 +49,21 @@ import com.pulsepointlabs.sarahmonitor.overlay.OverlayKind
 import com.pulsepointlabs.sarahmonitor.overlay.OverlayProfile
 import com.pulsepointlabs.sarahmonitor.overlay.OverlaySettings
 
-/** App settings: overlays, sound and voice. Overlays stay visible while this page is open, as a live preview. */
+/** The Settings pages: related things together, one page at a time. */
+enum class SettingsPage(val label: String, val short: String, val blurb: String, val color: Color, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    Quick("Quick controls", "Quick", "The switches you reach for most", MonitorColors.text, androidx.compose.material.icons.Icons.Default.ToggleOn),
+    Sarah("Sarah", "Sarah", "Personality, voice, hands-free, live feedback", Color(0xFFFF7AB6), androidx.compose.material.icons.Icons.Default.RecordVoiceOver),
+    Overlays("Overlays", "Overlays", "Readings floating over other apps", MonitorColors.pelvic, androidx.compose.material.icons.Icons.Default.Layers),
+    Sound("Sound & alerts", "Sound", "Heartbeat beep, alarms, which alerts", MonitorColors.warn, androidx.compose.material.icons.Icons.Default.NotificationsActive),
+    Devices("Devices", "Devices", "H10, CIVET, Omron, EMG, Howl, glucose", MonitorColors.hr, androidx.compose.material.icons.Icons.Default.Bluetooth),
+    Recording("Recording & keys", "Recording", "Dictation, OBS, API keys", MonitorColors.sdnn, androidx.compose.material.icons.Icons.Default.Videocam)
+}
+
+/**
+ * App settings, one page per topic. Wide windows (DeX, phone landscape) get a side menu with the quick switches
+ * under it and the page's sections packed into as many columns as fit, with no gaps; a phone in portrait gets a
+ * two-row tab grid and one column. Overlays stay visible while this page is open, as a live preview.
+ */
 @Composable
 fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, extra: @Composable ColumnScope.() -> Unit = {}, onHealthConnect: () -> Unit = {}, onCsvImport: () -> Unit = {}) {
     val context = LocalContext.current
@@ -54,24 +72,142 @@ fun SettingsScreen(onMessage: (String) -> Unit, modifier: Modifier = Modifier, e
         MonitorService.start(context)
         onDispose { OverlaySettings.setPreviewing(false) }
     }
-    CompositionLocalProvider(LocalCollapsibleSections provides true) { AdaptiveColumns(
-        // Devices first (each a dropdown), then everything else.
-        deviceSections(onHealthConnect, onCsvImport, onMessage) + PageSection(8) { com.pulsepointlabs.sarahmonitor.howl.HowlSettingsSection() } + listOf(
-            PageSection(6) { QuickControls() },
-            PageSection(10) { OverlaySettingsSection() },
-            PageSection(10) { HeartbeatSoundSection() },
-            PageSection(5) { SarahVoiceSection() },
-            PageSection(8) { AlertsSection() },
-            PageSection(14) { AlertListSection() },
-            PageSection(6) { StressVoiceSection() },
-            PageSection(7) { com.pulsepointlabs.sarahmonitor.response.CoachSettingsSection() },
-            PageSection(5) { VoiceSection(onMessage) },
-            PageSection(6) { ObsSection() },
-            PageSection(6) { ApiKeysSection(onMessage) },
-            PageSection(3) { Column { extra() } }
-        ),
-        modifier
-    ) }
+    var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SettingsPage.Quick) }
+    val sections: (SettingsPage) -> List<@Composable () -> Unit> = { p ->
+        when (p) {
+            SettingsPage.Quick -> listOf({ QuickControls() })
+            SettingsPage.Sarah -> listOf(
+                { com.pulsepointlabs.sarahmonitor.response.SarahPersonalitySection() },
+                { HandsFreeSection() },
+                { SarahVoiceSection() },
+                { com.pulsepointlabs.sarahmonitor.response.CoachSettingsSection() },
+                { StressVoiceSection() }
+            )
+            SettingsPage.Overlays -> listOf({ OverlaySettingsSection(look = false) }, { OverlayKindsSection() }, { OverlaySettingsSection(look = true) })
+            SettingsPage.Sound -> listOf({ HeartbeatSoundSection() }, { AlertsSection() }, { AlertListSection() })
+            SettingsPage.Devices -> deviceSections(onHealthConnect, onCsvImport, onMessage).map { it.content } +
+                listOf<@Composable () -> Unit>({ com.pulsepointlabs.sarahmonitor.howl.HowlSettingsSection() })
+            SettingsPage.Recording -> listOf({ VoiceSection(onMessage) }, { ObsSection() }, { ApiKeysSection(onMessage) }, { Column { extra() } })
+        }
+    }
+    CompositionLocalProvider(LocalCollapsibleSections provides false) {
+        androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+            val wide = maxWidth >= 700.dp
+            if (wide) {
+                // Side menu (quick switches underneath) + the page in columns.
+                val shown = if (page == SettingsPage.Quick) SettingsPage.Sarah else page
+                val railW = if (maxWidth >= 1100.dp) 280.dp else 230.dp
+                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Column(
+                        Modifier.width(railW).fillMaxHeight().verticalScroll(rememberScrollState()).padding(bottom = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        SettingsPage.entries.filter { it != SettingsPage.Quick }.forEach { p -> RailItem(p, p == shown) { page = p } }
+                        androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+                        QuickControls()
+                    }
+                    PageBody(shown, sections(shown), Modifier.weight(1f).fillMaxHeight())
+                }
+            } else {
+                Column(Modifier.fillMaxSize()) {
+                    TabGrid(page) { page = it }
+                    PageBody(page, sections(page), Modifier.fillMaxWidth().weight(1f), header = false)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RailItem(p: SettingsPage, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 60.dp)
+            .background(if (selected) p.color.copy(alpha = 0.16f) else Color.Transparent, RoundedCornerShape(10.dp))
+            .border(1.dp, if (selected) p.color.copy(alpha = 0.6f) else Color.Transparent, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Box(Modifier.size(34.dp).background(p.color.copy(alpha = 0.18f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+            androidx.compose.material3.Icon(p.icon, contentDescription = null, tint = p.color, modifier = Modifier.size(20.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(p.label, color = if (selected) p.color else MonitorColors.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(p.blurb, color = MonitorColors.label, fontSize = 13.sp, maxLines = 2, lineHeight = 16.sp)
+        }
+    }
+}
+
+/** Phone portrait: every page visible at once in two even rows (nothing hidden off the side). */
+@Composable
+private fun TabGrid(page: SettingsPage, onPick: (SettingsPage) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        SettingsPage.entries.chunked(3).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                row.forEach { p ->
+                    val on = p == page
+                    Row(
+                        Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .background(if (on) p.color.copy(alpha = 0.2f) else MonitorColors.panel, RoundedCornerShape(10.dp))
+                            .border(1.dp, if (on) p.color else MonitorColors.panelBorder, RoundedCornerShape(10.dp))
+                            .clickable { onPick(p) }
+                            .padding(horizontal = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        androidx.compose.material3.Icon(p.icon, contentDescription = null, tint = p.color, modifier = Modifier.size(20.dp))
+                        androidx.compose.foundation.layout.Spacer(Modifier.width(6.dp))
+                        Text(p.short, color = if (on) p.color else MonitorColors.text, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** One page: its title, then its sections packed into columns. */
+@Composable
+private fun PageBody(p: SettingsPage, sections: List<@Composable () -> Unit>, modifier: Modifier, header: Boolean = true) {
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+        val cols = (maxWidth / 340.dp).toInt().coerceIn(1, 3).coerceAtMost(sections.size.coerceAtLeast(1))
+        androidx.compose.runtime.key(p) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (header) Column {
+                    Text(p.label, color = p.color, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text(p.blurb, color = MonitorColors.label, fontSize = 14.sp)
+                }
+                Masonry(cols, Modifier.fillMaxWidth()) { sections.forEach { it() } }
+            }
+        }
+    }
+}
+
+/**
+ * Cards packed into [columns] like bricks: each goes under whichever column is shortest so far, so columns end
+ * close together and there are no big black holes (cards keep their reading order left to right, top down).
+ */
+@Composable
+fun Masonry(columns: Int, modifier: Modifier = Modifier, gap: androidx.compose.ui.unit.Dp = 12.dp, content: @Composable () -> Unit) {
+    androidx.compose.ui.layout.Layout(content, modifier) { measurables, constraints ->
+        val g = gap.roundToPx()
+        val n = columns.coerceAtLeast(1)
+        val colW = ((constraints.maxWidth - g * (n - 1)) / n).coerceAtLeast(0)
+        val heights = IntArray(n)
+        val placed = measurables.map { m ->
+            val pl = m.measure(androidx.compose.ui.unit.Constraints(minWidth = colW, maxWidth = colW))
+            val c = heights.indices.minBy { heights[it] }
+            val y = heights[c]
+            if (pl.height > 0) heights[c] += pl.height + g
+            Triple(pl, c * (colW + g), y)
+        }
+        val h = ((heights.maxOrNull() ?: 0) - g).coerceAtLeast(0)
+        layout(constraints.maxWidth, h) { placed.forEach { (pl, x, y) -> pl.place(x, y) } }
+    }
 }
 
 /** On the Settings page, sections fold into a tappable header (closed by default) so the page stays tidy. */
@@ -109,7 +245,10 @@ fun SettingsSection(
                 contentDescription = if (open) "Collapse" else "Expand", tint = MonitorColors.label
             )
         }
-        if (open) content()
+        if (open) {
+            if (subtitle != null) Text(subtitle, color = MonitorColors.label, fontSize = 13.sp, lineHeight = 17.sp)
+            content()
+        }
     }
 }
 
@@ -183,18 +322,27 @@ fun SettingSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
     Switch(checked = checked, onCheckedChange = onChange, colors = SwitchDefaults.colors(checkedTrackColor = MonitorColors.pelvic))
 }
 
+private val overlayEditing = mutableStateOf<OverlayProfile?>(null)
+
+/** Two cards: which overlays show (per screen), and how they look. Both edit the same screen's set. */
 @Composable
-private fun OverlaySettingsSection() {
+private fun OverlaySettingsSection(look: Boolean) {
     val context = LocalContext.current
     val current by OverlaySettings.profile.collectAsState()
     val states by OverlaySettings.states.collectAsState()
-    var editing by remember { mutableStateOf<OverlayProfile?>(null) }
+    var editing by overlayEditing
     val profile = editing ?: current
     val st = states[profile] ?: return
     val canDraw = OverlaySettings.canDraw(context)
+    if (look) {
+        SettingsSection("Look & feel", MonitorColors.pelvic, icon = androidx.compose.material.icons.Icons.Default.Tune, subtitle = "For the ${profile.label.lowercase()} overlays.") {
+            OverlayLook(st, profile)
+        }
+        return
+    }
     SettingsSection(
         "Floating overlays", MonitorColors.pelvic, icon = androidx.compose.material.icons.Icons.Default.Layers, subtitle =
-        "Float over other apps; drag to move, corner grip to resize. The phone and DeX each keep their own overlays, sizes and positions. They hide while Sarah Monitor is the active window — except on this page, so you can see changes live."
+        "Float over other apps: drag to move, drag to the circle to close, corner to resize. The phone and DeX each keep their own set, sizes and spots (portrait and landscape too). Long-press ＋ to show or hide the others. They hide while Sarah Monitor is in front, except on this page."
     ) {
         if (!canDraw) {
             TextButton(onClick = { context.startActivity(OverlaySettings.permissionIntent(context)) }) {
@@ -206,14 +354,25 @@ private fun OverlaySettingsSection() {
                 ChoiceChip(p.label + if (p == current) " (this screen)" else "", p == profile) { editing = p }
             }
         }
-        if (profile != current) {
-        }
         SettingRow("Overlays on ${profile.label}") {
             SettingSwitch(st.on) {
                 OverlaySettings.setOn(context, it, profile)
                 MonitorService.start(context)
             }
         }
+    }
+}
+
+/** Which readings float, for the screen picked on the Floating overlays card. */
+@Composable
+private fun OverlayKindsSection() {
+    val context = LocalContext.current
+    val current by OverlaySettings.profile.collectAsState()
+    val states by OverlaySettings.states.collectAsState()
+    val editing by overlayEditing
+    val profile = editing ?: current
+    val st = states[profile] ?: return
+    SettingsSection("Which overlays", MonitorColors.pelvic, icon = androidx.compose.material.icons.Icons.Default.Checklist, subtitle = "On the ${profile.label.lowercase()}.") {
         OverlayKind.entries.forEach { kind ->
             SettingRow(kind.label) {
                 SettingSwitch(kind in st.enabled) {
@@ -222,6 +381,13 @@ private fun OverlaySettingsSection() {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun OverlayLook(st: com.pulsepointlabs.sarahmonitor.overlay.OverlayProfileState, profile: OverlayProfile) {
+    val context = LocalContext.current
+    run {
         SettingSlider("Opacity (all overlays)", "${(st.opacity * 100).toInt()}%", st.opacity, OverlaySettings.MIN_OPACITY..1f) {
             OverlaySettings.setOpacity(context, it, profile)
         }

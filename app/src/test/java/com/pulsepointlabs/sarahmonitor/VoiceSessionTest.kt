@@ -22,6 +22,21 @@ class VoiceSessionTest {
         assertTrue(LocalEars.END_QUIET_MS >= 2_000)   // the old 1.2 s cut him off mid-thought
     }
 
+    @Test fun aLongNoteEndsOnSilenceNotTheClock() {
+        val long = "sarah okay so the enema is in and I'm holding about a quart now the cramping is easing off " +
+            "and the plug feels snug but comfortable and I'm noticing my heart rate settle down a bit now"
+        assertEquals(LocalEars.LONG_NOTE_QUIET_MS, LocalEars.quietNeededMs(long))
+        // Two minutes in, still talking: not over.
+        assertFalse(LocalEars.phraseOver(quietMs = 400, wordlessMs = 400, heard = long, lengthMs = 120_000))
+        // Paused to think for 3 s mid-note: not over yet.
+        assertFalse(LocalEars.phraseOver(quietMs = 3_000, wordlessMs = 3_000, heard = long, lengthMs = 60_000))
+        // Done: quiet past the long-note window.
+        assertTrue(LocalEars.phraseOver(quietMs = 3_600, wordlessMs = 3_600, heard = long, lengthMs = 60_000))
+        // A fan keeps the mic "busy" but no new words for a long while: over.
+        assertTrue(LocalEars.phraseOver(quietMs = 0, wordlessMs = 10_000, heard = long, lengthMs = 60_000))
+        assertTrue(LocalEars.MAX_PHRASE_MS >= 300_000)
+    }
+
     @Test fun endTheSessionByVoice() {
         listOf(
             "End the session", "you can conclude the session", "Okay, end the session now please", "stop recording",

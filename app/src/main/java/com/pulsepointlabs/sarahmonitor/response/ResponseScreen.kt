@@ -94,16 +94,13 @@ fun ResponseScreen(
 @Composable
 fun CoachSettingsSection() {
     val key by ResponseSettings.apiKey.collectAsState()
-    val model by ResponseSettings.model.collectAsState()
     val cadence by ResponseSettings.cadenceS.collectAsState()
     val profile by ResponseSettings.profile.collectAsState()
     com.pulsepointlabs.sarahmonitor.ui.SettingsSection(
         "Sarah live feedback", Color(0xFFFF7AB6), icon = androidx.compose.material.icons.Icons.Default.RecordVoiceOver, subtitle =
         "During a recording on the Response tab, Sarah speaks short lines about what your body is doing. Claude is her brain (your Anthropic key); her voice is the HD Crisp OpenAI voice."
     ) {
-        if (key.isBlank()) Text("Needs an Anthropic key (API keys, at the bottom).", color = MonitorColors.warn, fontSize = 13.sp)
-        Text("Brain", color = MonitorColors.text, fontSize = 15.sp)
-        ChoiceRow { CoachModel.entries.forEach { m -> ChoiceChip(m.label, m == model, Color(0xFFFF7AB6)) { ResponseSettings.setModel(m) } } }
+        if (key.isBlank()) Text("Needs an Anthropic key (Recording & keys → API keys).", color = MonitorColors.warn, fontSize = 13.sp)
         com.pulsepointlabs.sarahmonitor.ui.SettingSlider("Check in every", "$cadence s", cadence.toFloat(), 20f..300f) { ResponseSettings.setCadence(it.toInt()) }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(

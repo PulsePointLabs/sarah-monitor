@@ -106,8 +106,9 @@ class PcmRing(seconds: Int, private val rate: Int = 16_000) {
  * that only has to notice "Sarah", and simple voice-activity detection for where a phrase starts and ends.
  *
  * The moment "Sarah" is heard, [onWake] fires once (she stops talking, media pauses, the listening tone plays).
- * Everything you say from there is one note, until you've clearly finished: [END_QUIET_MS] of quiet, longer when
- * the last words sound unfinished ("…and the", "…because"), and up to [WAIT_FOR_START_MS] after a bare "Sarah".
+ * Everything you say from there is one note, until you've clearly finished: [END_QUIET_MS] of quiet (a little more
+ * for a long note), longer when the last words sound unfinished ("…and the", "…because"), and up to
+ * [WAIT_FOR_START_MS] after a bare "Sarah". There's no time limit on a note; new words always count as talking.
  * Its audio goes to [onPhrase]; nothing else ever leaves the phone. A bare "Sarah" followed by silence calls
  * [onNothing].
  */
@@ -126,11 +127,16 @@ class LocalEars(
         private const val LEAD_IN = RATE * 3 / 10     // keep 0.3 s before the phrase
         /** A finished-sounding thought ends after this much quiet. */
         const val END_QUIET_MS = 2_500
+        /** A longer note (you're thinking as you go) gets a little more room to pause. */
+        const val LONG_NOTE_QUIET_MS = 3_500
+        /** Sound with no new words for this long past the usual quiet (a fan, the TV hum) also ends a note. */
+        const val WORDLESS_EXTRA_MS = 6_000
         /** …and one that trails off mid-sentence gets this long to carry on. */
         const val UNFINISHED_QUIET_MS = 5_500
         /** After "Sarah" on its own: how long she waits for you to start. */
         const val WAIT_FOR_START_MS = 8_000
-        private const val MAX_PHRASE_MS = 90_000
+        /** Only a safety net for a stuck mic; a note normally ends on silence, never on the clock. */
+        const val MAX_PHRASE_MS = 300_000
         private val WAKE = Regex("^(?:(?:ok|okay|hey|hi|so)\\s+)?(sarah|sara|sera|serra|zara)\\b", RegexOption.IGNORE_CASE)
         /** Words a finished thought rarely ends on. */
         private val DANGLING = setOf(
@@ -149,8 +155,21 @@ class LocalEars(
             return when {
                 words.isEmpty() -> WAIT_FOR_START_MS
                 words.size <= 2 || words.last() in DANGLING -> UNFINISHED_QUIET_MS
+                words.size >= 20 -> LONG_NOTE_QUIET_MS
                 else -> END_QUIET_MS
             }
+        }
+
+        fun wordCount(text: String) = text.lowercase().split(Regex("[^a-z0-9']+")).count { it.isNotBlank() }
+
+        /**
+         * Is the note over? [quietMs] = time since the mic last heard speech OR the recogniser last heard a new word
+         * (a soft-spoken stretch still counts as talking). [wordlessMs] = time since the last new word at all, which
+         * ends a note when steady noise keeps the mic "busy" but nobody's saying anything. Pure; unit-tested.
+         */
+        fun phraseOver(quietMs: Int, wordlessMs: Int, heard: String, lengthMs: Long): Boolean {
+            val need = quietNeededMs(heard)
+            return quietMs >= need || wordlessMs >= need + WORDLESS_EXTRA_MS || lengthMs >= MAX_PHRASE_MS
         }
 
         /** Brings a quiet clip up to a healthy level (peaks near −3 dBFS, at most ×8) before transcription. */
@@ -197,6 +216,8 @@ class LocalEars(
         var noiseFloor = -50.0
         var speechDb = -30.0                  // typical level of your speech, for the automatic gain
         var quietMs = 1_000
+        var wordlessMs = 0
+        var wordsSeen = 0
         var onsetSample = 0L
         var utteranceStart: Long? = null      // onset of the speech the recogniser is currently hearing
         var capturing: Long? = null           // start sample of a phrase being captured
@@ -204,6 +225,7 @@ class LocalEars(
         var partialNow = ""                   // what the recogniser is hearing right now (not yet final)
         fun begin(from: Long, text: String) {
             capturing = maxOf(0L, from - LEAD_IN); captureText = StringBuilder(text); partialNow = ""
+            wordsSeen = wordCount(text); wordlessMs = 0
             onWake()
         }
         val ownId = rec.audioSessionId
@@ -217,7 +239,14 @@ class LocalEars(
                 var sum = 0.0
                 for (i in 0 until n) { val s = pcm[i] / 32768.0; sum += s * s }
                 val db = 10 * kotlin.math.log10(sum / n + 1e-12)
-                noiseFloor = if (db < noiseFloor) db else noiseFloor * 0.995 + db * 0.005
+                // The floor follows quiet rooms down at once and drifts up slowly to a noisier room, but never while a
+                // note is being taken: during a long note it used to creep up toward your own voice until your speech
+                // counted as "quiet" and cut you off mid-sentence.
+                noiseFloor = when {
+                    db < noiseFloor -> db
+                    capturing != null -> noiseFloor
+                    else -> noiseFloor * 0.995 + db * 0.005
+                }
                 val speaking = db > maxOf(noiseFloor + 10, -50.0)
                 // Automatic gain: a phone mic a few feet away is quiet, so speech is lifted toward −22 dBFS
                 // (at most ×8) before the recogniser and the clip buffer see it.
@@ -230,6 +259,7 @@ class LocalEars(
                     if (quietMs >= 300) onsetSample = ring.written - n
                     quietMs = 0
                 } else quietMs += 100
+                wordlessMs += 100
 
                 val final = recognizer.acceptWaveForm(bytes, n * 2)
                 if (final) {
@@ -251,7 +281,10 @@ class LocalEars(
                 val start = capturing ?: continue
                 val lengthMs = (ring.written - start) * 1000 / RATE
                 val heardSoFar = "$captureText $partialNow"
-                if (quietMs >= quietNeededMs(heardSoFar) || lengthMs >= MAX_PHRASE_MS) {
+                // A new word is proof you're still talking, even if the mic level dipped.
+                val words = wordCount(heardSoFar)
+                if (words > wordsSeen) { wordsSeen = words; wordlessMs = 0; quietMs = 0 }
+                if (phraseOver(quietMs, wordlessMs, heardSoFar, lengthMs)) {
                     // Phrase over: everything up to a little after the last speech.
                     val end = ring.written - (quietMs - 300).coerceAtLeast(0) * RATE / 1000
                     val heard = (captureText.toString() + " " + JSONObject(recognizer.finalResult).optString("text")).trim().replace(Regex("\\s+"), " ")

@@ -67,11 +67,11 @@ object SarahChat {
     suspend fun reply(said: String, kind: String, filedAs: String?, numbers: String?): String? {
         if (!ClaudeText.available) return null
         val ctx = context(said, kind, filedAs, numbers)
-        val out = ClaudeText.ask(SYSTEM, ctx.toString(), maxTokens = 600, model = ResponseSettings.model.value.id) ?: return null
+        val out = ClaudeText.ask(SYSTEM + "\n\n" + SarahPersonality.promptBlock(), ctx.toString(), maxTokens = 600, model = ResponseSettings.model.value.id) ?: return null
         val text = out.trim().trim('"').replace(Regex("\\s+"), " ")
         if (text.isBlank() || text.equals("QUIET", ignoreCase = true)) return null
         // Notes get a short acknowledgment; questions room for a real answer.
-        if (text.split(' ').size > (if (kind == "note") 45 else 110)) return null
+        if (text.split(' ').size > (if (kind == "note") 60 else 120)) return null
         return text
     }
 
@@ -120,7 +120,14 @@ object SarahChat {
                 // Arousal reads only belong in sexual sessions.
                 if (category?.sexual == true) { put("phase", resp.phase.label); put("climaxes", resp.climaxes) }
             })
-            .put("this_session_notes", ProcedureLog.timeline(events, resp.sessionStartMs, now, max = 25))
+            .put("this_session_notes", ProcedureLog.timeline(events, resp.sessionStartMs, now, max = 30))
+            .apply {
+                // The note he just made is already in the list; the one before it is what "since last time" means.
+                events.sortedBy { it.timestampMs }.dropLast(if (kind == "note") 1 else 0).lastOrNull()
+                    ?.let { put("minutes_since_his_previous_note", ((now - it.timestampMs) / 6_000L) / 10.0) }
+            }
+            // So she doesn't open the same way twice in a row.
+            .put("your_last_replies", JSONArray(SarahMemory.recent(40).filter { it.who == "sarah" }.takeLast(6).map { it.text }))
             // What he owns (names, measurements, where it sits): "the double balloon nozzle" means something to her.
             .put("his_gear_catalog", com.pulsepointlabs.sarahmonitor.gear.GearCatalog.forSarah())
             .put("recent_conversation", JSONArray().apply {
@@ -142,7 +149,13 @@ His gear catalog (his_gear_catalog) lists the devices he owns with their measure
 
 Each turn you get JSON: what he just said ("he_said"), whether it was a note he logged ("kind": "note") or something he asked or said to you ("question"), how it was filed, the local time, the current session (type, minutes, devices, plan, procedure tally), his live body readings, this session's notes, and your recent conversation with him (across the last day or two, with times).
 
-If kind is note: it is already saved. Reply like someone who heard him, in one or two short sentences (at most about 25 words): acknowledge what he's doing or feeling in your own words ("sounds good", "nice, take it easy on the chores"), with a light, natural touch of care or interest when it fits. If numbers_he_gave is set, say those numbers back once, naturally, in his units, so he can catch a mishearing. Don't say "logged" or read back categories. Don't ask a question every time; occasionally is fine when it's natural.
+If kind is note: it is already saved. Reply like someone who was listening, in one to three short sentences (about 15 to 40 words):
+- Show you heard the specific thing he said, in your own words (not a parrot, not a category: "a quart in and the cramping's easing, good", not "noted your sensation").
+- Then, when there's something worth saying, add one thing that's genuinely useful or meaningful, picked from the session so far: how it connects to earlier notes (a trend, a change since last time, how long since something started: "that's about twelve minutes holding now", "urge is down from the seven you had at the start"), something he said he planned or wanted earlier, a reading that actually moved, or a sensible next step or caution for what he's doing. Fit it to the session type: procedures (enema, catheter, sounding, plugs) care about volumes, hold time, depth, discomfort and urge trends and comfort; sexual sessions about the arc of arousal and what's building; general days about his plans, chores, rest, food, substances and how he's holding up; exercise and recovery about effort and heart rate coming back down.
+- If nothing meaningful connects, a warm, specific acknowledgment is enough. Never pad, never give generic encouragement ("you've got this", "keep it up", "great job") or a vague question.
+- If numbers_he_gave is set, say those numbers back once, naturally, in his units, so he can catch a mishearing.
+- Don't say "logged", don't read back categories, don't ask a question every time (only when you actually need to know).
+- Vary yourself: your_last_replies are what you just said; don't reuse their openings, phrases or structure.
 If kind is question: answer it directly and naturally, at most about 70 words. About the session, his day or what he told you: use the notes, readings and recent conversation exactly, with times said the way a person says them ("about twenty minutes ago", "around nine thirty"). About physiology or substances: answer as a knowledgeable peer, plainly, with honest uncertainty. If he is just talking to you, talk back like yourself.
 
 Ground rules:

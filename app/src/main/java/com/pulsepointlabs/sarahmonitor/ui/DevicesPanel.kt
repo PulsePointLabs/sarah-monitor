@@ -223,24 +223,9 @@ private fun OmronSection() {
 fun VoiceSection(onMessage: (String) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var engine by remember { mutableStateOf(VoiceSettings.engine(context)) }
-    SettingsSection("Speech to text", MonitorColors.text, icon = androidx.compose.material.icons.Icons.Default.Mic) {
-        Text("For event notes. OpenAI live types as you talk; Whisper types after you stop; Android works offline.", color = MonitorColors.label, fontSize = 12.sp)
-        Buttons {
-            VoiceSettings.Engine.entries.forEach { e ->
-                val on = e == engine
-                Text(
-                    (if (on) "✓ " else "") + e.label,
-                    color = if (on) MonitorColors.background else MonitorColors.text,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .background(if (on) MonitorColors.pelvic else Color.Transparent, RoundedCornerShape(16.dp))
-                        .border(1.dp, MonitorColors.pelvic.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
-                        .clickable { engine = e; VoiceSettings.setEngine(context, e) }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                )
-            }
-        }
+    SettingsSection("Dictation (speech to text)", MonitorColors.text, icon = androidx.compose.material.icons.Icons.Default.Mic) {
+        Text("For typing event notes by voice. OpenAI live types as you talk; Whisper types after you stop; Android works offline.", color = MonitorColors.label, fontSize = 13.sp)
+        ChoiceRow { VoiceSettings.Engine.entries.forEach { e -> ChoiceChip(e.label, e == engine) { engine = e; VoiceSettings.setEngine(context, e) } } }
         var autoStop by remember { mutableStateOf(VoiceSettings.autoStopSeconds(context)) }
         var headset by remember { mutableStateOf(VoiceSettings.preferHeadsetMic(context)) }
         SettingSlider("Stop after quiet", if (autoStop < 1f) "Off" else "%.1f s".format(autoStop), autoStop, 0f..10f) {
@@ -250,11 +235,17 @@ fun VoiceSection(onMessage: (String) -> Unit) {
         SettingRow("Dictate through the headset mic", "Switches the headset to call-quality audio while you dictate") { SettingSwitch(headset) { headset = it; VoiceSettings.setPreferHeadsetMic(context, it) } }
         var tidy by remember { mutableStateOf(VoiceSettings.tidyWithClaude(context)) }
         SettingRow("Tidy punctuation with Claude", "Same words, cleaner punctuation (Anthropic key)") { SettingSwitch(tidy) { tidy = it; VoiceSettings.setTidyWithClaude(context, it) } }
-        androidx.compose.material3.HorizontalDivider(color = MonitorColors.panelBorder)
+    }
+}
+
+/** Hands-free Sarah: "Sarah, …" while recording logs a note (and she answers). */
+@Composable
+fun HandsFreeSection() {
+    SettingsSection("Hands-free Sarah", MonitorColors.sdnn, icon = androidx.compose.material.icons.Icons.Default.Hearing) {
         val hf by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.enabled.collectAsState()
         val sayBack by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.sayBack.collectAsState()
         val hfStatus by com.pulsepointlabs.sarahmonitor.core.MonitorHub.handsFree.status.collectAsState()
-        SettingRow("Hands-free Sarah", "Say \"Sarah, …\" while recording. The phone listens for her name; only what follows is sent") { SettingSwitch(hf) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setEnabled(it) } }
+        SettingRow("Listen for \"Sarah\"", "Say \"Sarah, …\" while recording. The phone listens for her name; only what follows is sent") { SettingSwitch(hf) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setEnabled(it) } }
         if (hf) {
             val talk by com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.talk.collectAsState()
             SettingRow("Sarah talks with you", if (talk) "She answers in her own words and remembers what you tell her" else "Plain confirmations only") { SettingSwitch(talk) { com.pulsepointlabs.sarahmonitor.session.HandsFreeSettings.setTalk(it) } }

@@ -263,11 +263,14 @@ object ProcedureLog {
     }
 
     /** The whole session's notes, oldest first, for answering questions ("what did I say the depth was?"). */
+    private val CLOCK = java.time.format.DateTimeFormatter.ofPattern("h:mm a")
+
     fun timeline(events: List<LoggedEvent>, sessionStartMs: Long?, now: Long, max: Int = 40): JSONArray = JSONArray().apply {
         events.sortedBy { it.timestampMs }.takeLast(max).forEach { e ->
             put(JSONObject()
                 .put("at_min", sessionStartMs?.let { ((e.timestampMs - it) / 6_000L) / 10.0 })
                 .put("minutes_ago", ((now - e.timestampMs) / 6_000L) / 10.0)
+                .put("clock", java.time.Instant.ofEpochMilli(e.timestampMs).atZone(java.time.ZoneId.systemDefault()).format(CLOCK))
                 .put("types", JSONArray(e.types.toList()))
                 .put("note", e.note.take(240))
                 .apply { if (!e.measures.empty) put("measures", e.measures.toUsJson()) })

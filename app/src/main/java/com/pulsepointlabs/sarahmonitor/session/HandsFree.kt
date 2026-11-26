@@ -143,7 +143,7 @@ object VoiceCommand {
         val aboutSensor = SENSOR_WORDS.containsMatchIn(lower) || "sensor_issue" in types
         val device = gear.firstOrNull { g -> DEVICE_WORDS[g.type]?.containsMatchIn(lower) == true }
             ?: gear.singleOrNull { it.type !in setOf(GearType.Lubricant) }.takeIf { bucket == "procedure_step" && !aboutSensor }
-        val note = verbatim(command)
+        val note = tidy(command)
         val level = intensity(command)
         val what = MarkerTypes.label(types).lowercase()
         val m = ProcedureLog.parseLocal(command)
@@ -181,9 +181,43 @@ object VoiceCommand {
     fun verbatim(command: String): String =
         command.trim().replaceFirstChar { it.uppercase() }.let { if (it.isEmpty() || it.last() in ".!?…") it else "$it." }
 
+    private val FILLER = Regex("(?i),?\\s*(?<![\\w'])(?:um+|uh+|uhm+|erm+|er|ah+|hmm+|mm+)(?![\\w'])[,.]?\\s*")
+    private val CUT_WORD = Regex("(?<![\\w'])[A-Za-z']{1,8}-\\s+(?=[A-Za-z])")       // "I- I'm", "hold- holding"
+    private val REPEAT = Regex("(?i)\\b([a-z']+)(?:[,.]?\\s+\\1\\b)+")              // "the the", "I, I"
+
+    /**
+     * Dictation-style clean-up without Claude: drops "um/uh", cut-off words and stammered repeats. Only ever removes
+     * words; his raw words are saved separately. Pure; unit-tested.
+     */
+    fun tidy(command: String): String {
+        val t = command.replace(CUT_WORD, "").replace(FILLER, " ").replace(REPEAT, "$1")
+            .replace(Regex("\\s+([,.!?])"), "$1").replace(Regex("^[,.\\s]+"), "").replace(Regex("\\s+"), " ").trim()
+        return verbatim(t.ifBlank { command })
+    }
+
+    private fun words(s: String) = s.lowercase().split(Regex("[^a-z0-9']+")).filter { it.isNotBlank() }
+    private val NUMBER_WORD = Regex("^(?:\\d+(?:\\.\\d+)?|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|half|quarter)$")
+
+    /**
+     * Claude's cleaned-up version of the note, accepted only if it just removed stumbles: every word it kept is one he
+     * said (in order), and it didn't gut the note. Anything reworded falls back to [tidy]. Pure; unit-tested.
+     */
+    fun acceptClean(clean: String?, command: String): String? {
+        val c = clean?.trim()?.takeIf { it.isNotBlank() && it != "null" } ?: return null
+        val kept = words(c)
+        val said = words(command)
+        if (kept.isEmpty() || kept.size > said.size || kept.size * 2 < said.size) return null
+        var i = 0
+        for (w in kept) {
+            val at = (i until said.size).firstOrNull { said[it] == w }
+            if (at != null) i = at + 1 else if (!NUMBER_WORD.matches(w)) return null    // "two" ↔ "2" is fine
+        }
+        return verbatim(c)
+    }
+
     /** Prompt for Claude: map a spoken note to this session's event types and devices. */
     fun claudePrompt(allowed: List<MarkerTypes.Type>, gear: List<GearItem>): String = """
-You categorize a short spoken note from a paramedic logging his own body during a physiology session. His words are saved verbatim; you only classify them.
+You categorize a short spoken note from a paramedic logging his own body during a physiology session. His raw words are saved separately; you classify them and give a clean written copy.
 Allowed event types (id: label — what it means):
 ${allowed.joinToString("\n") { "- ${it.id}: ${it.label}" + (it.hint.takeIf { h -> h.isNotBlank() }?.let { h -> " — $h" } ?: "") }}
 Choosing types: read the whole note for what he means, not single words. Pick the one type that best fits; add a second (at most three) only when the note clearly covers two different things, for example what he is doing and how he feels ("getting ready to resume chores, feeling fairly relaxed" = activity + state). Never use recovery for simply feeling relaxed or calm. Substance use (cannabis such as indica or sativa, alcohol such as beer, caffeine, nicotine, a medication) is substance, including how strongly he feels it ("feeling pretty buzzed from the beer", "overstimulated from the caffeine" = substance + state); note what it is in "measures".
@@ -192,7 +226,7 @@ The CIVET rectal pressure probe/sensor is the measuring instrument, not one of t
 Buckets: ${BUCKETS.joinToString(", ")}.
 Procedure notes (enema, catheter, sounding, anal devices) often carry numbers: amount instilled, estimated depth of the tip or device, and 0-10 scores for urge to defecate or void, discomfort (pinch, pop, cramp, burning), arousal and fullness, plus erection state. Pull each number he actually said into "measures"; never guess one. Volume: "total_ml" when he states how much is in altogether, "added_ml" when he states an amount added on top of what was already in (use the running tally he gives you, if any, to tell which). He is American and talks in inches, fluid ounces, quarts, pints, cups and cc: convert to mL (1 oz = 29.57 mL, 1 quart = 946 mL, 1 cc = 1 mL) and cm (1 in = 2.54 cm) for the measures fields only. The running tally gives both.
 He may also be asking Sarah a question ("how long have I been holding?", "is that normal?", "what was my heart rate when it popped?"): set "question" true only when he wants an answer from her.
-Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or null,"bucket":one bucket,"intensity":0-10 or null (only if he gave a number or a clear severity),"site":anatomical site or null,"measures":{"total_ml":n,"added_ml":n,"depth_cm":n,"urge_0_10":n,"discomfort_0_10":n,"arousal_0_10":n,"fullness_0_10":n,"erection":"none|building|partial|full|softening","substance":"cannabis|alcohol|caffeine|nicotine|medication|other","substance_detail":what and how much in a few of his words (e.g. "indica vape, two hits", "second beer", "16 oz cold brew"),"effect_0_10":how strongly he feels it, only if he gave a number } with only the keys he gave (or {}),"question":true or false,"confirm":a spoken confirmation of at most 12 words that repeats any numbers he gave, in the units he said them (ounces, inches, cc; never converted to metric), so he can catch a mishearing, no names}.
+Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or null,"bucket":one bucket,"intensity":0-10 or null (only if he gave a number or a clear severity),"site":anatomical site or null,"measures":{"total_ml":n,"added_ml":n,"depth_cm":n,"urge_0_10":n,"discomfort_0_10":n,"arousal_0_10":n,"fullness_0_10":n,"erection":"none|building|partial|full|softening","substance":"cannabis|alcohol|caffeine|nicotine|medication|other","substance_detail":what and how much in a few of his words (e.g. "indica vape, two hits", "second beer", "16 oz cold brew"),"effect_0_10":how strongly he feels it, only if he gave a number } with only the keys he gave (or {}),"question":true or false,"clean":his note as a good dictation app would write it: remove fillers (um, uh, like, you know), stammered repeats, false starts and self-corrections he abandoned, then punctuate. Only delete words: never add, swap, reword or fix his words (not even a misheard one), never summarize,"confirm":a spoken confirmation of at most 12 words that repeats any numbers he gave, in the units he said them (ounces, inches, cc; never converted to metric), so he can catch a mishearing, no names}.
 """.trimIndent()
 
     fun parseClaude(json: String, command: String, allowed: Set<String>, gear: List<GearItem>): SpokenEvent? = runCatching {
@@ -201,7 +235,7 @@ Reply with JSON only: {"types":[1-3 ids from the allowed list],"device":id or nu
         if (types.isEmpty()) return null
         val device = o.optString("device").takeIf { id -> gear.any { it.id == id } }
         SpokenEvent(
-            types, device, verbatim(command).ifBlank { return null },
+            types, device, (acceptClean(o.optString("clean"), command) ?: tidy(command)).ifBlank { return null },
             o.optString("bucket").takeIf { it in BUCKETS } ?: "general",
             o.optInt("intensity", -1).takeIf { !o.isNull("intensity") && it in 0..10 },
             o.optString("site").takeIf { it.isNotBlank() && it != "null" },

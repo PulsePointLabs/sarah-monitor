@@ -234,7 +234,7 @@ class SarahCoach(
             .systemOfBetaTextBlockParams(
                 listOf(
                     BetaTextBlockParam.builder()
-                        .text(system)
+                        .text(system + "\n\n" + SarahPersonality.promptBlock())
                         .cacheControl(BetaCacheControlEphemeral.builder().build())
                         .build()
                 )
