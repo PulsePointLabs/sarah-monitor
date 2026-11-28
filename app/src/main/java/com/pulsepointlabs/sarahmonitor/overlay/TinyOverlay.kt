@@ -131,7 +131,7 @@ fun TinyOverlay(kind: OverlayKind, modifier: Modifier = Modifier) {
 private fun short(label: String) = when (label.lowercase()) {
     "breathing" -> "Breath"
     "restless" -> "Moving"
-    "tension" -> "Tense"
+    "tension", "pelvic floor" -> "Pelvic"
     else -> label.take(7)
 }
 @Composable
@@ -192,6 +192,46 @@ private fun strip(kind: OverlayKind): Strip? {
                 last?.let { bpColor(it.systolic, it.diastolic) } ?: MonitorColors.dim,
                 emptyList(), null, null,
                 listOfNotNull(last?.pulse?.let { "pulse" to "$it" }, last?.let { "MAP" to fmt(it.meanArterial) })
+            )
+        }
+        OverlayKind.Phase -> {
+            val r by MonitorHub.response.collectAsState()
+            Strip(
+                "Arousal", r.phase.label, "${r.arousal}", 3, com.pulsepointlabs.sarahmonitor.response.phaseColor(r.phase),
+                emptyList(), com.pulsepointlabs.sarahmonitor.ui.rememberTrend("ov-arousal", r.arousal.toDouble(), 12.0) ?: 0.0, null,
+                listOf("climaxes" to "${r.climaxes}")
+            )
+        }
+        OverlayKind.NearClimax -> {
+            val r by MonitorHub.response.collectAsState()
+            Strip(
+                "Near climax", "0–100", "${r.approach}", 3, percentBandColor(r.approach) ?: MonitorColors.dim,
+                emptyList(), com.pulsepointlabs.sarahmonitor.ui.rememberTrend("ov-approach", r.approach.toDouble(), 12.0) ?: 0.0, null,
+                listOf("phase" to r.phase.label)
+            )
+        }
+        OverlayKind.Respiration -> {
+            val r by MonitorHub.response.collectAsState()
+            Strip(
+                "Breathing", "/min", r.breathsPerMin?.let { "%.0f".format(it) } ?: "--", 2, MonitorColors.pelvic,
+                emptyList(), com.pulsepointlabs.sarahmonitor.ui.rememberTrend("ov-breath", r.breathsPerMin, 4.0) ?: 0.0, null,
+                listOf("motion" to (r.motionMg?.let { "%.0f mg".format(it) } ?: "--"))
+            )
+        }
+        OverlayKind.Emg -> {
+            val e by MonitorHub.emg.collectAsState()
+            val pct = e.peakPct.takeIf { e.fresh }
+            Strip(
+                "EMG", "% hold", pct?.let { "%.0f".format(it) } ?: "--", 3, com.pulsepointlabs.sarahmonitor.emg.EmgColor,
+                emptyList(), com.pulsepointlabs.sarahmonitor.ui.rememberTrend("ov-emg", pct, 20.0) ?: 0.0, null,
+                e.channels.take(2).map { it.name to (it.pct?.let { p -> "%.0f%%".format(p) } ?: "--") }
+            )
+        }
+        OverlayKind.Ecg -> {
+            val heart by MonitorHub.heart.collectAsState()
+            Strip(
+                "ECG", "bpm", heart.heartRate?.toString() ?: "--", 3, trendColor(recent.trend(Metric.Hr)),
+                recent.values(Metric.Hr), recent.trend(Metric.Hr), metricBand(Metric.Hr), emptyList()
             )
         }
         OverlayKind.MarkEvent -> null

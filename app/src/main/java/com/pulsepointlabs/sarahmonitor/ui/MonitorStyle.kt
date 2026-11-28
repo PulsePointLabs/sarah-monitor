@@ -258,6 +258,9 @@ fun BigReading(
     /** Color for a value on the trend line (the metric's own bands), so rises and falls show at a glance. */
     band: ((Double) -> Color)? = null
 ) {
+    // One rule on every card and overlay: a live number with a trend takes the trend's color (blue falling, green
+    // steady, yellow then red rising), the way the heart-rate overlay does. Placeholders ("--") stay dim.
+    val color = if (trendStrength != null && value.any { it.isDigit() }) com.pulsepointlabs.sarahmonitor.ui.trendColor(trendStrength) else color
     // The axes chart needs a little history; until then the plain big number reads better than an empty grid.
     if (LocalOverlayMode.current && trend != null && trend.size >= 3) {
         OverlayReading(value, color, modifier, maxChars, trend, trendColor, trendStrength, leading, maxSizeDp, band)
@@ -270,7 +273,7 @@ fun BigReading(
         val textEm = chars * 0.6f + 0.1f
         // Two ways to place the trend line: beside the number, or underneath it. Use whichever lets the
         // number be bigger. The choice depends only on the box size, so it doesn't flip as values change.
-        val besideSize = min(maxWidth.value / (textEm + leadingEm + arrowEm + (if (trend != null) 1.7f else 0f) + 0.05f), maxHeight.value * 0.9f)
+        val besideSize = min(maxWidth.value / (textEm + leadingEm + arrowEm + (if (trend != null) 1.2f else 0f) + 0.05f), maxHeight.value * 0.9f)
         val belowSize = if (trend == null) 0f else min(maxWidth.value / (textEm + leadingEm + arrowEm + 0.05f), maxHeight.value * 0.9f / 1.4f)
         val below = trend != null && belowSize > besideSize * 1.15f
         // Never bigger than the box (it would spill onto the chips), never below readable unless the box is.
@@ -317,15 +320,18 @@ fun BigReading(
                 if (trendStrength != null) {
                     TrendArrows(trendStrength, Modifier.padding(start = (sizeDp * 0.08f).dp).size((sizeDp * arrowEm).dp, (sizeDp * 0.82f).dp))
                 }
-                if (trend != null && !below) {
-                    TrendLine(trend, trendColor, Modifier.size((sizeDp * 1.7f).dp, (sizeDp * 0.62f).dp).padding(start = (sizeDp * 0.12f).dp), band)
-                }
             }
         }
         if (below) {
-            androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { number() }
+                TrendLine(trend!!, trendColor, Modifier.fillMaxWidth().weight(1f).padding(top = (sizeDp * 0.06f).dp), band)
+            }
+        } else if (trend != null) {
+            // Number on the left, the trend taking all the room to its right.
+            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                 number()
-                TrendLine(trend!!, trendColor, Modifier.size((sizeDp * (textEm + arrowEm)).dp, (sizeDp * 0.36f).dp).padding(top = (sizeDp * 0.04f).dp), band)
+                TrendLine(trend, trendColor, Modifier.weight(1f).fillMaxHeight(0.86f).padding(start = (sizeDp * 0.15f).dp), band)
             }
         } else {
             number()
@@ -372,14 +378,27 @@ val LocalOverlayMode = compositionLocalOf { false }
 /** Small trend line (last ~2 minutes). Draws nothing until there are a few points, but always keeps its space. */
 @Composable
 fun TrendLine(values: List<Double>, color: Color, modifier: Modifier, band: ((Double) -> Color)? = null) {
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
     androidx.compose.foundation.Canvas(modifier) {
+        // Faint grid always (so an empty graph still reads as a graph): 3 rows, 4 columns.
+        val grid = Color.White.copy(alpha = 0.07f)
+        for (k in 1..3) { val y = size.height * k / 4f; drawLine(grid, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f) }
+        for (k in 1..4) { val x = size.width * k / 5f; drawLine(grid, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f) }
         if (values.size < 3) return@Canvas
         val lo = values.min()
         val hi = values.max()
         val span = if (hi - lo < 1e-6) 1.0 else hi - lo
         val pad = size.height * 0.12f
         fun yOf(v: Double) = size.height - pad - ((v - lo) / span).toFloat() * (size.height - 2 * pad)
-        drawSmoothTrend(values, 0f, size.width, ::yOf, color, band, lo - span * 0.12, hi + span * 0.12, fill = false)
+        drawSmoothTrend(values, 0f, size.width, ::yOf, color, band, lo - span * 0.12, hi + span * 0.12, fill = true)
+        // Top and bottom values, when the graph is tall enough to read them.
+        if (size.height > 44 * density && size.width > 90 * density) {
+            val style = TextStyle(color = MonitorColors.label, fontSize = (11f).sp, fontFamily = FontFamily.Monospace)
+            fun label(v: Double) = if (span < 10) "%.1f".format(v) else "%.0f".format(v)
+            drawText(measurer, label(hi), Offset(2f, 0f), style)
+            val lowText = measurer.measure(label(lo), style)
+            drawText(lowText, topLeft = Offset(2f, size.height - lowText.size.height))
+        }
     }
 }
 
@@ -428,7 +447,12 @@ fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSmoothTrend(
             addPath(path)
             lineTo(pts.last().x, size.height); lineTo(pts.first().x, size.height); close()
         }
-        if (brush != null) drawPath(area, brush, alpha = 0.16f) else drawPath(area, color.copy(alpha = 0.12f))
+        // Same colors as the line above it, fading toward the bottom (the heart-rate overlay's look, everywhere).
+        val highest = pts.minOf { it.y }
+        if (brush != null) drawPath(area, brush, alpha = 0.22f) else drawPath(area, color.copy(alpha = 0.18f))
+        drawPath(area, androidx.compose.ui.graphics.Brush.verticalGradient(
+            0f to Color.Transparent, 1f to Color(0xCC050A10), startY = highest, endY = size.height
+        ))
     }
     val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.2f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
     if (brush != null) drawPath(path, brush, style = stroke) else drawPath(path, color, style = stroke)

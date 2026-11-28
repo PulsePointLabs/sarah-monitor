@@ -330,6 +330,22 @@ bedside-monitor dashboards, floating overlays and a review screen.
   (a wake hushes her and plays the tones). It's now deaf while she speaks, while a note is being handled, and for
   1.5 s after (`nameOnlyAllowed`, `NAME_ONLY_TAIL_MS`). The full recogniser still lets "Sarah" interrupt her.
 
+## 0.35.0 (finger move/resize on DeX, one graph style, ECG sweep, wake on cough, pelvic floor, new overlays)
+
+- **DeX dashboard touch**: per-card gesture handlers tracked the finger in the card's own (moving) coordinates, so
+  the card's motion cancelled the finger's: moves stuttered, resizes barely moved. One board-level handler now
+  (`GridDashboard`): arranging = drag to move, right edge (width) / bottom edge (height) / corner (both), 30 dp
+  grips; not arranging = long-press picks up. Verified on the DeX emulator with adb touch input.
+- **One graph style**: `TrendChart` (big trend cards) now smooths and curves lines with a color-matched fading fill
+  and a vertical grid; `TrendLine` (in-card sparklines) fills the remaining card space, has a faint grid and hi/lo
+  labels; `drawSmoothTrend` fill fades toward the bottom. Big numbers with a trend take `trendColor` everywhere.
+- **ECG only one beat**: the sweep compared the phone clock to strap timestamps; with the strap clock ahead, newer
+  samples were skipped. It now keeps time in the strap's clock (`SweepState.skewMs`). Unverified with the strap.
+- **Wake on cough**: the name-only recogniser needs 3 consecutive hits (~0.3 s) within 350 ms+ of speech.
+- **Tension → "Pelvic floor"**: always shown while a CIVET is set up (or the EMG has streamed), no flicker on
+  reconnects; shown but not counted toward stress in sexual/Kegel sessions (`tensionCounts`).
+- **New overlays**: Arousal phase, Near-climax watch, Breathing & motion, EMG, ECG.
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

@@ -322,8 +322,9 @@ object MonitorHub {
                     hr = snapshot.heartRate, rmssd = snapshot.rmssdMs,
                     restingHr = restingBaseline?.hr, restingRmssd = restingBaseline?.rmssdMs,
                     breathsPerMin = resp.breathsPerMin, motionMg = resp.motionMg,
-                    pelvicKpa = if (sexual) null else _pelvic.value.average30s,
-                    emgPct = if (sexual) null else _emg.value.peakPct.takeIf { _emg.value.fresh }
+                    pelvicKpa = _pelvic.value.average30s,
+                    emgPct = _emg.value.peakPct.takeIf { _emg.value.fresh },
+                    tensionCounts = !sexual
                 ))
                 _stress.value = st
                 stressVoice.onStress(reading.timestampMs, st, stressQuietReason(category, resp))

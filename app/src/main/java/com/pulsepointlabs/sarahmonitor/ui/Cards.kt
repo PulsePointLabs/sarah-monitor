@@ -721,9 +721,12 @@ val StressColor = Color(0xFFF59E0B)
 fun tensionInUse(): Boolean {
     val civet by MonitorHub.civet.state.collectAsState()
     val emg by MonitorHub.emgClient.state.collectAsState()
-    return civet in setOf(ConnectionState.Connected, ConnectionState.Receiving, ConnectionState.Reconnecting, ConnectionState.Stale) ||
-        emg in setOf(com.pulsepointlabs.sarahmonitor.emg.EmgLink.Streaming, com.pulsepointlabs.sarahmonitor.emg.EmgLink.Silent)
+    if (emg == com.pulsepointlabs.sarahmonitor.emg.EmgLink.Streaming) emgSeen = true
+    return civet != ConnectionState.NotConfigured && MonitorHub.civet.rememberedAddress() != null || emgSeen
 }
+
+/** The EMG has streamed since the app started (it has no remembered device to check). */
+private var emgSeen = false
 
 @Composable
 fun StressCard() {

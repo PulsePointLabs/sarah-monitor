@@ -331,8 +331,17 @@ private fun Modifier.onGloballyPositionedCompat(block: (androidx.compose.ui.geom
 
 private fun Modifier.onSizeChangedCompat(block: (androidx.compose.ui.unit.IntSize) -> Unit): Modifier = this.onSizeChanged(block)
 
-private data class DragState(val type: CardType, val dx: Float, val dy: Float, val resize: Boolean)
+/** A card being moved or resized: [dx]/[dy] are how far the finger (or pointer) has gone, in board pixels. */
+private data class DragState(val type: CardType, val dx: Float, val dy: Float, val resize: Boolean, val width: Boolean = true, val height: Boolean = true)
 
+/**
+ * The free grid (DeX, tablets, big windows). One touch handler on the board itself does all moving and resizing,
+ * in the board's own coordinates. (Each card used to track the finger in its own coordinates while the card itself
+ * moved, so its own movement cancelled the finger's: dragging stuttered and resizing barely moved with a finger.)
+ * - Arranging: drag a card to move it; drag its right edge (width), bottom edge (height) or corner (both) to resize.
+ * - Not arranging: press and hold a card to start arranging and pick it up in one go.
+ * - Touchpad: a two-finger swipe over a card moves it while arranging.
+ */
 @Composable
 private fun GridDashboard(
     slots: List<CardSlot>,
@@ -349,14 +358,20 @@ private fun GridDashboard(
     val committedRows = maxOf(GridLayoutEngine.SCREEN_ROWS, slots.filter { it.visible }.maxOfOrNull { it.bottom } ?: 0)
     val rowPx = (with(density) { height.toPx() } + gapPx) / committedRows
     val scrollStepPx = with(density) { SCROLL_STEP_DP.dp.toPx() }
+    val edgePx = with(density) { EDGE_GRIP_DP.dp.toPx() }
     var drag by remember { mutableStateOf<DragState?>(null) }
     val currentSlots by rememberUpdatedState(slots)
     val currentArranging by rememberUpdatedState(arranging)
+    val colNow by rememberUpdatedState(colPx)
+    val rowNow by rememberUpdatedState(rowPx)
     val scope = rememberCoroutineScope()
     var scrollCommit by remember { mutableStateOf<Job?>(null) }
 
     fun target(slot: CardSlot, d: DragState): CardSlot = if (d.resize) {
-        GridLayoutEngine.clampSlot(slot.copy(w = slot.w + (d.dx / colPx).roundToInt(), h = slot.h + (d.dy / rowPx).roundToInt()))
+        GridLayoutEngine.clampSlot(slot.copy(
+            w = slot.w + if (d.width) (d.dx / colPx).roundToInt() else 0,
+            h = slot.h + if (d.height) (d.dy / rowPx).roundToInt() else 0
+        ))
     } else {
         GridLayoutEngine.clampSlot(slot.copy(x = slot.x + (d.dx / colPx).roundToInt(), y = slot.y + (d.dy / rowPx).roundToInt()))
     }
@@ -377,9 +392,61 @@ private fun GridDashboard(
     )
     fun px(slot: CardSlot) = IntOffset((colPx * slot.x).roundToInt(), (rowPx * slot.y).roundToInt())
     fun Float.toDpValue(): Dp = with(density) { this@toDpValue.toDp() }
+    /** Where a card sits on the board right now (board pixels). */
+    fun rectOf(s: CardSlot) = androidx.compose.ui.geometry.Rect(
+        colNow * s.x, rowNow * s.y, colNow * (s.x + s.w) - gapPx, rowNow * (s.y + s.h) - gapPx
+    )
 
     Box(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxWidth().height((rowPx * bottomRows).toDpValue())) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height((rowPx * bottomRows).toDpValue())
+                .pointerInput(Unit) {
+                    val slop = viewConfiguration.touchSlop
+                    val longPress = viewConfiguration.longPressTimeoutMillis
+                    val initial = androidx.compose.ui.input.pointer.PointerEventPass.Initial
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = initial)
+                        val p0 = down.position
+                        val slot = currentSlots.filter { it.visible }.lastOrNull { rectOf(it).contains(p0) } ?: return@awaitEachGesture
+                        val r = rectOf(slot)
+                        var state: DragState
+                        if (currentArranging) {
+                            down.consume()
+                            val onRight = p0.x > r.right - edgePx
+                            val onBottom = p0.y > r.bottom - edgePx
+                            state = DragState(slot.type, 0f, 0f, resize = onRight || onBottom, width = onRight, height = onBottom)
+                        } else {
+                            // Not arranging: the card works normally unless it's held still for a long press.
+                            val released = withTimeoutOrNull(longPress) {
+                                while (true) {
+                                    val ev = awaitPointerEvent(initial)
+                                    val c = ev.changes.firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull true
+                                    if (!c.pressed || (c.position - p0).getDistance() > slop) return@withTimeoutOrNull true
+                                }
+                                @Suppress("UNREACHABLE_CODE") true
+                            }
+                            if (released != null) return@awaitEachGesture
+                            onArrangingChange(true)
+                            state = DragState(slot.type, 0f, 0f, resize = false)
+                        }
+                        var started = false
+                        while (true) {
+                            val ev = awaitPointerEvent(initial)
+                            val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!c.pressed) { c.consume(); break }
+                            c.consume()
+                            val d = c.position - p0
+                            if (!started && d.getDistance() < slop) continue
+                            started = true
+                            state = state.copy(dx = d.x, dy = d.y)
+                            drag = state
+                        }
+                        if (started) commit() else drag = null
+                    }
+                }
+        ) {
             // Translucent placeholder where the dragged card will land.
             drag?.let { d ->
                 val landing = preview.first { it.type == d.type }
@@ -405,8 +472,8 @@ private fun GridDashboard(
                         IntOffset((px(original).x + d.dx).roundToInt(), (px(original).y + d.dy).roundToInt())
                     } else if (active) px(original) else animated
                     val base = if (active) original else slot
-                    val w = (colPx * base.w - gapPx + if (active && d!!.resize) d.dx else 0f).coerceAtLeast(colPx * base.type.minW - gapPx)
-                    val h = (rowPx * base.h - gapPx + if (active && d!!.resize) d.dy else 0f).coerceAtLeast(rowPx * base.type.minH - gapPx)
+                    val w = (colPx * base.w - gapPx + if (active && d!!.resize && d.width) d.dx else 0f).coerceAtLeast(colPx * base.type.minW - gapPx)
+                    val h = (rowPx * base.h - gapPx + if (active && d!!.resize && d.height) d.dy else 0f).coerceAtLeast(rowPx * base.type.minH - gapPx)
 
                     Box(
                         Modifier
@@ -423,24 +490,6 @@ private fun GridDashboard(
                                 }
                             }
                             .pointerHoverIcon(PointerIcon(if (arranging) android.view.PointerIcon.TYPE_GRAB else android.view.PointerIcon.TYPE_ARROW))
-                            // Pick up: immediately while arranging; press-and-hold otherwise (which turns arranging on).
-                            .pointerInput(slot.type) {
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false)
-                                    val started = if (currentArranging) {
-                                        awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
-                                    } else {
-                                        awaitLongPressOrCancellation(down.id)?.also { onArrangingChange(true) }
-                                    } ?: return@awaitEachGesture
-                                    drag = DragState(slot.type, 0f, 0f, resize = false)
-                                    val ok = dragPointer(started.id) { change ->
-                                        val delta = change.position - change.previousPosition
-                                        drag = drag?.let { it.copy(dx = it.dx + delta.x, dy = it.dy + delta.y) }
-                                        change.consume()
-                                    }
-                                    if (ok) commit() else drag = null
-                                }
-                            }
                             // Two-finger touchpad swipe (scroll events) over a card moves it while arranging.
                             .pointerInput(slot.type) {
                                 awaitPointerEventScope {
@@ -462,32 +511,21 @@ private fun GridDashboard(
                     ) {
                         MonitorCard(slot.type, Modifier.fillMaxSize())
                         if (arranging) {
-                            // Covers the card's own buttons so the whole card is a handle while arranging.
+                            // Covers the card's own buttons so the whole card is a handle while arranging, and shows
+                            // the grips: right edge = width, bottom edge = height, corner = both.
+                            val c = MonitorColors.pelvic
                             Box(
                                 Modifier
                                     .matchParentSize()
                                     .background(if (active) Color.Transparent else Color(0x0FFFFFFF), RoundedCornerShape(10.dp))
-                                    .border(1.dp, MonitorColors.pelvic.copy(alpha = if (active) 0.9f else 0.35f), RoundedCornerShape(10.dp))
-                                    .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
-                            )
-                            ResizeGrip(
-                                Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW))
-                                    .pointerInput(slot.type) {
-                                        awaitEachGesture {
-                                            val down = awaitFirstDown(requireUnconsumed = false)
-                                            down.consume()
-                                            drag = DragState(slot.type, 0f, 0f, resize = true)
-                                            val ok = dragPointer(down.id) { change ->
-                                                val delta = change.position - change.previousPosition
-                                                drag = drag?.let { it.copy(dx = it.dx + delta.x, dy = it.dy + delta.y) }
-                                                change.consume()
-                                            }
-                                            if (ok) commit() else drag = null
-                                        }
-                                    }
-                            )
+                                    .border(if (active) 2.dp else 1.dp, c.copy(alpha = if (active) 0.9f else 0.45f), RoundedCornerShape(10.dp))
+                            ) {
+                                Box(Modifier.align(Alignment.CenterEnd).size(14.dp, 56.dp).padding(3.dp).background(c.copy(alpha = 0.85f), RoundedCornerShape(5.dp))
+                                    .pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_HORIZONTAL_DOUBLE_ARROW)))
+                                Box(Modifier.align(Alignment.BottomCenter).size(56.dp, 14.dp).padding(3.dp).background(c.copy(alpha = 0.85f), RoundedCornerShape(5.dp))
+                                    .pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_VERTICAL_DOUBLE_ARROW)))
+                                ResizeGrip(Modifier.align(Alignment.BottomEnd).pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW)))
+                            }
                         }
                     }
                 }
@@ -495,6 +533,9 @@ private fun GridDashboard(
         }
     }
 }
+
+/** How far in from a card's right/bottom edge a press resizes instead of moving (a fingertip's width). */
+private const val EDGE_GRIP_DP = 30
 
 @Composable
 private fun ResizeGrip(modifier: Modifier) {

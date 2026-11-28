@@ -35,10 +35,14 @@ import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
+/** How far the ECG sweep stays behind the newest sample (smooths bursty Bluetooth delivery). */
+private const val SWEEP_HOLD_BACK_MS = 300L
+
 private class SweepState {
     var low = Float.NaN
     var high = Float.NaN
-    var lagMs = Float.NaN
+    /** Strap clock minus phone clock, as seen when each packet arrives (smoothed). */
+    var skewMs = Double.NaN
     var lastLatestTs = Long.MIN_VALUE
 }
 
@@ -56,15 +60,14 @@ fun EcgSweep(samples: List<EcgSample>, modifier: Modifier = Modifier) {
             val latest = t.timestampsMs.last()
             if (latest != state.lastLatestTs) {
                 state.lastLatestTs = latest
-                val lag = (System.currentTimeMillis() - latest).toFloat()
-                // How far behind real time to draw, so packets arriving in bursts still sweep smoothly. Capped:
-                // after a Bluetooth stall the old rule kept a multi-second delay for a long time, and the sweep
-                // then drew only the last second or so of the buffer (a sliver at each edge of the screen).
-                val capped = lag.coerceIn(0f, 1_200f)
-                state.lagMs = when {
-                    state.lagMs.isNaN() -> capped
-                    capped > state.lagMs -> capped
-                    else -> state.lagMs * 0.8f + capped * 0.2f
+                // The samples carry the strap's clock, which can run seconds ahead of or behind the phone's. The
+                // sweep keeps time in the strap's clock: comparing the phone's clock to the strap's directly left
+                // everything newer than the phone's "now" undrawn when the strap ran ahead, so only a sliver with
+                // one beat showed. A big jump (reconnect) resets it; otherwise it follows slowly.
+                val skew = (latest - System.currentTimeMillis()).toDouble()
+                state.skewMs = when {
+                    state.skewMs.isNaN() || kotlin.math.abs(skew - state.skewMs) > 3_000 -> skew
+                    else -> state.skewMs * 0.9 + skew * 0.1
                 }
             }
         }
@@ -83,8 +86,9 @@ fun EcgSweep(samples: List<EcgSample>, modifier: Modifier = Modifier) {
             val sweepMs = (size.width / pxPerMs).toLong().coerceIn(2_000L, 8_000L)
             val pxPerSweepMs = size.width / sweepMs.toFloat()
             val latest = t.timestampsMs.last()
-            val lag = if (state.lagMs.isNaN()) 0f else state.lagMs
-            val head = min(latest, frameNow - lag.toLong() - 60L).coerceAtLeast(t.timestampsMs.first())
+            // "Now" in the strap's clock, held a moment back so packets arriving in bursts still sweep smoothly.
+            val skew = if (state.skewMs.isNaN()) 0.0 else state.skewMs
+            val head = min(latest, frameNow + skew.toLong() - SWEEP_HOLD_BACK_MS).coerceAtLeast(t.timestampsMs.first())
             val eraseMs = (sweepMs * 0.04f).toLong().coerceAtLeast(120L)
             val low = if (state.low.isNaN()) t.low else state.low
             val high = if (state.high.isNaN()) t.high else max(state.high, low + 1f)
@@ -213,12 +217,17 @@ fun TrendChart(
             fun xFor(t: Long) = left + (t - startMs).toFloat() / max(1L, endMs - startMs).toFloat() * (right - left)
             fun yFor(v: Double) = bottom - ((v - lo) / span).toFloat() * (bottom - top)
             // As many gridlines as fit with a label's height of clear space between them (no stacked "10 8 5 3 0").
-            val fit = ((bottom - top) / (labelPx * 2.2f)).toInt().coerceIn(1, 4)
+            val fit = ((bottom - top) / (labelPx * 2.2f)).toInt().coerceIn(1, 6)
             val ticks = niceTicks(lo, hi, fit)
             ticks.forEach { v ->
                 val y = yFor(v)
                 drawLine(MonitorColors.trendGrid, Offset(left, y), Offset(right, y), strokeWidth = 1f)
                 drawLabel("%.${if (span < 3) 1 else 0}f".format(v), left - 4f * density, y + labelPx * 0.35f, MonitorColors.label.toArgb(), labelSp, alignRight = true)
+            }
+            // Vertical grid every eighth of the window (faint), so times can be read off the line.
+            for (k in 1..7) {
+                val x = left + (right - left) * k / 8f
+                drawLine(MonitorColors.trendGrid.copy(alpha = MonitorColors.trendGrid.alpha * 0.6f), Offset(x, top), Offset(x, bottom), strokeWidth = 1f)
             }
             val fmt = if (endMs - startMs > 20 * 60 * 60 * 1000L) dayClock else clock
             listOf(startMs, (startMs + endMs) / 2, endMs).forEachIndexed { i, t ->
@@ -231,20 +240,47 @@ fun TrendChart(
                 drawLine(ref.color.copy(alpha = 0.7f), Offset(left, y), Offset(right, y), strokeWidth = 1.4f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)))
                 drawLabel(ref.label, right - 4f * density, y - 3f * density, ref.color.toArgb(), labelSp, alignRight = true)
             }
+            // Every line the same way as the overlays: lightly smoothed, drawn as a curve, with a fill underneath in
+            // the line's own color that fades toward the bottom. (Several lines on one chart get a lighter fill each.)
+            val fillAlpha = if (series.size > 1) 0.10f else 0.20f
             series.forEach { line ->
-                val path = Path()
+                // Split into runs at gaps, then smooth and draw each run.
+                val runs = mutableListOf<MutableList<Pair<Long, Double>>>()
                 var previous: Long? = null
                 line.points.forEach { (t, v) ->
                     if (t < startMs || t > endMs) return@forEach
                     if (v == null) { previous = null; return@forEach }
-                    val x = xFor(t)
-                    val y = yFor(v)
                     val p = previous
-                    if (p == null || t - p > gapMs) path.moveTo(x, y) else path.lineTo(x, y)
+                    if (p == null || t - p > gapMs) runs.add(mutableListOf())
+                    runs.last().add(t to v)
                     previous = t
-                    if (dots) drawCircle(line.color, radius = 3.2f * density / 2f + 1.5f, center = Offset(x, y))
                 }
-                drawPath(path, line.color, style = Stroke(width = 2.2f * density / 2f + 1f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                runs.forEach { run ->
+                    val ys = if (dots) run.map { it.second } else smoothValues(run.map { it.second })
+                    val pts = run.mapIndexed { i, (t, _) -> Offset(xFor(t), yFor(ys[i])) }
+                    if (pts.isEmpty()) return@forEach
+                    val path = Path().apply {
+                        moveTo(pts[0].x, pts[0].y)
+                        if (dots) pts.drop(1).forEach { lineTo(it.x, it.y) }
+                        else {
+                            for (i in 1 until pts.size) {
+                                val a = pts[i - 1]; val b = pts[i]
+                                val mid = Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f)
+                                if (i == 1) lineTo(mid.x, mid.y) else quadraticTo(a.x, a.y, mid.x, mid.y)
+                            }
+                            if (pts.size > 1) lineTo(pts.last().x, pts.last().y)
+                        }
+                    }
+                    if (pts.size > 1) {
+                        val area = Path().apply { addPath(path); lineTo(pts.last().x, bottom); lineTo(pts.first().x, bottom); close() }
+                        drawPath(area, androidx.compose.ui.graphics.Brush.verticalGradient(
+                            0f to line.color.copy(alpha = fillAlpha), 1f to line.color.copy(alpha = 0f),
+                            startY = pts.minOf { it.y }, endY = bottom
+                        ))
+                    }
+                    drawPath(path, line.color, style = Stroke(width = 2.2f * density / 2f + 1f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    if (dots) pts.forEach { drawCircle(line.color, radius = 3.2f * density / 2f + 1.5f, center = it) }
+                }
             }
         }
         if (values.isEmpty()) {

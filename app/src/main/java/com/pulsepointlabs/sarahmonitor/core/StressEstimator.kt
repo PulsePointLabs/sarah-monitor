@@ -8,7 +8,7 @@ enum class StressLevel(val label: String) { Calm("Calm"), Mild("Mild"), Elevated
 data class StressComponent(val key: String, val label: String, val score: Int?, val detail: String) {
     companion object {
         /** Every driver, in its fixed display order. */
-        val ORDER = listOf("hrv" to "HRV", "hr" to "Heart", "breath" to "Breathing", "tension" to "Tension", "restless" to "Restless")
+        val ORDER = listOf("hrv" to "HRV", "hr" to "Heart", "breath" to "Breathing", "tension" to "Pelvic floor", "restless" to "Restless")
 
         /**
          * All drivers in a fixed order, each in its own slot whether or not it has a reading right now, so the
@@ -42,10 +42,15 @@ data class StressInputs(
     val breathsPerMin: Double?,
     /** Chest motion, dynamic milli-g (90th percentile of the last 10 s). */
     val motionMg: Double?,
-    /** Pelvic floor above rest, kPa (30 s average); ignored in sexual sessions. */
+    /** Pelvic floor above rest, kPa (30 s average). */
     val pelvicKpa: Double?,
-    /** EMG, % of calibrated hold; ignored in sexual sessions. */
-    val emgPct: Double?
+    /** EMG, % of calibrated hold. */
+    val emgPct: Double?,
+    /**
+     * Whether pelvic-floor tension counts toward the stress score. Off in sexual and Kegel sessions (clenching there
+     * is arousal or training, not stress), but the pelvic floor reading is still shown.
+     */
+    val tensionCounts: Boolean = true
 )
 
 /**
@@ -89,7 +94,7 @@ object StressEstimator {
         val tensionParts = listOfNotNull(i.pelvicKpa?.let { clamp(it / 2.0 * 100) }, i.emgPct?.let { clamp(it) })
         val tension = tensionParts.takeIf { it.isNotEmpty() }?.max()
         val restless = motion?.let { m -> if (m in 15.0..180.0) clamp((m - 15) / 75 * 100) else 0.0 }
-        val parts = listOf(hrv to W_HRV, hr to W_HR, breath to W_BREATH, tension to W_TENSION, restless to W_RESTLESS)
+        val parts = listOf(hrv to W_HRV, hr to W_HR, breath to W_BREATH, (if (i.tensionCounts) tension else null) to W_TENSION, restless to W_RESTLESS)
         val available = parts.filter { it.first != null }
         val weight = available.sumOf { it.second }
         // Need at least an HRV or heart-rate read to say anything.
@@ -98,7 +103,7 @@ object StressEstimator {
             StressComponent("hrv", "HRV", hrv?.roundToInt(), i.rmssd?.let { r -> i.restingRmssd?.let { "RMSSD %.0f vs %.0f rest".format(r, it) } } ?: ""),
             StressComponent("hr", "Heart", hr?.roundToInt(), hrExcess?.let { "%+.0f bpm unexplained".format(it) } ?: ""),
             StressComponent("breath", "Breathing", breath?.roundToInt(), i.breathsPerMin?.let { "%.0f /min".format(it) } ?: ""),
-            StressComponent("tension", "Tension", tension?.roundToInt(), ""),
+            StressComponent("tension", "Pelvic floor", tension?.roundToInt(), if (i.tensionCounts) "" else "shown, not counted in this session"),
             StressComponent("restless", "Restless", restless?.roundToInt(), motion?.let { "%.0f mg".format(it) } ?: "")
         )
         return StressReading(

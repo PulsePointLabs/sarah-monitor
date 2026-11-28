@@ -69,7 +69,13 @@ enum class OverlayKind(
     Load("Physiological load", CardType.Load, 230, 160),
     BloodPressure("Blood pressure", CardType.BloodPressure, 280, 230),
     Pelvic("Pelvic pressure", CardType.Pelvic, 320, 340),
-    Stress("Stress", CardType.Stress, 260, 170)
+    Stress("Stress", CardType.Stress, 260, 170),
+    // Sexual and body-exploration sessions (the Response board's cards).
+    Phase("Arousal phase", CardType.Phase, 320, 220),
+    NearClimax("Near-climax watch", CardType.NearClimax, 320, 230),
+    Respiration("Breathing & motion", CardType.Respiration, 240, 180),
+    Emg("EMG (pelvic floor)", CardType.Emg, 320, 230),
+    Ecg("ECG", CardType.Ecg, 360, 180)
 }
 
 /** Overlays are set up separately for the phone screen and for DeX (or any external display). */

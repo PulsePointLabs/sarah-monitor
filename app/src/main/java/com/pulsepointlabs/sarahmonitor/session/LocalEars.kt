@@ -150,6 +150,10 @@ class LocalEars(
         const val FINISHED_QUIET_MS = 1_800
         /** The name-only recogniser stays deaf this long after Sarah stops talking (her voice tails off the speaker). */
         const val NAME_ONLY_TAIL_MS = 1_500L
+        /** The name-only recogniser must hear "Sarah" this many chunks (100 ms each) in a row. */
+        const val NAME_HITS_NEEDED = 3
+        /** …within at least this much continuous speech (a cough is shorter). */
+        const val MIN_NAME_SPEECH_MS = 350L
         private val FINISHED = setOf("now", "okay", "ok", "thanks", "it", "all", "done", "good", "great", "fine", "out", "ten", "please")
         /** Words a finished thought rarely ends on. */
         private val DANGLING = setOf(
@@ -247,6 +251,7 @@ class LocalEars(
         var wordlessMs = 0
         var wakeHeld = 0L
         var nameBlocked = false
+        var nameHits = 0
         var wordsSeen = 0
         var onsetSample = 0L
         var utteranceStart: Long? = null      // onset of the speech the recogniser is currently hearing
@@ -297,11 +302,17 @@ class LocalEars(
                 if (capturing == null && wakeOnly != null && nameOk && System.currentTimeMillis() - wakeHeld > NAME_ONLY_TAIL_MS) {
                     val wFinal = wakeOnly.acceptWaveForm(bytes, n * 2)
                     val heardName = if (wFinal) JSONObject(wakeOnly.result).optString("text") else JSONObject(wakeOnly.partialResult).optString("partial")
-                    if (grammarWake(heardName)) {
+                    // A cough or a bump can flash "sarah" for one instant. Wake only when the name holds across
+                    // NAME_HITS_NEEDED chunks in a row (~0.3 s) and there's been real speech that long.
+                    nameHits = if (grammarWake(heardName)) nameHits + 1 else 0
+                    val spokenMs = (ring.written - onsetSample) * 1000 / RATE
+                    // (A bare "Sarah" followed by a pause arrives as a final result: that counts too, if it was long enough.)
+                    val confirmed = (nameHits >= NAME_HITS_NEEDED && quietMs == 0) || (wFinal && nameHits >= NAME_HITS_NEEDED - 1)
+                    if (confirmed && spokenMs >= MIN_NAME_SPEECH_MS) {
                         if (utteranceStart == null) utteranceStart = onsetSample
                         begin(utteranceStart ?: onsetSample, "")
-                        wakeOnly.reset()
-                    } else if (wFinal) wakeOnly.reset()
+                        wakeOnly.reset(); nameHits = 0
+                    } else if (wFinal) { wakeOnly.reset(); nameHits = 0 }
                 }
                 val final = recognizer.acceptWaveForm(bytes, n * 2)
                 if (final) {
