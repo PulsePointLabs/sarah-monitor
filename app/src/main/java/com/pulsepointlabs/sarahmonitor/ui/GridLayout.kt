@@ -206,6 +206,32 @@ object FitLayout {
         return rows
     }
 
+    /** No row may be squeezed below this (title, number and a line of stats stay readable). */
+    const val MIN_ROW_DP = 80f
+
+    /**
+     * How much taller every row must be so the shortest stays readable ([MIN_ROW_DP]); 1 = it all fits on screen,
+     * more = the board scrolls instead of squashing cards. Pure; unit-tested.
+     */
+    fun scrollStretch(needs: List<Float>, roomDp: Float): Float {
+        if (needs.isEmpty() || roomDp <= 0f) return 1f
+        val shortest = roomDp * needs.min() / needs.sum()
+        return if (shortest >= MIN_ROW_DP) 1f else MIN_ROW_DP / shortest
+    }
+
+    /** True if the smallest row stays readable or doesn't get smaller. Pure; unit-tested. */
+    fun resizeAllowed(shortestBefore: Float, shortestAfter: Float): Boolean =
+        shortestAfter >= MIN_ROW_DP || shortestAfter >= shortestBefore - 0.5f
+
+    /** Height (dp) of the shortest row when these cards share [heightDp]. Pure; unit-tested. */
+    fun shortestRowDp(cards: List<CardSlot>, units: Int, heightDp: Float, gapDp: Float): Float {
+        val rows = slotRows(cards, units)
+        if (rows.isEmpty()) return heightDp
+        val needs = rows.map { r -> r.maxOf { rowNeed(it.type) * heightFactor(it) } }
+        val room = heightDp - gapDp * (rows.size - 1)
+        return room * needs.min() / needs.sum()
+    }
+
     fun bestUnitsFor(cards: List<CardSlot>, widthDp: Float, heightDp: Float): Int =
         (2..6).maxBy { u -> minOf(widthDp / u / 1.5f, heightDp / slotRows(cards, u).size.coerceAtLeast(1)) }
 

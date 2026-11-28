@@ -346,6 +346,21 @@ bedside-monitor dashboards, floating overlays and a review screen.
   reconnects; shown but not counted toward stress in sexual/Kegel sessions (`tensionCounts`).
 - **New overlays**: Arousal phase, Near-climax watch, Breathing & motion, EMG, ECG.
 
+## 0.35.1 (dashboard editing that works by finger, phone and DeX)
+
+- Phone (`FitDashboard`) rebuilt and tested on the phone emulator with adb touch input:
+  - hold a card to select it; two round corner handles (bottom-left, bottom-right). Drag outward = wider (left
+    handle grows left, right handle grows right), inward = narrower, down/up = taller/shorter. Edge bars removed.
+  - handles claim Android's back-swipe zone (`systemGestureExclusion`): a handle at the screen edge used to close
+    the app instead of resizing.
+  - moving: the card floats above everything with a dashed outline where it lands (it used to slide under the rows
+    below). Hit-testing uses where cards are going, not mid-glide, and won't swap back with the same card until the
+    finger leaves it (cards bounced straight back before, so moves never stuck).
+  - other cards glide (`LookaheadScope` + `animateBounds`).
+  - nothing is squashed: rows keep at least 80 dp (`FitLayout.scrollStretch`); a bigger layout scrolls.
+- DeX (`GridDashboard`): same corner handles (left corner grows to the left), rows no longer shrink to fit (a taller
+  layout scrolls).
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

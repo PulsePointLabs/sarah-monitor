@@ -1,5 +1,8 @@
 package com.pulsepointlabs.sarahmonitor.ui
 
+import androidx.compose.foundation.systemGestureExclusion
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.animation.animateBounds
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateIntOffsetAsState
 import androidx.compose.animation.core.spring
@@ -143,12 +146,17 @@ private fun ArrangeBanner(onDone: () -> Unit) {
 
 /**
  * Every visible card on one screen: rows share the height, cards in a row share the width by their span, so there
- * is never empty space. Editing on the phone:
- * - hold one finger on a card: it's selected, with grips on the right edge (width), bottom edge (height) and corner;
- * - two fingers on any card (or one finger on the selected card): pick it up and move it; the others slide aside;
- * - tap another card, the strip's Done, or empty space: finished. Every change reflows the board live and is saved.
- * One touch handler for the whole board (cards move between rows mid-drag, so per-card handlers would be torn down).
+ * is never empty space. Editing on the phone (like home-screen widgets):
+ * - press and hold a card: it's selected, with a round handle on each bottom corner;
+ * - drag either corner handle outward to grow (the left one grows to the left, the right one to the right), inward
+ *   to shrink, down or up for height. A card against the right edge can still grow from its left corner;
+ * - drag the selected card's middle (or any card with two fingers) to move it: the others slide aside;
+ * - tap another card, Done, or empty space: finished.
+ * Other cards glide to their new places (no jumps), and a change that would squash any row below a readable height
+ * is refused. One touch handler for the whole board (cards move between rows mid-drag, so per-card handlers would be
+ * torn down), working in the board's own coordinates.
  */
+@OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
 @Composable
 private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float, onChange: (List<CardSlot>) -> Unit) {
     var working by remember(slots) { mutableStateOf(slots) }
@@ -157,6 +165,8 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
     var finger by remember { mutableStateOf(Offset.Zero) }
     var grab by remember { mutableStateOf(Offset.Zero) }
     var origin by remember { mutableStateOf(Offset.Zero) }
+    var boardHeightPx by remember { mutableStateOf(0) }
+
     val bounds = remember { androidx.compose.runtime.mutableStateMapOf<CardType, androidx.compose.ui.geometry.Rect>() }
     val current by rememberUpdatedState(working)
     val visible = working.filter { it.visible }.sortedWith(compareBy({ it.y }, { it.x }))
@@ -166,7 +176,7 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
     val unitsNow by rememberUpdatedState(units)
     val rows = FitLayout.slotRows(visible, units)
     val density = LocalDensity.current
-    val gripPx = with(density) { 34.dp.toPx() }
+    val handlePx = with(density) { CORNER_HANDLE_HIT_DP.dp.toPx() }
     val gapPx = with(density) { GAP_DP.dp.toPx() }
     val editing = selected != null || moving != null
     if (!editing && frozenUnits != null) frozenUnits = null
@@ -178,7 +188,11 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
         order.removeAt(from); order.add(to, type)
         working = current.map { s -> order.indexOf(s.type).takeIf { it >= 0 }?.let { s.copy(x = 0, y = it) } ?: s.copy(y = order.size + s.y) }
     }
-    fun update(type: CardType, change: (CardSlot) -> CardSlot) { working = current.map { if (it.type == type) change(it) else it } }
+    /** Applies a resize. Nothing gets squashed: if rows would get too short, the board scrolls instead. */
+    fun tryResize(type: CardType, change: (CardSlot) -> CardSlot) {
+        val candidate = current.map { if (it.type == type) change(it) else it }
+        if (candidate != current) working = candidate
+    }
     fun save() { onChange(current) }
     fun cardAt(p: Offset): CardType? = bounds.entries.firstOrNull { it.value.contains(p) }?.key
 
@@ -195,11 +209,13 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
                     val hit = cardAt(p0)
                     val sel = selected
                     val selBounds = sel?.let { bounds[it] }
-                    // 1) Grips on the selected card: resize.
-                    if (sel != null && selBounds != null && selBounds.contains(p0)) {
-                        val onRight = p0.x > selBounds.right - gripPx
-                        val onBottom = p0.y > selBounds.bottom - gripPx
-                        if (onRight || onBottom) {
+                    // 1) A corner handle of the selected card: resize. The handles sit on the bottom corners and reach
+                    //    a little outside the card, so a fingertip on the corner always catches one.
+                    if (sel != null && selBounds != null) {
+                        val nearBottom = p0.y in (selBounds.bottom - handlePx)..(selBounds.bottom + handlePx * 0.5f)
+                        val leftHandle = nearBottom && p0.x in (selBounds.left - handlePx * 0.5f)..(selBounds.left + handlePx)
+                        val rightHandle = nearBottom && p0.x in (selBounds.right - handlePx)..(selBounds.right + handlePx * 0.5f)
+                        if (leftHandle || rightHandle) {
                             down.consume()
                             val slot0 = current.first { it.type == sel }
                             val span0 = FitLayout.span(slot0, unitsNow)
@@ -209,30 +225,25 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
                             while (true) {
                                 val ev = awaitPointerEvent(initial)
                                 val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
-                                if (!ch.pressed) break
+                                if (!ch.pressed) { ch.consume(); break }
                                 ch.consume()
                                 val d = ch.position - down.position
-                                if (onRight) {
-                                    val span = ((w0 + d.x + gapPx) / unitW).roundToInt().coerceIn(1, unitsNow)
-                                    if (span != FitLayout.span(current.first { it.type == sel }, unitsNow)) update(sel) { it.copy(fitSpan = span) }
-                                }
-                                if (onBottom && h0 > 0f) {
-                                    val q = (Math.round(((h0 + d.y) / h0 * f0).coerceIn(0.5f, 3f) * 4) / 4f * 100).roundToInt()
-                                    if (q != (FitLayout.heightFactor(current.first { it.type == sel }) * 100).roundToInt()) update(sel) { it.copy(fitHeight = q) }
-                                }
+                                // Outward is wider: right for the right handle, left for the left one.
+                                val outward = if (rightHandle) d.x else -d.x
+                                val span = (span0 + (outward / unitW).roundToInt()).coerceIn(1, unitsNow)
+                                val q = if (h0 > 0f) (Math.round(((h0 + d.y) / h0 * f0).coerceIn(0.5f, 3f) * 4) / 4f * 100).roundToInt() else (f0 * 100).roundToInt()
+                                tryResize(sel) { it.copy(fitSpan = span, fitHeight = q) }
                             }
                             save()
                             return@awaitEachGesture
                         }
                     }
-                    if (hit == null) {
-                        // Empty space (or the strip): a tap ends editing; the strip's Done handles itself.
-                        return@awaitEachGesture
-                    }
+                    if (hit == null) return@awaitEachGesture
                     // While a card is selected, it's a handle: its own buttons don't react.
                     if (hit == sel) down.consume()
                     val t0 = System.currentTimeMillis()
                     var mode = 0 // 0 undecided, 1 moving, 2 just selected by holding
+                    var lastSwap: CardType? = null
                     fun begin(centroid: Offset) {
                         mode = 1; moving = hit; frozenUnits = unitsNow
                         val b = bounds[hit] ?: return
@@ -262,8 +273,12 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
                         if (mode != 0 || hit == sel) ev.changes.forEach { it.consume() }
                         if (mode == 1) {
                             finger = centroid
-                            // Crossing into another card takes its place; the rest slide aside.
-                            bounds.entries.firstOrNull { (t, r) -> t != hit && r.contains(finger) }?.let { (t, _) -> reorder(hit, t) }
+                            // Crossing into another card takes its place. Cards glide to their new places, so the
+                            // one just swapped can pass back under the finger: don't swap with it again until the
+                            // finger has left it (that bounced the card straight back).
+                            val under = bounds.entries.firstOrNull { (t, r) -> t != hit && r.contains(finger) }?.key
+                            if (under != lastSwap) lastSwap = null
+                            if (under != null && under != lastSwap) { reorder(hit, under); lastSwap = under }
                         }
                     }
                     if (mode == 1) { moving = null; selected = hit; save() }
@@ -277,68 +292,141 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
                     .border(1.dp, MonitorColors.pelvic.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Drag to move · pull the edges to resize", color = MonitorColors.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text("Drag a corner to resize · drag the card to move", color = MonitorColors.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
                 Text(
                     "Done", color = MonitorColors.background, fontSize = 14.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.background(MonitorColors.pelvic, RoundedCornerShape(6.dp)).clickable { selected = null; save() }.padding(horizontal = 16.dp, vertical = 6.dp)
                 )
             }
-            rows.forEach { row ->
-                // Rows get height by what their cards need, times the height the user gave them.
-                val need = row.maxOf { FitLayout.rowNeed(it.type) * FitLayout.heightFactor(it) }
-                // Keyed on its height: a changed weight alone doesn't re-measure the column, so the row is rebuilt.
-                key(need) { Row(Modifier.fillMaxWidth().weight(need), horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp)) {
-                    row.forEach { slot ->
-                        key(slot.type) {
-                            val type = slot.type
-                            val isMoving = moving == type
-                            Box(Modifier.weight(FitLayout.span(slot, units).toFloat()).fillMaxHeight().onGloballyPositioned { bounds[type] = it.boundsInRoot() }) {
-                                val b = bounds[type]
-                                Box(
-                                    Modifier.fillMaxSize().zIndex(if (isMoving) 3f else 1f).graphicsLayer {
-                                        if (isMoving && b != null) {
-                                            translationX = finger.x - grab.x - b.left
-                                            translationY = finger.y - grab.y - b.top
-                                            scaleX = 1.03f; scaleY = 1.03f; alpha = 0.92f
-                                            shadowElevation = 24f * density.density
+            // Cards glide to their new size and place (lookahead animation) instead of jumping when the board reflows.
+            Box(Modifier.fillMaxWidth().weight(1f)) { androidx.compose.ui.layout.LookaheadScope {
+                val scope = this
+                // Rows share the screen by what their cards need. If that would make any row shorter than readable
+                // (lots of cards, or one made big), every row keeps its proportion at a readable size and the board
+                // scrolls instead of squashing cards.
+                val needs = rows.map { r -> r.maxOf { FitLayout.rowNeed(it.type) * FitLayout.heightFactor(it) } }
+                val boardDp = with(density) { boardHeightPx.toDp().value }
+                val room = boardDp - GAP_DP * (rows.size - 1).coerceAtLeast(0)
+                val stretch = FitLayout.scrollStretch(needs, room)
+                Column(
+                    Modifier.fillMaxSize().onSizeChanged { boardHeightPx = it.height }
+                        .then(if (stretch > 1f) Modifier.verticalScroll(rememberScrollState()) else Modifier),
+                    verticalArrangement = Arrangement.spacedBy(GAP_DP.dp)
+                ) {
+                    rows.forEachIndexed { i, row ->
+                        val need = needs[i]
+                        val rowModifier = if (stretch > 1f) Modifier.fillMaxWidth().height((room * need / needs.sum() * stretch).dp)
+                            else Modifier.fillMaxWidth().weight(need)
+                        Row(rowModifier, horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp)) {
+                            row.forEach { slot ->
+                                key(slot.type) {
+                                    val type = slot.type
+                                    val isMoving = moving == type
+                                    Box(
+                                        Modifier
+                                            .weight(FitLayout.span(slot, units).toFloat())
+                                            .fillMaxHeight()
+                                            // Measured before the glide: where the card is going, not mid-animation.
+                                            .onGloballyPositioned { bounds[type] = it.boundsInRoot() }
+                                            .animateBounds(scope)
+                                    ) {
+                                        if (isMoving) {
+                                            // Where it will land; the card itself follows the finger above everything.
+                                            Box(
+                                                Modifier.fillMaxSize()
+                                                    .background(MonitorColors.pelvic.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                                                    .border(2.dp, MonitorColors.pelvic.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                                            )
+                                        } else {
+                                            MonitorCard(type, Modifier.fillMaxSize())
+                                            if (selected == type) FitEditOverlay(showHandles = true)
                                         }
                                     }
-                                ) {
-                                    MonitorCard(type, Modifier.fillMaxSize())
-                                    if (selected == type || isMoving) FitEditOverlay()
                                 }
                             }
                         }
                     }
-                } }
+                }
+            } }
+        }
+        // The card being moved, drawn above every other card at the finger (it used to slide under the rows below).
+        val m = moving
+        val mb = m?.let { bounds[it] }
+        if (m != null && mb != null) {
+            Box(
+                Modifier
+                    .offset { IntOffset((finger.x - grab.x - origin.x).roundToInt(), (finger.y - grab.y - origin.y).roundToInt()) }
+                    .size(with(density) { mb.width.toDp() }, with(density) { mb.height.toDp() })
+                    .zIndex(10f)
+                    .graphicsLayer { scaleX = 1.03f; scaleY = 1.03f; alpha = 0.94f; shadowElevation = 24f * density.density; shape = RoundedCornerShape(10.dp); clip = false }
+            ) {
+                MonitorCard(m, Modifier.fillMaxSize())
+                FitEditOverlay(showHandles = false)
             }
         }
     }
 }
 
-/** The selected card's outline and grips (the board's touch handler does the work). */
+/** The selected card's outline and its two corner handles (the board's touch handler does the work). */
 @Composable
-private fun FitEditOverlay() {
+private fun FitEditOverlay(showHandles: Boolean) {
     val c = MonitorColors.pelvic
     Box(Modifier.fillMaxSize().background(c.copy(alpha = 0.06f), RoundedCornerShape(10.dp)).border(2.dp, c, RoundedCornerShape(10.dp))) {
-        Box(Modifier.align(Alignment.CenterEnd).size(28.dp, 64.dp).padding(3.dp).background(c, RoundedCornerShape(6.dp)))
-        Box(Modifier.align(Alignment.BottomCenter).size(64.dp, 28.dp).padding(3.dp).background(c, RoundedCornerShape(6.dp)))
-        Box(Modifier.align(Alignment.BottomEnd)) { ResizeGrip(Modifier) }
+        if (showHandles) {
+            CornerHandle(Modifier.align(Alignment.BottomStart), mirrored = true)
+            CornerHandle(Modifier.align(Alignment.BottomEnd), mirrored = false)
+        }
     }
 }
+
+/** A round corner handle with a diagonal double arrow, like a widget's resize handle. */
+@Composable
+private fun CornerHandle(modifier: Modifier, mirrored: Boolean) {
+    val pad = with(LocalDensity.current) { ((CORNER_HANDLE_HIT_DP - CORNER_HANDLE_DP) / 2 + 4).dp.toPx() }
+    Canvas(
+        modifier.size(CORNER_HANDLE_DP.dp)
+            // A handle at the screen's edge sits where Android's back swipe starts; claim it (and the touch area around
+            // it) so dragging the handle resizes instead of closing the app.
+            .systemGestureExclusion { c -> androidx.compose.ui.geometry.Rect(-pad, -pad, c.size.width + pad, c.size.height + pad) }
+            .padding(3.dp)
+    ) {
+        val c = MonitorColors.pelvic
+        val r = size.minDimension / 2f
+        drawCircle(c, radius = r)
+        drawCircle(Color.White.copy(alpha = 0.35f), radius = r, style = Stroke(width = 1.5f * density))
+        // Diagonal double arrow toward the corner it grows (down-left or down-right).
+        val k = r * 0.5f
+        val s = if (mirrored) -1f else 1f
+        val a = Offset(center.x - s * k, center.y - k); val b = Offset(center.x + s * k, center.y + k)
+        val dark = MonitorColors.background
+        val w = 2.4f * density
+        drawLine(dark, a, b, strokeWidth = w, cap = StrokeCap.Round)
+        val h = k * 0.75f
+        drawLine(dark, b, Offset(b.x - s * h, b.y), strokeWidth = w, cap = StrokeCap.Round)
+        drawLine(dark, b, Offset(b.x, b.y - h), strokeWidth = w, cap = StrokeCap.Round)
+        drawLine(dark, a, Offset(a.x + s * h, a.y), strokeWidth = w, cap = StrokeCap.Round)
+        drawLine(dark, a, Offset(a.x, a.y + h), strokeWidth = w, cap = StrokeCap.Round)
+    }
+}
+
+/** Size of the corner handles, and how far around them a touch still catches one. */
+private const val CORNER_HANDLE_DP = 40
+private const val CORNER_HANDLE_HIT_DP = 52
+
 private fun Modifier.onGloballyPositionedCompat(block: (androidx.compose.ui.geometry.Rect) -> Unit): Modifier =
     this.onGloballyPositioned { block(it.boundsInRoot()) }
 
 private fun Modifier.onSizeChangedCompat(block: (androidx.compose.ui.unit.IntSize) -> Unit): Modifier = this.onSizeChanged(block)
 
 /** A card being moved or resized: [dx]/[dy] are how far the finger (or pointer) has gone, in board pixels. */
-private data class DragState(val type: CardType, val dx: Float, val dy: Float, val resize: Boolean, val width: Boolean = true, val height: Boolean = true)
+private data class DragState(val type: CardType, val dx: Float, val dy: Float, val resize: Boolean, val fromLeft: Boolean = false)
 
 /**
  * The free grid (DeX, tablets, big windows). One touch handler on the board itself does all moving and resizing,
  * in the board's own coordinates. (Each card used to track the finger in its own coordinates while the card itself
  * moved, so its own movement cancelled the finger's: dragging stuttered and resizing barely moved with a finger.)
- * - Arranging: drag a card to move it; drag its right edge (width), bottom edge (height) or corner (both) to resize.
+ * - Arranging: drag a card to move it; drag a bottom corner handle to resize (the left one grows to the left, the
+ *   right one to the right, either one up/down for height), the same as on the phone.
  * - Not arranging: press and hold a card to start arranging and pick it up in one go.
  * - Touchpad: a two-finger swipe over a card moves it while arranging.
  */
@@ -354,9 +442,9 @@ private fun GridDashboard(
     val density = LocalDensity.current
     val gapPx = with(density) { GAP_DP.dp.toPx() }
     val colPx = (with(density) { width.toPx() } + gapPx) / GridLayoutEngine.COLUMNS
-    // Rows stretch or shrink so the whole layout always fits the screen (no scrolling).
-    val committedRows = maxOf(GridLayoutEngine.SCREEN_ROWS, slots.filter { it.visible }.maxOfOrNull { it.bottom } ?: 0)
-    val rowPx = (with(density) { height.toPx() } + gapPx) / committedRows
+    // One screen holds SCREEN_ROWS rows. A taller layout (a card made big) scrolls instead of shrinking every row:
+    // shrinking squashed the other cards until their readings disappeared.
+    val rowPx = (with(density) { height.toPx() } + gapPx) / GridLayoutEngine.SCREEN_ROWS
     val scrollStepPx = with(density) { SCROLL_STEP_DP.dp.toPx() }
     val edgePx = with(density) { EDGE_GRIP_DP.dp.toPx() }
     var drag by remember { mutableStateOf<DragState?>(null) }
@@ -368,10 +456,14 @@ private fun GridDashboard(
     var scrollCommit by remember { mutableStateOf<Job?>(null) }
 
     fun target(slot: CardSlot, d: DragState): CardSlot = if (d.resize) {
-        GridLayoutEngine.clampSlot(slot.copy(
-            w = slot.w + if (d.width) (d.dx / colPx).roundToInt() else 0,
-            h = slot.h + if (d.height) (d.dy / rowPx).roundToInt() else 0
-        ))
+        val cols = (d.dx / colPx).roundToInt()
+        if (d.fromLeft) {
+            // Growing to the left: the left edge follows the finger, the right edge stays put.
+            val grow = (-cols).coerceAtMost(slot.x).coerceAtLeast(slot.type.minW - slot.w)
+            GridLayoutEngine.clampSlot(slot.copy(x = slot.x - grow, w = slot.w + grow, h = slot.h + (d.dy / rowPx).roundToInt()))
+        } else {
+            GridLayoutEngine.clampSlot(slot.copy(w = slot.w + cols, h = slot.h + (d.dy / rowPx).roundToInt()))
+        }
     } else {
         GridLayoutEngine.clampSlot(slot.copy(x = slot.x + (d.dx / colPx).roundToInt(), y = slot.y + (d.dy / rowPx).roundToInt()))
     }
@@ -397,7 +489,7 @@ private fun GridDashboard(
         colNow * s.x, rowNow * s.y, colNow * (s.x + s.w) - gapPx, rowNow * (s.y + s.h) - gapPx
     )
 
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().then(if (bottomRows > GridLayoutEngine.SCREEN_ROWS) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
         Box(
             Modifier
                 .fillMaxWidth()
@@ -414,9 +506,10 @@ private fun GridDashboard(
                         var state: DragState
                         if (currentArranging) {
                             down.consume()
-                            val onRight = p0.x > r.right - edgePx
-                            val onBottom = p0.y > r.bottom - edgePx
-                            state = DragState(slot.type, 0f, 0f, resize = onRight || onBottom, width = onRight, height = onBottom)
+                            val nearBottom = p0.y > r.bottom - edgePx
+                            val leftCorner = nearBottom && p0.x < r.left + edgePx
+                            val rightCorner = nearBottom && p0.x > r.right - edgePx
+                            state = DragState(slot.type, 0f, 0f, resize = leftCorner || rightCorner, fromLeft = leftCorner)
                         } else {
                             // Not arranging: the card works normally unless it's held still for a long press.
                             val released = withTimeoutOrNull(longPress) {
@@ -468,12 +561,18 @@ private fun GridDashboard(
                         animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow),
                         label = "card-${slot.type}"
                     )
+                    val base = if (active) original else slot
+                    val minWpx = colPx * base.type.minW - gapPx
+                    val leftGrowPx = if (active && d!!.resize && d.fromLeft) (-d.dx).coerceAtMost(colPx * base.x).coerceAtLeast(minWpx - (colPx * base.w - gapPx)) else 0f
                     val offset = if (active && d != null && !d.resize) {
                         IntOffset((px(original).x + d.dx).roundToInt(), (px(original).y + d.dy).roundToInt())
-                    } else if (active) px(original) else animated
-                    val base = if (active) original else slot
-                    val w = (colPx * base.w - gapPx + if (active && d!!.resize && d.width) d.dx else 0f).coerceAtLeast(colPx * base.type.minW - gapPx)
-                    val h = (rowPx * base.h - gapPx + if (active && d!!.resize && d.height) d.dy else 0f).coerceAtLeast(rowPx * base.type.minH - gapPx)
+                    } else if (active) IntOffset((px(original).x - leftGrowPx).roundToInt(), px(original).y) else animated
+                    val w = (colPx * base.w - gapPx + when {
+                        active && d!!.resize && d.fromLeft -> leftGrowPx
+                        active && d!!.resize -> d.dx
+                        else -> 0f
+                    }).coerceAtLeast(minWpx)
+                    val h = (rowPx * base.h - gapPx + if (active && d!!.resize) d.dy else 0f).coerceAtLeast(rowPx * base.type.minH - gapPx)
 
                     Box(
                         Modifier
@@ -512,7 +611,7 @@ private fun GridDashboard(
                         MonitorCard(slot.type, Modifier.fillMaxSize())
                         if (arranging) {
                             // Covers the card's own buttons so the whole card is a handle while arranging, and shows
-                            // the grips: right edge = width, bottom edge = height, corner = both.
+                            // the two corner handles.
                             val c = MonitorColors.pelvic
                             Box(
                                 Modifier
@@ -520,11 +619,8 @@ private fun GridDashboard(
                                     .background(if (active) Color.Transparent else Color(0x0FFFFFFF), RoundedCornerShape(10.dp))
                                     .border(if (active) 2.dp else 1.dp, c.copy(alpha = if (active) 0.9f else 0.45f), RoundedCornerShape(10.dp))
                             ) {
-                                Box(Modifier.align(Alignment.CenterEnd).size(14.dp, 56.dp).padding(3.dp).background(c.copy(alpha = 0.85f), RoundedCornerShape(5.dp))
-                                    .pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_HORIZONTAL_DOUBLE_ARROW)))
-                                Box(Modifier.align(Alignment.BottomCenter).size(56.dp, 14.dp).padding(3.dp).background(c.copy(alpha = 0.85f), RoundedCornerShape(5.dp))
-                                    .pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_VERTICAL_DOUBLE_ARROW)))
-                                ResizeGrip(Modifier.align(Alignment.BottomEnd).pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW)))
+                                CornerHandle(Modifier.align(Alignment.BottomStart).pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_TOP_RIGHT_DIAGONAL_DOUBLE_ARROW)), mirrored = true)
+                                CornerHandle(Modifier.align(Alignment.BottomEnd).pointerHoverIcon(PointerIcon(android.view.PointerIcon.TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW)), mirrored = false)
                             }
                         }
                     }
@@ -534,8 +630,8 @@ private fun GridDashboard(
     }
 }
 
-/** How far in from a card's right/bottom edge a press resizes instead of moving (a fingertip's width). */
-private const val EDGE_GRIP_DP = 30
+/** How far in from a bottom corner a press resizes instead of moving (a fingertip's width). */
+private const val EDGE_GRIP_DP = 44
 
 @Composable
 private fun ResizeGrip(modifier: Modifier) {
