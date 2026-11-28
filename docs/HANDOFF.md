@@ -361,6 +361,22 @@ bedside-monitor dashboards, floating overlays and a review screen.
 - DeX (`GridDashboard`): same corner handles (left corner grows to the left), rows no longer shrink to fit (a taller
   layout scrolls).
 
+## 0.35.2 (phone dashboard: crash fixed, moves actually stick)
+
+- Crash on Ben's phone: `LookaheadDelegate has not been measured yet` (ChipGrid's SubcomposeLayout inside the
+  `LookaheadScope`). LookaheadScope/animateBounds removed; cards slide with a plain `Modifier.glide` (onPlaced +
+  Animatable translation, drawing only).
+- Why "dragging doesn't do anything": `save()` sent `rememberUpdatedState(working)`, which is one redraw behind, so
+  every save stored the previous layout; that stale save came back through `slots` and undid the next move (only the
+  first move after opening ever worked). Also `working` was `remember(slots)`, so the gesture handler wrote to a dead
+  state after each save. Now one state for the board's life, read live, `onChange` through rememberUpdatedState.
+- Moving is a swap on release: the card under the finger lights up; letting go trades the two, nothing else moves
+  (a long drag no longer shuffles every card it crosses).
+- While editing, any card can be dragged (not just the selected one); a quick tap selects another card.
+- Selected card scrolls into view so both corner handles are reachable in landscape.
+- Tested on the phone emulator without relaunching between steps: 3 swaps in portrait, corner resize, rotate,
+  landscape swap, force-stop + relaunch → all kept, no crash. DeX code not changed this round.
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

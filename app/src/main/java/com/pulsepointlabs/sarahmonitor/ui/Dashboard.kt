@@ -1,8 +1,11 @@
 package com.pulsepointlabs.sarahmonitor.ui
 
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.animation.animateBounds
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateIntOffsetAsState
 import androidx.compose.animation.core.spring
@@ -159,16 +162,25 @@ private fun ArrangeBanner(onDone: () -> Unit) {
 @OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
 @Composable
 private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float, onChange: (List<CardSlot>) -> Unit) {
-    var working by remember(slots) { mutableStateOf(slots) }
+    // One state for the life of the board. (Keying it on [slots] made a fresh one after every save while the touch
+    // handler kept writing to the old one, so only the first move or resize after opening did anything.)
+    val workingState = remember { mutableStateOf(slots) }
+    var working by workingState
+    LaunchedEffect(slots) { working = slots }
     var selected by remember { mutableStateOf<CardType?>(null) }
     var moving by remember { mutableStateOf<CardType?>(null) }
+    /** The card the moving one will swap with if released now (lit up while dragging). */
+    var dropOn by remember { mutableStateOf<CardType?>(null) }
     var finger by remember { mutableStateOf(Offset.Zero) }
     var grab by remember { mutableStateOf(Offset.Zero) }
     var origin by remember { mutableStateOf(Offset.Zero) }
     var boardHeightPx by remember { mutableStateOf(0) }
 
     val bounds = remember { androidx.compose.runtime.mutableStateMapOf<CardType, androidx.compose.ui.geometry.Rect>() }
-    val current by rememberUpdatedState(working)
+    // Read live. (rememberUpdatedState only refreshed on the next redraw, so a save right after a swap stored the
+    // layout from one move earlier, and that stale save then undid the next move.)
+    val current by workingState
+    val onChangeNow by rememberUpdatedState(onChange)
     val visible = working.filter { it.visible }.sortedWith(compareBy({ it.y }, { it.x }))
     // Units freeze while editing so the grid doesn't change under your finger.
     var frozenUnits by remember { mutableStateOf<Int?>(null) }
@@ -185,7 +197,8 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
         val order = current.filter { it.visible }.sortedWith(compareBy({ it.y }, { it.x })).map { it.type }.toMutableList()
         val from = order.indexOf(type); val to = order.indexOf(before)
         if (from < 0 || to < 0 || from == to) return
-        order.removeAt(from); order.add(to, type)
+        // Swap: the two cards trade places; nothing else moves.
+        order[from] = before; order[to] = type
         working = current.map { s -> order.indexOf(s.type).takeIf { it >= 0 }?.let { s.copy(x = 0, y = it) } ?: s.copy(y = order.size + s.y) }
     }
     /** Applies a resize. Nothing gets squashed: if rows would get too short, the board scrolls instead. */
@@ -193,7 +206,7 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
         val candidate = current.map { if (it.type == type) change(it) else it }
         if (candidate != current) working = candidate
     }
-    fun save() { onChange(current) }
+    fun save() { onChangeNow(current) }
     fun cardAt(p: Offset): CardType? = bounds.entries.firstOrNull { it.value.contains(p) }?.key
 
     Box(
@@ -240,10 +253,10 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
                     }
                     if (hit == null) return@awaitEachGesture
                     // While a card is selected, it's a handle: its own buttons don't react.
-                    if (hit == sel) down.consume()
+                    // While editing, every card is a handle (its own buttons don't react).
+                    if (sel != null) down.consume()
                     val t0 = System.currentTimeMillis()
                     var mode = 0 // 0 undecided, 1 moving, 2 just selected by holding
-                    var lastSwap: CardType? = null
                     fun begin(centroid: Offset) {
                         mode = 1; moving = hit; frozenUnits = unitsNow
                         val b = bounds[hit] ?: return
@@ -259,29 +272,31 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
                         val pressed = ev.changes.filter { it.pressed }
                         if (pressed.isEmpty()) {
                             // A quick tap on another card while editing: finished.
-                            if (mode == 0 && sel != null && hit != sel) { selected = null; save() }
-                            if (mode == 2 || hit == sel) ev.changes.forEach { it.consume() }
+                            // A quick tap on another card while editing selects that one.
+                            if (mode == 0 && sel != null && hit != sel) { selected = hit; save() }
+                            if (mode == 2 || sel != null) ev.changes.forEach { it.consume() }
                             break
                         }
                         val centroid = Offset(pressed.map { it.position.x }.average().toFloat(), pressed.map { it.position.y }.average().toFloat()) + origin
                         val traveled = ((pressed.firstOrNull { it.id == down.id }?.position ?: pressed.first().position) - down.position).getDistance()
                         when {
                             mode == 0 && pressed.size >= 2 -> begin(centroid)
-                            mode == 0 && traveled > slop -> if (hit == sel) begin(centroid) else break // ordinary scroll/drag on a card
+                            // While editing, dragging any card moves it; otherwise it's an ordinary scroll.
+                            mode == 0 && traveled > slop -> if (sel != null) begin(centroid) else break
                             mode == 2 && traveled > slop -> begin(centroid)
                         }
-                        if (mode != 0 || hit == sel) ev.changes.forEach { it.consume() }
+                        if (mode != 0 || sel != null) ev.changes.forEach { it.consume() }
                         if (mode == 1) {
                             finger = centroid
-                            // Crossing into another card takes its place. Cards glide to their new places, so the
-                            // one just swapped can pass back under the finger: don't swap with it again until the
-                            // finger has left it (that bounced the card straight back).
-                            val under = bounds.entries.firstOrNull { (t, r) -> t != hit && r.contains(finger) }?.key
-                            if (under != lastSwap) lastSwap = null
-                            if (under != null && under != lastSwap) { reorder(hit, under); lastSwap = under }
+                            // The card under the finger lights up; letting go swaps the two. Swapping on release (not
+                            // while passing over) means a long drag doesn't shuffle every card it crosses.
+                            dropOn = bounds.entries.firstOrNull { (t, r) -> t != hit && r.contains(finger) }?.key
                         }
                     }
-                    if (mode == 1) { moving = null; selected = hit; save() }
+                    if (mode == 1) {
+                        dropOn?.let { reorder(hit, it) }
+                        dropOn = null; moving = null; selected = hit; save()
+                    }
                 }
             }
     ) {
@@ -292,15 +307,14 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
                     .border(1.dp, MonitorColors.pelvic.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Drag a corner to resize · drag the card to move", color = MonitorColors.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text("Drag a card to move it · drag a corner to resize", color = MonitorColors.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
                 Text(
                     "Done", color = MonitorColors.background, fontSize = 14.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.background(MonitorColors.pelvic, RoundedCornerShape(6.dp)).clickable { selected = null; save() }.padding(horizontal = 16.dp, vertical = 6.dp)
                 )
             }
             // Cards glide to their new size and place (lookahead animation) instead of jumping when the board reflows.
-            Box(Modifier.fillMaxWidth().weight(1f)) { androidx.compose.ui.layout.LookaheadScope {
-                val scope = this
+            Box(Modifier.fillMaxWidth().weight(1f)) { run {
                 // Rows share the screen by what their cards need. If that would make any row shorter than readable
                 // (lots of cards, or one made big), every row keeps its proportion at a readable size and the board
                 // scrolls instead of squashing cards.
@@ -308,9 +322,12 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
                 val boardDp = with(density) { boardHeightPx.toDp().value }
                 val room = boardDp - GAP_DP * (rows.size - 1).coerceAtLeast(0)
                 val stretch = FitLayout.scrollStretch(needs, room)
+                var content by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
                 Column(
                     Modifier.fillMaxSize().onSizeChanged { boardHeightPx = it.height }
-                        .then(if (stretch > 1f) Modifier.verticalScroll(rememberScrollState()) else Modifier),
+                        .then(if (stretch > 1f) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                        // Inside the scroll: card positions measured from here don't change when the board scrolls.
+                        .onPlaced { content = it },
                     verticalArrangement = Arrangement.spacedBy(GAP_DP.dp)
                 ) {
                     rows.forEachIndexed { i, row ->
@@ -322,13 +339,18 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
                                 key(slot.type) {
                                     val type = slot.type
                                     val isMoving = moving == type
+                                    // A selected card scrolls fully into view, so both corner handles can be reached
+                                    // (in landscape a tall card's handles could sit below the screen).
+                                    val inView = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+                                    LaunchedEffect(selected == type) { if (selected == type) runCatching { inView.bringIntoView() } }
                                     Box(
                                         Modifier
                                             .weight(FitLayout.span(slot, units).toFloat())
                                             .fillMaxHeight()
                                             // Measured before the glide: where the card is going, not mid-animation.
+                                            .bringIntoViewRequester(inView)
                                             .onGloballyPositioned { bounds[type] = it.boundsInRoot() }
-                                            .animateBounds(scope)
+                                            .glide(type) { content }
                                     ) {
                                         if (isMoving) {
                                             // Where it will land; the card itself follows the finger above everything.
@@ -340,6 +362,11 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
                                         } else {
                                             MonitorCard(type, Modifier.fillMaxSize())
                                             if (selected == type) FitEditOverlay(showHandles = true)
+                                            if (dropOn == type) Box(
+                                                Modifier.fillMaxSize()
+                                                    .background(MonitorColors.pelvic.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
+                                                    .border(3.dp, MonitorColors.pelvic, RoundedCornerShape(10.dp))
+                                            )
                                         }
                                     }
                                 }
@@ -365,6 +392,31 @@ private fun FitDashboard(slots: List<CardSlot>, widthDp: Float, heightDp: Float,
             }
         }
     }
+}
+
+/**
+ * When the board reflows, a card slides from where it was to its new place instead of jumping. Drawing only (a
+ * translation that eases back to zero): layout and touch use the real place. (The lookahead animation this replaces
+ * crashed with the cards' own measuring.)
+ */
+@Composable
+private fun Modifier.glide(key: Any, board: () -> androidx.compose.ui.layout.LayoutCoordinates?): Modifier {
+    val shift = remember(key) { androidx.compose.animation.core.Animatable(Offset.Zero, Offset.VectorConverter) }
+    val last = remember(key) { arrayOfNulls<Offset>(1) }
+    val scope = rememberCoroutineScope()
+    return this
+        .onPlaced { c ->
+            val b = board()?.takeIf { it.isAttached } ?: return@onPlaced
+            if (!c.isAttached) return@onPlaced
+            val now = b.localPositionOf(c, Offset.Zero)
+            val before = last[0]
+            last[0] = now
+            if (before != null && (before - now).getDistance() > 1f) scope.launch {
+                shift.snapTo(shift.value + (before - now))
+                shift.animateTo(Offset.Zero, spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow))
+            }
+        }
+        .graphicsLayer { translationX = shift.value.x; translationY = shift.value.y }
 }
 
 /** The selected card's outline and its two corner handles (the board's touch handler does the work). */
