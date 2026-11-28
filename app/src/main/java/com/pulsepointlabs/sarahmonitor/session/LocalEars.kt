@@ -119,7 +119,13 @@ class LocalEars(
     private val onPhrase: (pcm: ShortArray, startedAtMs: Long, offlineText: String) -> Unit,
     private val onWake: () -> Unit,
     private val onNothing: () -> Unit,
-    private val onProblem: (String) -> Unit
+    private val onProblem: (String) -> Unit,
+    /**
+     * False while Sarah is talking or a note is being handled: the name-only recogniser then stays deaf (and for a
+     * moment after), because it matched her own voice from the speaker and set off stray listening tones. The full
+     * recogniser still works, so "Sarah" can still interrupt her.
+     */
+    private val nameOnlyAllowed: () -> Boolean = { true }
 ) {
     companion object {
         const val RATE = 16_000
@@ -142,6 +148,8 @@ class LocalEars(
         const val WAKE_GRAMMAR = "[\"sarah\", \"hey sarah\", \"okay sarah\", \"[unk]\"]"
         /** A thought that clearly ended ("…about a quart now.", "…a seven.", "that's it") needs less quiet. */
         const val FINISHED_QUIET_MS = 1_800
+        /** The name-only recogniser stays deaf this long after Sarah stops talking (her voice tails off the speaker). */
+        const val NAME_ONLY_TAIL_MS = 1_500L
         private val FINISHED = setOf("now", "okay", "ok", "thanks", "it", "all", "done", "good", "great", "fine", "out", "ten", "please")
         /** Words a finished thought rarely ends on. */
         private val DANGLING = setOf(
@@ -237,6 +245,8 @@ class LocalEars(
         var speechDb = -30.0                  // typical level of your speech, for the automatic gain
         var quietMs = 1_000
         var wordlessMs = 0
+        var wakeHeld = 0L
+        var nameBlocked = false
         var wordsSeen = 0
         var onsetSample = 0L
         var utteranceStart: Long? = null      // onset of the speech the recogniser is currently hearing
@@ -282,7 +292,9 @@ class LocalEars(
                 wordlessMs += 100
 
                 // Between notes, the name-only recogniser listens too: it catches a "Sarah" the full one misheard.
-                if (capturing == null && wakeOnly != null) {
+                val nameOk = nameOnlyAllowed()
+                if (!nameOk) { if (!nameBlocked) wakeOnly?.reset(); nameBlocked = true; wakeHeld = System.currentTimeMillis() } else nameBlocked = false
+                if (capturing == null && wakeOnly != null && nameOk && System.currentTimeMillis() - wakeHeld > NAME_ONLY_TAIL_MS) {
                     val wFinal = wakeOnly.acceptWaveForm(bytes, n * 2)
                     val heardName = if (wFinal) JSONObject(wakeOnly.result).optString("text") else JSONObject(wakeOnly.partialResult).optString("partial")
                     if (grammarWake(heardName)) {

@@ -320,6 +320,16 @@ bedside-monitor dashboards, floating overlays and a review screen.
   more spellings in `WAKE`. End of thought: 1.8 s after a clearly finished short note (closing word or number).
   Unverified with a real voice.
 
+## 0.34.1 (no unasked advice, stray tones)
+
+- Her notes and answers no longer give unasked advice, warnings or disclaimers ("eat something, don't drive"):
+  rule in `SarahPersonality.addressBlock` (always sent); SarahChat's "sensible next step or caution" became "a natural
+  follow-up question", and the substances line no longer invites medical warnings. Red-flag answers to questions he
+  asks (SarahCoach ANSWER_PROMPT) are unchanged.
+- Stray listening tones after a note: the 0.34 name-only recogniser could match Sarah's own voice from the speaker
+  (a wake hushes her and plays the tones). It's now deaf while she speaks, while a note is being handled, and for
+  1.5 s after (`nameOnlyAllowed`, `NAME_ONLY_TAIL_MS`). The full recogniser still lets "Sarah" interrupt her.
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

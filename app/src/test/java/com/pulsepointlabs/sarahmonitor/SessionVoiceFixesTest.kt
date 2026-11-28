@@ -25,6 +25,18 @@ class SessionVoiceFixesTest {
         assertFalse(SarahPersonality.addressBlock(pet = true).contains("Never use pet names"))
     }
 
+    /** 0.34.1: no clipboard-clutching ("eat something, don't drive") unless he asks. */
+    @Test fun noUnaskedAdvice() {
+        assertTrue(SarahPersonality.addressBlock(pet = false).contains("Never give advice, safety warnings"))
+        assertTrue(SarahPersonality.voiceBlock().contains("Advice only when he asks"))
+        assertFalse(com.pulsepointlabs.sarahmonitor.response.SarahChat.SYSTEM.contains("caution for what he's doing"))
+        assertFalse(com.pulsepointlabs.sarahmonitor.response.SarahChat.SYSTEM.contains("say so plainly, as one medic"))
+    }
+
+    @Test fun nameOnlyListenerWaitsOutHerVoice() {
+        assertTrue(LocalEars.NAME_ONLY_TAIL_MS >= 1_000L)
+    }
+
     @Test fun sexualSessionNotesAreNotSymptoms() {
         val allowed = MarkerTypes.offered(SessionCategory.Masturbation.groups)
         val ids = allowed.map { it.id }.toSet()

@@ -101,7 +101,10 @@ object SarahPersonality {
     fun addressBlock(pet: Boolean = petNames.value): String = buildString {
         append("How to address him (always follow this):\n")
         if (!pet) append("- Never use pet names or terms of endearment: no love, babe, baby, honey, sweetheart, darling, sweetie, handsome.\n")
-        append("- Don't address him by name. If you ever use it, at most once in a long while, never in back-to-back lines.")
+        append("- Don't address him by name. If you ever use it, at most once in a long while, never in back-to-back lines.\n")
+        // He asked for this explicitly: unasked advice ("eat something, drink water, don't drive") felt like
+        // clipboard-clutching, and he is a grown adult and a paramedic.
+        append("- He's a grown adult and a paramedic. Never give advice, safety warnings, diagnoses or disclaimers he didn't ask for (eat something, drink water, don't drive, be careful, check with a doctor), and don't state the obvious. Respect his choices. Instead reflect what he said, add an observation from the session, or ask a natural follow-up question. Advice only when he asks for it.")
     }
 
     /** Everything about her voice that goes after a system prompt. */

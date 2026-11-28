@@ -310,8 +310,12 @@ class HandsFree(
             _status.value = _status.value.copy(listening = false, message = "Reconnecting… ($msg)")
             restart?.cancel()
             restart = scope.launch { delay(3_000L); sync(wanted) }
-        }
+        },
+        nameOnlyAllowed = { !handling && runCatching { !com.pulsepointlabs.sarahmonitor.core.MonitorHub.audio.speaking.value }.getOrDefault(true) }
     )
+
+    /** A note is being transcribed, filed or answered. */
+    @Volatile private var handling = false
 
     /** Start/stop to match: enabled, recording, not paused for dictation, mic allowed, model ready. */
     @Synchronized
@@ -374,8 +378,9 @@ class HandsFree(
     /** A phrase that began with "Sarah": transcribe just this clip, sort it, log it, then let media resume. */
     private fun phrase(pcm: ShortArray, at: Long, offline: String) {
         _status.value = _status.value.copy(message = "Writing it down…")
+        handling = true
         scope.launch {
-            try { transcribeAndHandle(pcm, at, offline) } finally { letGo() }
+            try { transcribeAndHandle(pcm, at, offline) } finally { handling = false; letGo() }
         }
     }
 
