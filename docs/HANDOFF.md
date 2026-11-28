@@ -300,6 +300,26 @@ bedside-monitor dashboards, floating overlays and a review screen.
   - the live overlay preview covered most of the page in landscape and caught taps: it now shows only on the
     Overlays page.
 
+## 0.34.0 (stability, categorization, no pet names, faster replies, wake word)
+
+- **Release builds now**: CI publishes `assembleRelease` (same key, minify off, installs over the debug build with
+  data kept). Emulator cold start 4.4 s → 0.9 s; hub init 440 → 40 ms.
+- **Crashes**: `stopSession`/`markEvent` callbacks ran on a background thread and changed screens (possible
+  "Unsupported concurrent change" crash on ending a session): now on Main. `CrashLog` writes any crash to a file;
+  next launch shows "The app closed unexpectedly… Copy details". Session setup dialog was under the status bar
+  ("Start now" untappable): now safeDrawing-padded. Start / reopen mid-session / stop / crash-note checked on the
+  phone emulator.
+- **Notes filed as Symptom**: sexual sessions didn't offer "event", so the fallback was the first offered type
+  (Symptom). "event" is offered everywhere and is the fallback; the classifier is told the session type and when
+  Symptom applies.
+- **Pet names**: `SarahPersonality.petNames` (off by default) + `addressBlock` (always sent: no pet names, his name
+  rarely) + `cleanAddress` post-filter on chat and coach lines (removes vocative pet names / his name only).
+- **Latency**: note sorting runs in parallel with her reply (`scope.async`); she speaks first, the note is saved
+  after. Gear catalog moved into the cached system prompt.
+- **Wake word**: second Vosk recogniser with a name-only grammar (`WAKE_GRAMMAR`, `grammarWake`) between notes;
+  more spellings in `WAKE`. End of thought: 1.8 s after a clearly finished short note (closing word or number).
+  Unverified with a real voice.
+
 ## Open / unverified
 
 - **Displacement thresholds are unvalidated** (drop ≥3 kPa below rest for 1 s, or losing 70% of preload). Run the

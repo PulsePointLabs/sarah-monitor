@@ -1,5 +1,8 @@
 package com.pulsepointlabs.sarahmonitor.review
 
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.safeDrawing
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -227,7 +230,8 @@ fun SessionDetailsDialog(
     val showGear = mode != DetailsMode.WrapUp && DetailForms.gearFor(category).isNotEmpty()
     val showPost = mode != DetailsMode.Setup
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        Column(Modifier.fillMaxSize().background(MonitorColors.background).padding(12.dp)) {
+        // Clear of the status bar, cutout and keyboard: "Start now" sat under the clock where taps don't land.
+        Column(Modifier.fillMaxSize().background(MonitorColors.background).windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing).padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close", tint = MonitorColors.text) }
                 Column(Modifier.weight(1f)) {

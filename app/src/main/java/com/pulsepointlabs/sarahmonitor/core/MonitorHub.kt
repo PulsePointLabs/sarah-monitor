@@ -166,8 +166,10 @@ object MonitorHub {
 
     @Synchronized
     fun init(context: Context) {
+        CrashLog.install(context)
         if (initialized) return
         initialized = true
+        val startedInit = android.os.SystemClock.elapsedRealtime()
         val app = context.applicationContext
         appContext = app
         h10 = BluetoothHrClient(app)
@@ -428,6 +430,7 @@ object MonitorHub {
                 delay(5_000L)
             }
         }
+        DiagnosticsStore.breadcrumb(app, "startup", "Hub ready in ${android.os.SystemClock.elapsedRealtime() - startedInit} ms")
     }
 
     /** Reconnects every remembered sensor. Safe to call repeatedly (launch, resume, service start). */
@@ -516,7 +519,9 @@ object MonitorHub {
             val cat = com.pulsepointlabs.sarahmonitor.session.SessionCategory.of(s?.category)
             if (s != null && cat != null && cat.sexual) wrapUp.value = s.id
             _sessionDetails.value = com.pulsepointlabs.sarahmonitor.session.SessionDetails()
-            onStopped(s)
+            // Callers change screens in this callback: that must happen on the main thread (doing it from here
+            // could crash the app when a session ended).
+            launch(Dispatchers.Main) { onStopped(s) }
         }
     }
 
@@ -554,7 +559,7 @@ object MonitorHub {
                     while (loggedEvents.size > 300) loggedEvents.removeFirst()
                 }
             }
-            onDone(marker != null)
+            launch(Dispatchers.Main) { onDone(marker != null) }
         }
     }
 

@@ -67,15 +67,24 @@ object SarahChat {
     suspend fun reply(said: String, kind: String, filedAs: String?, numbers: String?): String? {
         if (!ClaudeText.available) { problem = "no Anthropic key saved"; return null }
         val ctx = context(said, kind, filedAs, numbers)
-        val out = ClaudeText.ask(SYSTEM + "\n\n" + SarahPersonality.promptBlock(), ctx.toString(), maxTokens = 600, model = ResponseSettings.model.value.id)
+        val out = ClaudeText.ask(system(), ctx.toString(), maxTokens = 600, model = ResponseSettings.model.value.id)
             ?: run { problem = ClaudeText.lastProblem ?: "no reply"; return null }
         val text = out.trim().trim('"').replace(Regex("\\s+"), " ")
         if (text.isBlank() || text.equals("QUIET", ignoreCase = true)) { problem = "she chose to stay quiet"; return null }
         problem = null
         // Notes get a short acknowledgment; questions room for a real answer. A long one is cut at a sentence end
         // (it used to be thrown away, which looked like a key problem).
-        return fitWords(text, if (kind == "note") 60 else 120)
+        return fitWords(SarahPersonality.cleanAddress(text), if (kind == "note") 60 else 120)
     }
+
+    /**
+     * Everything that rarely changes goes in the system prompt, which Claude caches between calls: her instructions,
+     * his voice settings and his gear catalog. Only the moment (what he said, readings, timeline) is sent fresh, so
+     * replies start sooner.
+     */
+    private fun system(): String = SYSTEM + "\n\n" + SarahPersonality.voiceBlock() +
+        "\n\nhis_gear_catalog (what he owns: names, measurements, where it sits): " +
+        com.pulsepointlabs.sarahmonitor.gear.GearCatalog.forSarah().toString()
 
     /** Why the last [reply] came back empty, in plain words (shown instead of guessing at the key). */
     @Volatile var problem: String? = null
@@ -109,7 +118,7 @@ object SarahChat {
         return JSONObject()
             .put("he_said", said)
             .put("kind", kind)
-            .put("it_was_logged_as", filedAs)
+            .put("it_was_logged_as", filedAs?.ifBlank { null })
             .put("numbers_he_gave", numbers)
             .put("voice", (ResponseSettings.mode.value).let { m ->
                 when (m) {
@@ -142,13 +151,11 @@ object SarahChat {
             .put("this_session_notes", ProcedureLog.timeline(events, resp.sessionStartMs, now, max = 30))
             .apply {
                 // The note he just made is already in the list; the one before it is what "since last time" means.
-                events.sortedBy { it.timestampMs }.dropLast(if (kind == "note") 1 else 0).lastOrNull()
+                events.maxByOrNull { it.timestampMs }
                     ?.let { put("minutes_since_his_previous_note", ((now - it.timestampMs) / 6_000L) / 10.0) }
             }
             // So she doesn't open the same way twice in a row.
             .put("your_last_replies", JSONArray(SarahMemory.recent(40).filter { it.who == "sarah" }.takeLast(6).map { it.text }))
-            // What he owns (names, measurements, where it sits): "the double balloon nozzle" means something to her.
-            .put("his_gear_catalog", com.pulsepointlabs.sarahmonitor.gear.GearCatalog.forSarah())
             .put("recent_conversation", JSONArray().apply {
                 SarahMemory.recent(30).forEach { l ->
                     put(JSONObject().put("minutes_ago", ago(l.t))

@@ -62,6 +62,11 @@ fun SarahPersonalitySection() {
             "Use my personality settings",
             if (on) "Her replies, answers and live feedback follow everything below" else "Off: she uses her built-in voice; your settings are kept"
         ) { SettingSwitch(on) { SarahPersonality.setEnabled(it) } }
+        val pet by SarahPersonality.petNames.collectAsState()
+        SettingRow(
+            "Pet names",
+            if (pet) "She may call you love, babe and the like" else "Off: no \"love\" or \"babe\", and she rarely uses your name"
+        ) { SettingSwitch(pet) { SarahPersonality.setPetNames(it) } }
         if (on) {
             Group {
                 Text("Tone", color = MonitorColors.text, fontSize = 15.sp)

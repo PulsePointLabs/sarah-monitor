@@ -36,12 +36,12 @@ jobs:
       - name: Unit tests and APK
         run: |
           chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest :app:assembleDebug --stacktrace
+          ./gradlew :app:testDebugUnitTest :app:assembleRelease --stacktrace
 
       - name: Verify APK signature
         run: |
           APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)
-          "$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | tee signers.txt
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/app-release.apk | tee signers.txt
           APK_SHA256=$(grep -m1 -oP 'certificate SHA-256 digest: \K[0-9a-f]+' signers.txt)
           if [ "$APK_SHA256" != "$KEY_SHA256" ]; then
             echo "::error::APK is signed with $APK_SHA256, expected $KEY_SHA256."
@@ -64,7 +64,7 @@ jobs:
           BRANCH="${GITHUB_REF_NAME//\//-}"
           TAG="v${VERSION}-${BRANCH}-${GITHUB_RUN_NUMBER}"
           APK="sarah-monitor-${VERSION}-${SHORT_SHA}.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "$APK"
+          cp app/build/outputs/apk/release/app-release.apk "$APK"
           # The release notes are the full commit message (what changed and why), so the release page reads as a
           # changelog. main and rc/* builds are real releases ("Latest"); other branches are marked test builds.
           CHANGES=$(git log -1 --format=%B | grep -v '^Co-Authored-By:')

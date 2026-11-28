@@ -591,6 +591,25 @@ private fun MonitorScreen(
             )
         }
     }
+    // The app crashed last time: say so once, and let him copy the details to send.
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var crash by remember { mutableStateOf(com.pulsepointlabs.sarahmonitor.core.CrashLog.pending(ctx)) }
+    crash?.let { note ->
+        AlertDialog(
+            onDismissRequest = { com.pulsepointlabs.sarahmonitor.core.CrashLog.dismiss(ctx); crash = null },
+            containerColor = MonitorColors.panel,
+            title = { Text("The app closed unexpectedly last time", color = MonitorColors.text) },
+            text = { Text(com.pulsepointlabs.sarahmonitor.core.CrashLog.summary(note) + "\n\nCopy the details and send them to Claude so it can be fixed.", color = MonitorColors.label) },
+            confirmButton = {
+                TextButton(onClick = {
+                    ctx.getSystemService(android.content.ClipboardManager::class.java)
+                        ?.setPrimaryClip(android.content.ClipData.newPlainText("Sarah Monitor crash", note))
+                    com.pulsepointlabs.sarahmonitor.core.CrashLog.dismiss(ctx); crash = null
+                }) { Text("Copy details") }
+            },
+            dismissButton = { TextButton(onClick = { com.pulsepointlabs.sarahmonitor.core.CrashLog.dismiss(ctx); crash = null }) { Text("Dismiss") } }
+        )
+    }
     if (confirmStop) {
         AlertDialog(
             onDismissRequest = { confirmStop = false },

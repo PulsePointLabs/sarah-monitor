@@ -8,6 +8,7 @@ import androidx.core.content.ContextCompat
 import com.pulsepointlabs.sarahmonitor.core.ClaudeText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -135,7 +136,9 @@ object VoiceCommand {
     fun parseLocal(command: String, allowed: Set<String>, gear: List<GearItem>): SpokenEvent {
         val lower = command.lowercase()
         val hits = RULES.filter { (r, _) -> r.containsMatchIn(lower) }.map { it.second }.filter { it.first in allowed }
-        val types = hits.map { it.first }.distinct().take(3).toSet().ifEmpty { setOf(if ("event" in allowed) "event" else allowed.first()) }
+        // Nothing matched: a plain Event. (Falling back to the first offered type filed everything in a sexual
+        // session as a Symptom.)
+        val types = hits.map { it.first }.distinct().take(3).toSet().ifEmpty { setOf("event") }
         val bucket = hits.firstOrNull()?.second ?: "general"
         // The CIVET probe/sensor is the measuring instrument, not a session device: when he talks about it (or a
         // balloon without naming the catheter), don't fall back to the only device listed (that filed CIVET notes
@@ -216,8 +219,9 @@ object VoiceCommand {
     }
 
     /** Prompt for Claude: map a spoken note to this session's event types and devices. */
-    fun claudePrompt(allowed: List<MarkerTypes.Type>, gear: List<GearItem>): String = """
-You categorize a short spoken note from a paramedic logging his own body during a physiology session. His raw words are saved separately; you classify them and give a clean written copy.
+    fun claudePrompt(allowed: List<MarkerTypes.Type>, gear: List<GearItem>, sessionType: String? = null): String = """
+You categorize a short spoken note from a paramedic logging his own body during a physiology session.
+This session is: ${sessionType ?: "not stated"}. Pick types that fit this kind of session. In a masturbation, sexual or exploration session, notes about stimulation, a sleeve or toy, pleasure, arousal, sensations, getting close, edging or climax use those sexual types (stimulation, arousal, sensation, near, edge, orgasm, finding…), never Symptom. Symptom is only for an unpleasant physical complaint (headache, nausea, dizziness, palpitations, pain that isn't part of the activity). If nothing fits, use event. His raw words are saved separately; you classify them and give a clean written copy.
 Allowed event types (id: label — what it means):
 ${allowed.joinToString("\n") { "- ${it.id}: ${it.label}" + (it.hint.takeIf { h -> h.isNotBlank() }?.let { h -> " — $h" } ?: "") }}
 Choosing types: read the whole note for what he means, not single words. Pick the one type that best fits; add a second (at most three) only when the note clearly covers two different things, for example what he is doing and how he feels ("getting ready to resume chores, feeling fairly relaxed" = activity + state). Never use recovery for simply feeling relaxed or calm. Substance use (cannabis such as indica or sativa, alcohol such as beer, caffeine, nicotine, a medication) is substance, including how strongly he feels it ("feeling pretty buzzed from the beer", "overstimulated from the caffeine" = substance + state); note what it is in "measures".
@@ -408,33 +412,43 @@ class HandsFree(
         val allowed = allowedTypes()
         val ids = allowed.map { it.id }.toSet()
         val g = gear()
-        val sorted = ClaudeText.ask(VoiceCommand.claudePrompt(allowed, g), "Running tally so far: ${tally()}\nHis note: $command", maxTokens = 500)
-            ?.let { VoiceCommand.parseClaude(it, command, ids, g) }
-            ?: VoiceCommand.parseLocal(command, ids, g)
-        // A question (Claude's read, or plainly worded as one: "Are you able to tell me…" was once filed as an Event).
-        if (sorted.question || ProcedureLog.isQuestion(command)) {
-            // Answer it out loud (media stays paused until she's done), and keep it with her answer.
+        val sessionType = com.pulsepointlabs.sarahmonitor.core.MonitorHub.currentCategory()?.label
+        // Filing the note (quick model) runs alongside her reply instead of before it, so she starts thinking the
+        // moment the words are in. The note is saved once both are done.
+        val sorting = scope.async {
+            ClaudeText.ask(VoiceCommand.claudePrompt(allowed, g, sessionType), "Running tally so far: ${tally()}\nHis note: $command", maxTokens = 500)
+                ?.let { VoiceCommand.parseClaude(it, command, ids, g) }
+                ?: VoiceCommand.parseLocal(command, ids, g)
+        }
+        // A question, plainly worded as one ("how long have I been holding?"): answer it right away.
+        if (ProcedureLog.isQuestion(command)) {
             cue(false)
             _status.value = _status.value.copy(message = "Thinking about your question…")
             val reply = answer(command)
-            mark(at, sorted.copy(types = (sorted.types - "event") + "question", question = true, answer = reply), raw, heardBy)
             speak(reply ?: "Sorry, I couldn't work that out just now.")
+            val sorted = sorting.await()
+            mark(at, sorted.copy(types = (sorted.types - "event") + "question", question = true, answer = reply), raw, heardBy)
             _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = sorted.note)
             return
         }
         if (HandsFreeSettings.talk.value) {
-            // Talk mode: she answers like herself ("Sounds good, take the chores slow"), repeating any numbers.
+            // Talk mode: she answers like herself, repeating any numbers (read on the phone, so she needn't wait).
             _status.value = _status.value.copy(message = "Writing it down…")
-            val reply = chat(command, MarkerTypes.label(sorted.types), sorted.measures.spoken().ifBlank { null })
-            mark(at, sorted.copy(answer = reply), raw, heardBy)
+            val reply = chat(command, "", ProcedureLog.parseLocal(command).spoken().ifBlank { null })
             cue(false)
-            speak(reply ?: sorted.confirm)
+            if (reply != null) speak(reply)
+            val sorted = sorting.await()
+            if (reply == null) speak(sorted.confirm)
+            mark(at, sorted.copy(answer = reply), raw, heardBy)
+            _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = sorted.note)
+            return
         } else {
+            val sorted = sorting.await()
             mark(at, sorted, raw, heardBy)
             cue(false)
             if (HandsFreeSettings.sayBack.value) speak(sorted.confirm)
+            _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = sorted.note)
         }
-        _status.value = _status.value.copy(message = "Listening for \"Sarah…\"", lastLogged = sorted.note)
     }
 
     private companion object { const val HOLD = "hands-free" }

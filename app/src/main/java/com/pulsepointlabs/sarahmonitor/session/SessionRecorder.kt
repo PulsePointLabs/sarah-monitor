@@ -313,7 +313,7 @@ object MarkerTypes {
     )
 
     /** Offered in every session type: what he took and how he feels matter whatever the session. */
-    private val EVERYWHERE = setOf("substance", "state", "symptom")
+    private val EVERYWHERE = setOf("event", "substance", "state", "symptom")
     fun inGroup(group: Group): List<Type> = all.filter { it.group == group }
 
     /** Types offered for a session with these groups: its own groups, the sensor types, and substance / feeling / symptom. */

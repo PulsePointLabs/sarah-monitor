@@ -137,7 +137,12 @@ class LocalEars(
         const val WAIT_FOR_START_MS = 8_000
         /** Only a safety net for a stuck mic; a note normally ends on silence, never on the clock. */
         const val MAX_PHRASE_MS = 300_000
-        private val WAKE = Regex("^(?:(?:ok|okay|hey|hi|so)\\s+)?(sarah|sara|sera|serra|zara)\\b", RegexOption.IGNORE_CASE)
+        private val WAKE = Regex("^(?:(?:ok|okay|hey|hi|so|um|uh)\\s+)?(sarah|sara|sarra|sera|serra|zara|zarah|sahra|sarai|sorah|serah)\\b", RegexOption.IGNORE_CASE)
+        /** A tiny vocabulary for the second, wake-only recogniser: it listens for nothing but her name. */
+        const val WAKE_GRAMMAR = "[\"sarah\", \"hey sarah\", \"okay sarah\", \"[unk]\"]"
+        /** A thought that clearly ended ("…about a quart now.", "…a seven.", "that's it") needs less quiet. */
+        const val FINISHED_QUIET_MS = 1_800
+        private val FINISHED = setOf("now", "okay", "ok", "thanks", "it", "all", "done", "good", "great", "fine", "out", "ten", "please")
         /** Words a finished thought rarely ends on. */
         private val DANGLING = setOf(
             "and", "but", "or", "so", "because", "cause", "the", "a", "an", "to", "of", "with", "in", "on", "at", "for", "from", "into",
@@ -146,15 +151,29 @@ class LocalEars(
             "feels", "feel", "starting", "still", "also", "when", "while", "if", "as", "than", "some", "this", "there", "where", "what", "how"
         )
 
+        private val NUMBER_WORDS = setOf("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "twenty", "thirty", "forty", "fifty", "hundred")
+
         fun startsWithWake(text: String) = WAKE.containsMatchIn(text.trim())
+
+        /** The wake-only recogniser heard her name at the start of what was said (not "[unk]"). Pure; unit-tested. */
+        fun grammarWake(text: String): Boolean {
+            val w = text.lowercase().split(Regex("\\s+")).filter { it.isNotBlank() }
+            val i = w.indexOfFirst { it == "sarah" }
+            return i in 0..1 && w.take(i).all { it == "hey" || it == "okay" }
+        }
 
         /** Quiet needed before a phrase counts as finished, given what's been heard so far. Pure; unit-tested. */
         fun quietNeededMs(heard: String): Int {
             val after = WAKE.find(heard.trim())?.let { heard.trim().substring(it.range.last + 1) } ?: heard
             val words = after.lowercase().split(Regex("[^a-z']+")).filter { it.isNotBlank() }
+            val last = words.lastOrNull()
             return when {
                 words.isEmpty() -> WAIT_FOR_START_MS
-                words.size <= 2 || words.last() in DANGLING -> UNFINISHED_QUIET_MS
+                words.size <= 2 || last in DANGLING -> UNFINISHED_QUIET_MS
+                // Sounds finished: a closing word or a number ("…pressure's a six"): move on sooner. A long note
+                // (thinking as he goes) still gets the normal pause even then.
+                words.size >= 4 && (last in FINISHED || last!!.any { it.isDigit() } || last in NUMBER_WORDS) ->
+                    if (words.size >= 20) END_QUIET_MS else FINISHED_QUIET_MS
                 words.size >= 20 -> LONG_NOTE_QUIET_MS
                 else -> END_QUIET_MS
             }
@@ -208,6 +227,7 @@ class LocalEars(
         route.input?.let { rec.preferredDevice = it }
         if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); MicRoute.close(context, route); throw IllegalStateException("Couldn't open the microphone") }
         val recognizer = org.vosk.Recognizer(model, RATE.toFloat())
+        val wakeOnly = runCatching { org.vosk.Recognizer(model, RATE.toFloat(), WAKE_GRAMMAR) }.getOrNull()
         val ring = PcmRing(MAX_PHRASE_MS / 1000 + 10)
         val startedAt = System.currentTimeMillis()
         fun wallAt(sample: Long) = startedAt + sample * 1000 / RATE
@@ -261,6 +281,16 @@ class LocalEars(
                 } else quietMs += 100
                 wordlessMs += 100
 
+                // Between notes, the name-only recogniser listens too: it catches a "Sarah" the full one misheard.
+                if (capturing == null && wakeOnly != null) {
+                    val wFinal = wakeOnly.acceptWaveForm(bytes, n * 2)
+                    val heardName = if (wFinal) JSONObject(wakeOnly.result).optString("text") else JSONObject(wakeOnly.partialResult).optString("partial")
+                    if (grammarWake(heardName)) {
+                        if (utteranceStart == null) utteranceStart = onsetSample
+                        begin(utteranceStart ?: onsetSample, "")
+                        wakeOnly.reset()
+                    } else if (wFinal) wakeOnly.reset()
+                }
                 val final = recognizer.acceptWaveForm(bytes, n * 2)
                 if (final) {
                     val text = JSONObject(recognizer.result).optString("text")
@@ -298,6 +328,7 @@ class LocalEars(
             runCatching { rec.stop() }; rec.release()
             com.pulsepointlabs.sarahmonitor.audio.OtherAudio.ownRecording(ownId, false)
             recognizer.close()
+            runCatching { wakeOnly?.close() }
             MicRoute.close(context, route)
         }
     }

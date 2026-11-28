@@ -59,6 +59,8 @@ object SarahPersonality {
     /** Written to be heard: short sentences, numbers and times said the way a person says them. */
     val ttsFriendly = MutableStateFlow(true)
     val instructions = MutableStateFlow(DEFAULT_INSTRUCTIONS)
+    /** Pet names ("love", "babe"…). Off by default: he doesn't want them. */
+    val petNames = MutableStateFlow(false)
     /** Whether his written instructions are sent (kept either way). */
     val useInstructions = MutableStateFlow(true)
 
@@ -76,6 +78,7 @@ object SarahPersonality {
         ttsFriendly.value = p.getBoolean("tts", true)
         instructions.value = p.getString("instructions", null) ?: DEFAULT_INSTRUCTIONS
         useInstructions.value = p.getBoolean("use_instructions", true)
+        petNames.value = p.getBoolean("pet_names", false)
     }
 
     private fun edit(block: SharedPreferences.Editor.() -> Unit) { prefs?.edit()?.apply(block)?.apply() }
@@ -88,7 +91,40 @@ object SarahPersonality {
     fun setTts(v: Boolean) { ttsFriendly.value = v; edit { putBoolean("tts", v) } }
     fun setInstructions(v: String) { instructions.value = v.take(2_000); edit { putString("instructions", instructions.value) } }
     fun resetInstructions() = setInstructions(DEFAULT_INSTRUCTIONS)
+    fun setPetNames(v: Boolean) { petNames.value = v; edit { putBoolean("pet_names", v) } }
     fun setUseInstructions(v: Boolean) { useInstructions.value = v; edit { putBoolean("use_instructions", v) } }
+
+    /**
+     * How she addresses him. Always sent (even with the personality settings off): no pet names unless he turns
+     * them on, and his name only rarely ("love" and "Ben" over and over threw him off mid-session).
+     */
+    fun addressBlock(pet: Boolean = petNames.value): String = buildString {
+        append("How to address him (always follow this):\n")
+        if (!pet) append("- Never use pet names or terms of endearment: no love, babe, baby, honey, sweetheart, darling, sweetie, handsome.\n")
+        append("- Don't address him by name. If you ever use it, at most once in a long while, never in back-to-back lines.")
+    }
+
+    /** Everything about her voice that goes after a system prompt. */
+    fun voiceBlock(): String = listOf(promptBlock(), addressBlock()).filter { it.isNotBlank() }.joinToString("\n\n")
+
+    private const val PET = "(?:my\\s+)?(?:love|lover|babe|baby|honey|hon|hun|sweetheart|sweetie|darling|dear|handsome|sweet\\s+thing)"
+    private const val NAME = "(?:ben|benjamin)"
+
+    /**
+     * Safety net after the prompt: drops a pet name or his name used to address him (", love." / "Babe, " / ", Ben?")
+     * from her line before it's spoken. Only removes words; everything else in her line stays. Pure; unit-tested.
+     */
+    fun cleanAddress(text: String, pet: Boolean = petNames.value): String {
+        val who = if (pet) NAME else "(?:$PET|$NAME)"
+        var t = text
+        t = t.replace(Regex("(?i)^\\s*$who\\s*[,.!]\\s*"), "")                        // "Love, …" at the start
+        t = t.replace(Regex("(?i)([.!?]\\s+)$who\\s*,\\s*"), "$1")                     // "… . Babe, …"
+        t = t.replace(Regex("(?i),\\s*$who\\s*(?=[.!?,;:]|$)"), "")                     // "…, love." / "…, Ben?"
+        t = t.replace(Regex("\\s{2,}"), " ").trim()
+        // Capitalize each sentence start that a removal exposed.
+        t = t.replace(Regex("(^|[.!?]\\s+)([a-z])")) { it.groupValues[1] + it.groupValues[2].uppercase() }
+        return t.ifBlank { text }
+    }
 
     /** The block added to Sarah's prompts. Pure given its inputs; unit-tested. */
     fun promptBlock(

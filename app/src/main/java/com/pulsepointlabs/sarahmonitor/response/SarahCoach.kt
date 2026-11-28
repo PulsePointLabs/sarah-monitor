@@ -225,6 +225,7 @@ class SarahCoach(
                 val ctx = context("question", state()).put("his_question", question)
                 call(ANSWER_PROMPT, ctx.toString(), BetaOutputConfig.Effort.MEDIUM)
                     ?.takeIf { !it.equals("QUIET", ignoreCase = true) && it.split(Regex("\\s+")).size <= 90 }
+                    ?.let { SarahPersonality.cleanAddress(it) }
             }
         }.onFailure { problem = it.message?.take(160) ?: it.javaClass.simpleName }.onSuccess { problem = if (it == null) "no answer (declined, too long, or empty)" else null }
             .getOrNull()?.also { a -> recent.addLast(a); while (recent.size > 6) recent.removeFirst(); _last.value = a; lastSpokeAt = System.currentTimeMillis() }
@@ -239,7 +240,7 @@ class SarahCoach(
             .systemOfBetaTextBlockParams(
                 listOf(
                     BetaTextBlockParam.builder()
-                        .text(system + "\n\n" + SarahPersonality.promptBlock())
+                        .text(system + "\n\n" + SarahPersonality.voiceBlock())
                         .cacheControl(BetaCacheControlEphemeral.builder().build())
                         .build()
                 )
@@ -259,7 +260,7 @@ class SarahCoach(
         if (text.isBlank() || text.equals("QUIET", ignoreCase = true) || text.split(Regex("\\s+")).size > 45) return null
         val norm = text.lowercase().replace(Regex("[^a-z0-9]"), "")
         if (recent.any { it.lowercase().replace(Regex("[^a-z0-9]"), "") == norm }) return null
-        return text
+        return SarahPersonality.cleanAddress(text)
     }
 
     private fun context(reason: String, s: ResponseState): JSONObject {
